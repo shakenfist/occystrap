@@ -24,7 +24,8 @@ def cli(ctx, verbose=None):
 @click.argument('tarfile')
 @click.pass_context
 def fetch(ctx, registry, image, tag, tarfile):
-    docker_registry.fetch_image(registry, image, tag, tarfile)
+    img = docker_registry.Image(registry, image, tag)
+    img.fetch(tarfile)
 
 
 cli.add_command(fetch)

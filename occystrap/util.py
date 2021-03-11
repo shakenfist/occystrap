@@ -1,0 +1,72 @@
+import json
+import logging
+from pbr.version import VersionInfo
+import requests
+
+
+LOG = logging.getLogger(__name__)
+LOG.setLevel(logging.INFO)
+
+
+class APIException(Exception):
+    pass
+
+
+class UnauthorizedException(Exception):
+    pass
+
+
+STATUS_CODES_TO_ERRORS = {
+    401: UnauthorizedException
+}
+
+
+def get_user_agent():
+    try:
+        version = VersionInfo('occystrap').version_string()
+    except:
+        version = '0.0.0'
+    return 'Mozilla/5.0 (Ubuntu; Linux x86_64) Occy Strap/%s' % version
+
+
+def request_url(method, url, headers=None, data=None):
+    if not headers:
+        headers = {}
+    headers.update({'User-Agent': get_user_agent()})
+    if data:
+        headers['Content-Type'] = 'application/json'
+    r = requests.request(method, url,
+                         data=json.dumps(data),
+                         headers=headers)
+
+    LOG.debug('-------------------------------------------------------')
+    LOG.debug('API client requested: %s %s' % (method, url))
+    for h in headers:
+        LOG.debug('Header: %s = %s' % (h, headers[h]))
+    if data:
+        LOG.debug('Data:\n    %s'
+                  % ('\n    '.join(json.dumps(data,
+                                              indent=4,
+                                              sort_keys=True).split('\n'))))
+    LOG.debug('API client response: code = %s' % r.status_code)
+    for h in r.headers:
+        LOG.debug('Header: %s = %s' % (h, r.headers[h]))
+    if r.text:
+        try:
+            LOG.debug('Data:\n    %s'
+                      % ('\n    '.join(json.dumps(json.loads(r.text),
+                                                  indent=4,
+                                                  sort_keys=True).split('\n'))))
+        except Exception:
+            LOG.debug('Text:\n    %s'
+                      % ('\n    '.join(r.text.split('\n'))))
+    LOG.debug('-------------------------------------------------------')
+
+    if r.status_code in STATUS_CODES_TO_ERRORS:
+        raise STATUS_CODES_TO_ERRORS[r.status_code](
+            'API request failed', method, url, r.status_code, r.text, r.headers)
+
+    if r.status_code != 200:
+        raise APIException(
+            'API request failed', method, url, r.status_code, r.text, r.headers)
+    return r
