@@ -86,13 +86,14 @@ class Image(object):
 
         tar_manifest = [{
             'Layers': [],
-            'RepoTags': ['busybox:latest']
+            'RepoTags': ['%s:%s' % (self.image.split('/')[-1], self.tag)]
         }]
 
         with tarfile.open(image_path, 'w') as image_tar:
             LOG.info('Writing config file to tarball')
-            config_filename = manifest['config']['digest'].split(':')[1]
-            ti = tarfile.TarInfo('%s.json' % config_filename)
+            config_filename = ('%s.json'
+                               % manifest['config']['digest'].split(':')[1])
+            ti = tarfile.TarInfo(config_filename)
             ti.size = len(config)
             image_tar.addfile(ti, io.BytesIO(config))
             tar_manifest[0]['Config'] = config_filename
@@ -134,7 +135,9 @@ class Image(object):
                                   % (layer_filename, h.hexdigest()))
                         sys.exit(1)
 
-                    image_tar.add(tf.name)
+                    layer_filename += '/layer.tar'
+                    image_tar.add(
+                        tf.name, arcname=layer_filename)
                     tar_manifest[0]['Layers'].append(layer_filename)
 
                     with tarfile.open(tf.name) as layer:
