@@ -5,7 +5,6 @@ import requests
 
 
 LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
 
 
 class APIException(Exception):
@@ -29,7 +28,7 @@ def get_user_agent():
     return 'Mozilla/5.0 (Ubuntu; Linux x86_64) Occy Strap/%s' % version
 
 
-def request_url(method, url, headers=None, data=None):
+def request_url(method, url, headers=None, data=None, stream=False):
     if not headers:
         headers = {}
     headers.update({'User-Agent': get_user_agent()})
@@ -37,10 +36,12 @@ def request_url(method, url, headers=None, data=None):
         headers['Content-Type'] = 'application/json'
     r = requests.request(method, url,
                          data=json.dumps(data),
-                         headers=headers)
+                         headers=headers,
+                         stream=stream)
 
     LOG.debug('-------------------------------------------------------')
-    LOG.debug('API client requested: %s %s' % (method, url))
+    LOG.debug('API client requested: %s %s (stream=%s)'
+              % (method, url, stream))
     for h in headers:
         LOG.debug('Header: %s = %s' % (h, headers[h]))
     if data:
@@ -51,15 +52,18 @@ def request_url(method, url, headers=None, data=None):
     LOG.debug('API client response: code = %s' % r.status_code)
     for h in r.headers:
         LOG.debug('Header: %s = %s' % (h, r.headers[h]))
-    if r.text:
-        try:
-            LOG.debug('Data:\n    %s'
-                      % ('\n    '.join(json.dumps(json.loads(r.text),
-                                                  indent=4,
-                                                  sort_keys=True).split('\n'))))
-        except Exception:
-            LOG.debug('Text:\n    %s'
-                      % ('\n    '.join(r.text.split('\n'))))
+    if not stream:
+        if r.text:
+            try:
+                LOG.debug('Data:\n    %s'
+                          % ('\n    '.join(json.dumps(json.loads(r.text),
+                                                      indent=4,
+                                                      sort_keys=True).split('\n'))))
+            except Exception:
+                LOG.debug('Text:\n    %s'
+                          % ('\n    '.join(r.text.split('\n'))))
+    else:
+        LOG.debug('Result content not logged for streaming requests')
     LOG.debug('-------------------------------------------------------')
 
     if r.status_code in STATUS_CODES_TO_ERRORS:

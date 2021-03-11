@@ -6,9 +6,12 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 import sys
 import tarfile
+import tempfile
+import zlib
 
 from occystrap import util
 
@@ -26,7 +29,7 @@ class Image(object):
         self.tag = tag
         self._cached_auth = None
 
-    def request_url(self, method, url, headers=None, data=None):
+    def request_url(self, method, url, headers=None, data=None, stream=False):
         if not headers:
             headers = {}
 
@@ -34,7 +37,8 @@ class Image(object):
             headers.update({'Authorization': 'Bearer %s' % self._cached_auth})
 
         try:
-            return util.request_url(method, url, headers=headers, data=data)
+            return util.request_url(method, url, headers=headers, data=data,
+                                    stream=stream)
         except util.UnauthorizedException as e:
             auth_re = re.compile('Bearer realm="([^"]*)",service="([^"]*)"')
             m = auth_re.match(e.args[5].get('Www-Authenticate'))
@@ -47,7 +51,7 @@ class Image(object):
                 self._cached_auth = token
 
             return util.request_url(
-                method, url, headers=headers, data=data)
+                method, url, headers=headers, data=data, stream=stream)
 
     def fetch(self, image_path):
         LOG.info('Fetching manifest')
@@ -104,31 +108,44 @@ class Image(object):
                         'registry': self.registry,
                         'image': self.image,
                         'layer': layer['digest']
-                    })
+                    },
+                    stream=True)
 
                 LOG.info('Writing layer to tarball')
                 layer_filename = layer['digest'].split(':')[1]
-                compressed_layer = r.content
-                expanded_layer = gzip.GzipFile(
-                    fileobj=io.BytesIO(compressed_layer), mode='rb').read()
-                h = hashlib.sha256()
-                h.update(compressed_layer)
-                if h.hexdigest() != layer_filename:
-                    LOG.error('Hash verification failed for layer (%s vs %s)'
-                              % (layer_filename, h.hexdigest()))
-                    sys.exit(1)
 
-                ti = tarfile.TarInfo('%s/layer.tar' % layer_filename)
-                ti.size = len(expanded_layer)
-                image_tar.addfile(ti, io.BytesIO(expanded_layer))
-                tar_manifest[0]['Layers'].append(layer_filename)
+                # We can use zlib for streaming decompression, but we need to tell it
+                # to ignore the gzip header which it doesn't understand. Unfortunately
+                # tarfile doesn't do streaming writes (and we need to know the
+                # decompressed size before we can write to the tarfile), so we stream
+                # to a temporary file on disk.
+                try:
+                    h = hashlib.sha256()
+                    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
 
-                with tarfile.open(layer_filename, fileobj=io.BytesIO(expanded_layer)) as layer:
-                    for mem in layer.getmembers():
-                        m = DELETED_FILE_RE.match(mem.name)
-                        if m:
-                            LOG.info('Layer tarball contains deleted file: %s'
-                                     % mem.name)
+                    with tempfile.NamedTemporaryFile(delete=False) as tf:
+                        LOG.info('Temporary file for layer is %s' % tf.name)
+                        for chunk in r.iter_content(8192):
+                            tf.write(d.decompress(chunk))
+                            h.update(chunk)
+
+                    if h.hexdigest() != layer_filename:
+                        LOG.error('Hash verification failed for layer (%s vs %s)'
+                                  % (layer_filename, h.hexdigest()))
+                        sys.exit(1)
+
+                    image_tar.add(tf.name)
+                    tar_manifest[0]['Layers'].append(layer_filename)
+
+                    with tarfile.open(tf.name) as layer:
+                        for mem in layer.getmembers():
+                            m = DELETED_FILE_RE.match(mem.name)
+                            if m:
+                                LOG.info('Layer tarball contains deleted file: %s'
+                                         % mem.name)
+
+                finally:
+                    os.unlink(tf.name)
 
             LOG.info('Writing manifest file to tarball')
             encoded_manifest = json.dumps(tar_manifest).encode('utf-8')

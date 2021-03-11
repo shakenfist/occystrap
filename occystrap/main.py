@@ -14,6 +14,7 @@ LOG.setLevel(logging.INFO)
 @click.pass_context
 def cli(ctx, verbose=None):
     if verbose:
+        logging.basicConfig(level=logging.DEBUG)
         LOG.setLevel(logging.DEBUG)
 
 
