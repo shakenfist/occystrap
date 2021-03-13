@@ -2,6 +2,7 @@ import click
 import logging
 
 from occystrap import docker_registry
+from occystrap import output_tarfile
 
 logging.basicConfig(level=logging.INFO)
 
@@ -26,7 +27,10 @@ def cli(ctx, verbose=None):
 @click.pass_context
 def fetch(ctx, registry, image, tag, tarfile):
     img = docker_registry.Image(registry, image, tag)
-    img.fetch(tarfile)
+    tar = output_tarfile.TarWriter(image, tag, tarfile)
+    for image_element in img.fetch():
+        tar.process_image_element(*image_element)
+    tar.finalize()
 
 
 cli.add_command(fetch)
