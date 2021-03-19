@@ -28,6 +28,9 @@ class TarWriter(object):
             'RepoTags': ['%s:%s' % (self.image.split('/')[-1], self.tag)]
         }]
 
+    def fetch_callback(self, digest):
+        return True
+
     def process_image_element(self, element_type, name, data):
         if element_type == constants.CONFIG_FILE:
             LOG.info('Writing config file to tarball')

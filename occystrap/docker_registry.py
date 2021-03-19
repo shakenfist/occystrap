@@ -21,6 +21,10 @@ LOG.setLevel(logging.INFO)
 DELETED_FILE_RE = re.compile('.*/\.wh\.(.*)$')
 
 
+def always_fetch():
+    return True
+
+
 class Image(object):
     def __init__(self, registry, image, tag):
         self.registry = registry
@@ -52,7 +56,7 @@ class Image(object):
             return util.request_url(
                 method, url, headers=headers, data=data, stream=stream)
 
-    def fetch(self):
+    def fetch(self, fetch_callback=always_fetch):
         LOG.info('Fetching manifest')
         r = self.request_url(
             'GET',
@@ -89,6 +93,12 @@ class Image(object):
 
         LOG.info('There are %d image layers' % len(manifest['layers']))
         for layer in manifest['layers']:
+            layer_filename = layer['digest'].split(':')[1]
+            if not fetch_callback(layer_filename):
+                LOG.info('Fetch callback says skip layer %s' % layer['digest'])
+                yield(constants.IMAGE_LAYER, layer_filename, None)
+                continue
+
             LOG.info('Fetching layer %s (%d bytes)'
                      % (layer['digest'], layer['size']))
             r = self.request_url(
@@ -116,7 +126,6 @@ class Image(object):
                         tf.write(d.decompress(chunk))
                         h.update(chunk)
 
-                layer_filename = layer['digest'].split(':')[1]
                 if h.hexdigest() != layer_filename:
                     LOG.error('Hash verification failed for layer (%s vs %s)'
                               % (name, h.hexdigest()))

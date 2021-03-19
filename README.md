@@ -67,14 +67,14 @@ occystrap recreate-image merged_images homeassistant/home-assistant latest ha-la
 
 ## Exploring the contents of layers and overwritten files
 
-Similarly, if you'd like the layers to be expanded from their tarballs to the filesystem, you can pass the `--expand` argument to `fetch-to-extracted` to have them extracted. This will also create a filesystem at the name of the manifest which is the final state of the image (the layers applied sequentiall). This is created using symlinks to the files from the various expanded layers, so you can see which layer contributed a given file:
+Similarly, if you'd like the layers to be expanded from their tarballs to the filesystem, you can pass the `--expand` argument to `fetch-to-extracted` to have them extracted. This will also create a filesystem at the name of the manifest which is the final state of the image (the layers applied sequential). For example:
 
 ```
-occystrap fetch-to-extracted --use-unique-names --expand quay.io \
+occystrap fetch-to-extracted --expand quay.io \
     ukhomeofficedigital/centos-base latest ukhomeoffice-centos
 ```
 
-Note that layers delete files from previous layers with files named ".wh.$previousfilename". These files are _not_ processed in the expanded layers, so that they are visible to the user. They _are_ processed in the merged filesystem named for the manifest file. Note that I have experienced some unreliability at creating the merged layer on macos, so I'd recommend Linux for this usage. There can also be some interesting issues around permissions, as files created by this extraction will honor what is specified in the tarball for the layer. You may need to escalate your permissions to clean up an expanded directory when you're done.
+Note that layers delete files from previous layers with files named ".wh.$previousfilename". These files are _not_ processed in the expanded layers, so that they are visible to the user. They are however processed in the merged layer named for the manifest file.
 
 ## Reducing the size of an image by removing overwritten files
 

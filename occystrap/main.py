@@ -22,7 +22,7 @@ def cli(ctx, verbose=None):
 
 def _fetch(registry, image, tag, output):
     img = docker_registry.Image(registry, image, tag)
-    for image_element in img.fetch():
+    for image_element in img.fetch(fetch_callback=output.fetch_callback):
         output.process_image_element(*image_element)
     output.finalize()
 
@@ -39,6 +39,9 @@ def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names, expand
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand)
     _fetch(registry, image, tag, d)
+
+    if expand:
+        d.write_bundle()
 
 
 cli.add_command(fetch_to_extracted)
