@@ -5,14 +5,24 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 import sys
+import tarfile
+import tempfile
+import zlib
 
 from occystrap import constants
 from occystrap import util
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
+
+DELETED_FILE_RE = re.compile('.*/\.wh\.(.*)$')
+
+
+def always_fetch():
+    return True
 
 
 class Image(object):
@@ -46,7 +56,7 @@ class Image(object):
             return util.request_url(
                 method, url, headers=headers, data=data, stream=stream)
 
-    def fetch(self):
+    def fetch(self, fetch_callback=always_fetch):
         LOG.info('Fetching manifest')
         r = self.request_url(
             'GET',
@@ -83,6 +93,12 @@ class Image(object):
 
         LOG.info('There are %d image layers' % len(manifest['layers']))
         for layer in manifest['layers']:
+            layer_filename = layer['digest'].split(':')[1]
+            if not fetch_callback(layer_filename):
+                LOG.info('Fetch callback says skip layer %s' % layer['digest'])
+                yield(constants.IMAGE_LAYER, layer_filename, None)
+                continue
+
             LOG.info('Fetching layer %s (%d bytes)'
                      % (layer['digest'], layer['size']))
             r = self.request_url(
@@ -95,7 +111,37 @@ class Image(object):
                 },
                 stream=True)
 
-            layer_filename = layer['digest'].split(':')[1]
-            yield(constants.IMAGE_LAYER, layer_filename, r)
+            # We can use zlib for streaming decompression, but we need to tell it
+            # to ignore the gzip header which it doesn't understand. Unfortunately
+            # tarfile doesn't do streaming writes (and we need to know the
+            # decompressed size before we can write to the tarfile), so we stream
+            # to a temporary file on disk.
+            try:
+                h = hashlib.sha256()
+                d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+
+                with tempfile.NamedTemporaryFile(delete=False) as tf:
+                    LOG.info('Temporary file for layer is %s' % tf.name)
+                    for chunk in r.iter_content(8192):
+                        tf.write(d.decompress(chunk))
+                        h.update(chunk)
+
+                if h.hexdigest() != layer_filename:
+                    LOG.error('Hash verification failed for layer (%s vs %s)'
+                              % (name, h.hexdigest()))
+                    sys.exit(1)
+
+                with tarfile.open(tf.name) as layer:
+                    for mem in layer.getmembers():
+                        m = DELETED_FILE_RE.match(mem.name)
+                        if m:
+                            LOG.info('Layer tarball contains deleted file: %s'
+                                     % mem.name)
+
+                with open(tf.name, 'rb') as f:
+                    yield(constants.IMAGE_LAYER, layer_filename, f)
+
+            finally:
+                os.unlink(tf.name)
 
         LOG.info('Done')
