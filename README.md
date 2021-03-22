@@ -75,8 +75,3 @@ occystrap fetch-to-extracted --expand quay.io \
 ```
 
 Note that layers delete files from previous layers with files named ".wh.$previousfilename". These files are _not_ processed in the expanded layers, so that they are visible to the user. They are however processed in the merged layer named for the manifest file.
-
-## Reducing the size of an image by removing overwritten files
-
-
-
