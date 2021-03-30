@@ -1,6 +1,10 @@
 # A simple implementation of a docker registry client. Fetches an image to a tarball.
 # With a big nod to https://github.com/NotGlop/docker-drag/blob/master/docker_pull.py
 
+# https://docs.docker.com/registry/spec/manifest-v2-2/ documents the image manifest
+# format, noting that the response format you get back varies based on what you have
+# in your accept header for the request.
+
 import hashlib
 import io
 import json
@@ -26,10 +30,14 @@ def always_fetch():
 
 
 class Image(object):
-    def __init__(self, registry, image, tag):
+    def __init__(self, registry, image, tag, os='linux', architecture='amd64', variant=''):
         self.registry = registry
         self.image = image
         self.tag = tag
+        self.os = os
+        self.architecture = architecture
+        self.variant = variant
+
         self._cached_auth = None
 
     def request_url(self, method, url, headers=None, data=None, stream=False):
@@ -66,8 +74,45 @@ class Image(object):
                 'image': self.image,
                 'tag': self.tag
             },
-            headers={'Accept': 'application/vnd.docker.distribution.manifest.v2+json'})
-        manifest = r.json()
+            headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json,'
+                                'application/vnd.docker.distribution.manifest.list.v2+json')})
+
+        config_digest = None
+        if r.headers['Content-Type'] == 'application/vnd.docker.distribution.manifest.v2+json':
+            manifest = r.json()
+            config_digest = manifest['config']['digest']
+        elif r.headers['Content-Type'] == 'application/vnd.docker.distribution.manifest.list.v2+json':
+            for m in r.json()['manifests']:
+                if 'variant' in m['platform']:
+                    LOG.info('Found manifest for %s on %s %s'
+                             % (m['platform']['os'], m['platform']['architecture'],
+                                m['platform']['variant']))
+                else:
+                    LOG.info('Found manifest for %s on %s'
+                             % (m['platform']['os'], m['platform']['architecture']))
+
+                if (m['platform']['os'] == self.os and
+                    m['platform']['architecture'] == self.architecture and
+                        m['platform'].get('variant', '') == self.variant):
+                    LOG.info('Fetching matching manifest')
+                    r = self.request_url(
+                        'GET',
+                        'https://%(registry)s/v2/%(image)s/manifests/%(tag)s'
+                        % {
+                            'registry': self.registry,
+                            'image': self.image,
+                            'tag': m['digest']
+                        },
+                        headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json')})
+                    manifest = r.json()
+                    config_digest = manifest['config']['digest']
+
+            if not config_digest:
+                raise Exception('Could not find a matching manifest for this '
+                                'os / architecture / variant')
+        else:
+            raise Exception('Unknown manifest content type %s!' %
+                            r.headers['Content-Type'])
 
         LOG.info('Fetching config file')
         r = self.request_url(
@@ -76,18 +121,17 @@ class Image(object):
             % {
                 'registry': self.registry,
                 'image': self.image,
-                'config': manifest['config']['digest']
+                'config': config_digest
             })
         config = r.content
         h = hashlib.sha256()
         h.update(config)
-        if h.hexdigest() != manifest['config']['digest'].split(':')[1]:
+        if h.hexdigest() != config_digest.split(':')[1]:
             LOG.error('Hash verification failed for image config blob (%s vs %s)'
-                      % (manifest['config']['digest'].split(':')[1], h.hexdigest()))
+                      % (config_digest.split(':')[1], h.hexdigest()))
             sys.exit(1)
 
-        config_filename = ('%s.json'
-                           % manifest['config']['digest'].split(':')[1])
+        config_filename = ('%s.json' % config_digest.split(':')[1])
         yield (constants.CONFIG_FILE, config_filename,
                io.BytesIO(config))
 
