@@ -1,0 +1,274 @@
+- hosts: localhost
+  gather_facts: yes
+  connection: ssh
+  vars:
+    identifier: unknown
+    source_path: "/home/jenkins/src/occystrap/"
+    base_image: "https://sfcbr.shakenfist.com/static/ubuntu2004-ci-template.qcow2"
+    base_image_user: "ubuntu"
+
+  tasks:
+    - name: Create a CI network
+      sf_network:
+        netblock: "10.0.0.0/24"
+        name: "{{identifier|truncate(50, True, '---')|replace('_','-')}}"
+      register: cinetwork
+
+    - name: Log network details
+      debug:
+        msg: "Network is {{cinetwork['meta']['uuid']}}"
+
+    - name: Create an instance
+      sf_instance:
+        name: "{{identifier|truncate(50, True, '---')|replace('_','-')}}-primary"
+        cpu: 4
+        ram: 4096
+        disks:
+          - "30@{{base_image}}"
+        networkspecs:
+          - network_uuid="{{cinetwork['meta']['uuid']}}",float=True
+        ssh_key: ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC+482i1EYa6FYmDrjOQpsm+mVwFs7TW9xOI9o1jc/PHXLDDg5+inp/vVAgKoV6jijwRC9juwjFBPqr8LyXh3lXhPA1LSaQa39o3QIYTLsLuLZPeueUB8UukZzOH0XAHxgAF/qFycf5pWzD4Pzs5HjNi44+9LCDYKJtc45kh3+97iezRMYhucm3wzRAKyA8mr8nNOrQq356sKgXeMP6nnX4bhUJDrcQpfsRFkTcYWAcSuU36eSETVOj9dGUJZlc4g3QBL73R1S5VWbN6DM4UIOSWxRG6oUKprgHSvFmyp5i7S0vKv7q101PcxOw14GOvI8TSirIa8O39WtyX3ugReBj mikal@sf-primary
+        state: present
+      register: primary
+
+    - name: Add instance to ansible
+      add_host:
+        hostname: primary
+        ansible_ssh_host: "{{primary['meta']['network_interfaces'][0]['floating']}}"
+        ansible_ssh_extra_args: "-o StrictHostKeyChecking=no -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_user: "{{base_image_user}}"
+        ansible_ssh_private_key_file: "/home/jenkins/id_ci"
+        groups: ci
+
+    - name: Wait for all instances to present an "OpenSSH" prompt
+      wait_for:
+        port: 22
+        host: "{{hostvars[item]['ansible_ssh_host']}}"
+        search_regex: OpenSSH
+        delay: 10
+      with_items: "{{ groups['ci'] }}"
+
+- hosts: ci
+  gather_facts: yes
+  become: true
+  vars:
+    source_path: "/home/jenkins/src/occystrap/"
+
+  tasks:
+    - name: Use CI package cache to speed things up
+      copy:
+        content: |
+          Acquire::http::Proxy "http://192.168.1.50:8000";
+        dest: /etc/apt/apt.conf.d/00proxy
+        owner: root
+        group: root
+        mode: u=r,g=r,o=r
+
+    - name: apt-get dist-upgrade
+      apt:
+        update_cache: yes
+        upgrade: dist
+        autoremove: yes
+
+    # TODO(mikal): dial this back once we have things working.
+    - name: Install dependencies
+      apt:
+        name:
+          [
+            git,
+            python3-dev,
+            python3-setuptools,
+            python3-pip,
+            python3-wheel,
+            python3,
+            tox,
+          ]
+        state: latest
+
+    - name: pip3 self-upgrade
+      command: pip3 install -U pip
+
+    - name: Remove python3-pip
+      apt:
+        name: python3-pip
+        state: absent
+
+- hosts: localhost
+  gather_facts: yes
+  vars:
+    source_path: "/home/jenkins/src/occystrap/"
+
+  tasks:
+    - name: Build wheel
+      shell: |
+        rm dist/*
+        python3 setup.py sdist bdist_wheel
+      args:
+        chdir: "{{source_path}}"
+
+    - name: Determine wheel filename
+      shell: ls dist | egrep "occystrap.*\.whl"
+      args:
+        chdir: "{{source_path}}"
+      register: wheel_file_complex
+
+    - name: Extract the wheel filename
+      set_fact:
+        wheel_file: "{{wheel_file_complex.stdout}}"
+
+    - debug:
+        msg: "Wheel file: {{wheel_file}}"
+
+- hosts: ci
+  gather_facts: yes
+  become: true
+  vars:
+    source_path: "/home/jenkins/src/occystrap/"
+
+  tasks:
+    - name: Copy wheel file
+      copy:
+        src: "{{source_path}}/dist/{{hostvars['localhost']['wheel_file']}}"
+        dest: "/tmp/{{hostvars['localhost']['wheel_file']}}"
+
+    - name: Install wheel
+      shell: |
+        pip3 install /tmp/occystrap*whl
+
+    - name: Install required OS packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        state: latest
+        update_cache: yes
+
+    - name: Add Docker apt key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb https://download.docker.com/linux/ubuntu {{ansible_lsb.codename}} stable
+        state: present
+
+    - name: Install docker packages
+      apt:
+        name:
+          - docker-ce
+        state: latest
+        update_cache: yes
+
+    - name: Make /etc/docker
+      file:
+        dest: /etc/docker
+        state: directory
+        mode: u+rwx,g=rx,o=rx
+
+    - name: Configure our local registry to be insecure
+      copy:
+        src: files/docker_daemon.json
+        dest: /etc/docker/daemon.json
+        owner: root
+        mode: u=rw,g=r,o=r
+
+    - name: Restart docker
+      systemd:
+        name: docker
+        state: restarted
+        enabled: yes
+
+    - name: Setup docker registry
+      copy:
+        src: files/docker_registry.service
+        dest: /etc/systemd/system/docker_registry.service
+        owner: root
+        mode: u=rw,g=r,o=r
+
+    - name: Start docker registry
+      systemd:
+        name: docker_registry
+        state: reloaded
+        enabled: yes
+
+    # Test one: fetch busybox and load it into the registry
+    - name: Fetch and load busybox
+      shell: |
+        # Fetch image
+        occystrap fetch-to-tarfile registry-1.docker.io library/busybox \
+            latest busybox.tar
+
+        # Load image and push to registry
+        docker load --quiet -i busybox.tar
+        docker tag busybox 127.0.0.1:5000/busybox:latest
+        docker push --quiet 127.0.0.1:5000/busybox:latest
+        rm busybox.tar
+
+        # Delete local version of image
+        docker image rm busybox
+
+        # Run a test container to validate pull from registry
+        docker run --name busybox-test -d 127.0.0.1:5000/busybox:latest
+        sleep 10
+        docker ps | grep busybox-test
+        docker rm -f busybox-test
+
+    # Test two: fetch busybox and load it into the registry
+    - name: Fetch and load centos 7
+      shell: |
+        # Fetch image
+        occystrap fetch-to-extracted registry-1.docker.io library/centos 7 centos7
+        cd centos7; tar -cf ../centos7.tar *
+
+        # Load image and push to registry
+        docker load --quiet -i centos7.tar
+        docker tag centos 127.0.0.1:5000/centos:7
+        docker push --quiet 127.0.0.1:5000/centos:7
+        rm -rf centos7 centos7.tar
+
+        # Delete local version of image
+        docker image rm centos
+
+        # Run a test container to validate pull from registry
+        docker run --name centos-test -d 127.0.0.1:5000/centos:7
+        sleep 10
+        docker ps | grep centos-test
+        docker rm -f centos-test
+
+    # Test three: fetch a bunch of images and store them in a merged directory
+    - name: Fetch and load a variety of homeassistant images
+      shell: |
+        occystrap fetch-to-extracted --use-unique-names registry-1.docker.io \
+            homeassistant/home-assistant latest merged_images
+        occystrap fetch-to-extracted --use-unique-names registry-1.docker.io \
+            homeassistant/home-assistant stable merged_images
+        occystrap fetch-to-extracted --use-unique-names registry-1.docker.io \
+            homeassistant/home-assistant 2021.3.0.dev20210219 merged_images
+
+        # Recreate one of the images
+        occystrap recreate-image merged_images homeassistant/home-assistant latest \
+            ha-latest.tar
+
+        # Load image and push to registry
+        docker load --quiet -i ha-latest.tar
+        docker tag homeassistant 127.0.0.1:5000/homeassistant:latest
+        docker push --quiet 127.0.0.1:5000/homeassistant:latest
+        rm ha-latest.tar
+
+        # Delete local version of image
+        docker image rm homeassistant
+
+        # Run a test container to validate pull from registry
+        docker run --name homeassistant-test -d 127.0.0.1:5000/homeassistant:latest
+        sleep 10
+        docker ps | grep homeassistant-test
+        docker rm -f homeassistant-test
+
+    # Test three: test expand
+    - name: Fetch and expand an image
+      shell: |
+        occystrap fetch-to-extracted --expand quay.io \
+            ukhomeofficedigital/centos-base latest ukhomeoffice-centos

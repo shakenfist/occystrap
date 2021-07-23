@@ -1,0 +1,18 @@
+[Unit]
+Description=Docker Registry
+After=docker.service
+Requires=docker.service
+
+[Service]
+TimeoutStartSec=0
+Restart=always
+ExecStartPre=-/usr/bin/docker stop %n
+ExecStartPre=-/usr/bin/docker rm %n
+ExecStartPre=/usr/bin/docker pull registry:2
+ExecStartPre=mkdir -p /srv/docker_cache
+ExecStart=/usr/bin/docker run --rm --name %n \
+    -p 5000:5000 -v /srv/docker_cache:/var/lib/registry \
+    registry:2
+
+[Install]
+WantedBy=multi-user.target

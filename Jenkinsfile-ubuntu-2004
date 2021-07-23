@@ -1,0 +1,43 @@
+pipeline {
+  agent any
+  options {
+    timeout(time: 1, unit: 'HOURS')
+  }
+
+  stages {
+    stage('Build infra') {
+      steps {
+        sh '''  SOURCE_PATH="$WORKSPACE"
+
+                cd $SOURCE_PATH
+                . /home/jenkins/sf-ci
+                ansible-playbook -i /home/jenkins/hosts \
+                    --extra-vars "identifier=$BUILD_TAG source_path=$SOURCE_PATH base_image=https://sfcbr.shakenfist.com/static/ubuntu2004-ci-template.qcow2 base_image_user=ubuntu" \
+                    ci.yml
+            '''
+      }
+    }
+  }
+
+  post {
+    always {
+      sh '''  . /home/jenkins/sf-ci
+              safe_build_tag=`echo $BUILD_TAG | tr "_" "-"`
+              if [ -e $source_path/keepme ]
+              then
+                echo "Retaining CI environment because you asked nicely."
+              else
+                for uuid in `sf-client --simple instance list | grep $safe_build_tag | cut -f 1 -d ","`
+                do
+                  sf-client instance delete $uuid
+                done
+
+                for uuid in `sf-client --simple network list | grep $safe_build_tag | cut -f 1 -d ","`
+                do
+                  sf-client network delete $uuid
+                done
+              fi
+          '''
+    }
+  }
+}
