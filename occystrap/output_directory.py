@@ -1,11 +1,7 @@
-import hashlib
 import json
 import logging
 import os
-import prettytable
-import sys
 import tarfile
-import zlib
 
 from occystrap import constants
 
@@ -128,7 +124,7 @@ class DirWriter(object):
     def _create_bundle_path(self, path):
         d = self.bundle
         for elem in path.split('/'):
-            if not elem in d:
+            if elem not in d:
                 d[elem] = {}
             d = d[elem]
         return d
@@ -215,11 +211,11 @@ class DirWriter(object):
             f.write(json.dumps(c, indent=4, sort_keys=True))
 
     def write_bundle(self):
-        LOG.info('Writing image bundle')
         manifest_filename = self._manifest_filename()
         manifest_path = os.path.join(self.image_path, manifest_filename)
         if not os.path.exists(manifest_path):
             os.makedirs(manifest_path)
+        LOG.info('Writing image bundle to %s' % manifest_path)
 
         # Reading tarfiles is expensive, as tarfile needs to scan the
         # entire file to find the right entry. It builds a cache while
@@ -251,13 +247,13 @@ class DirWriter(object):
             with tarfile.open(os.path.join(self.image_path, tarpath)) as layer:
                 for ent in entities_by_layer[tarpath]:
                     entdest = os.path.join(manifest_path, ent.name)
-                    layer.extract(ent.name, path=entdest)
+                    layer.extract(ent.name, path=os.path.split(entdest)[0])
 
         for tarpath in deferred_by_layer:
             with tarfile.open(os.path.join(self.image_path, tarpath)) as layer:
                 for ent in deferred_by_layer[tarpath]:
                     entdest = os.path.join(manifest_path, ent.name)
-                    layer.extract(ent.name, path=entdest)
+                    layer.extract(ent.name, path=os.path.split(entdest)[0])
 
 
 class NoSuchImageException(Exception):
@@ -276,9 +272,9 @@ class DirReader(object):
             with open(catalog_path, 'r') as f:
                 c = json.loads(f.read())
 
-        if not self.image in c:
+        if self.image not in c:
             raise NoSuchImageException(self.image)
-        if not self.tag in c[self.image]:
+        if self.tag not in c[self.image]:
             raise NoSuchImageException(self.image)
 
         self.manifest_filename = c[self.image][self.tag]
