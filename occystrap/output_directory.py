@@ -124,7 +124,7 @@ class DirWriter(object):
     def _create_bundle_path(self, path):
         d = self.bundle
         for elem in path.split('/'):
-            if not elem in d:
+            if elem not in d:
                 d[elem] = {}
             d = d[elem]
         return d
@@ -272,9 +272,9 @@ class DirReader(object):
             with open(catalog_path, 'r') as f:
                 c = json.loads(f.read())
 
-        if not self.image in c:
+        if self.image not in c:
             raise NoSuchImageException(self.image)
-        if not self.tag in c[self.image]:
+        if self.tag not in c[self.image]:
             raise NoSuchImageException(self.image)
 
         self.manifest_filename = c[self.image][self.tag]
