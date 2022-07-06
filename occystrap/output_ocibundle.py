@@ -19,7 +19,7 @@ class OCIBundleWriter(DirWriter):
             image, tag, image_path, expand=True)
 
     def finalize(self):
-        pass
+        self._log_bundle()
 
     def write_bundle(self):
         rootfs_path = os.path.join(self.image_path, 'rootfs')

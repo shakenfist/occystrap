@@ -1,8 +1,9 @@
 import click
 import logging
 
-from occystrap import docker_registry, output_ocibundle
+from occystrap import docker_registry
 from occystrap import output_directory
+from occystrap import output_ocibundle
 from occystrap import output_tarfile
 
 logging.basicConfig(level=logging.INFO)
@@ -29,9 +30,9 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None):
     ctx.obj['VARIANT'] = variant
 
 
-def _fetch(registry, image, tag, output, os, architecture, variant):
+def _fetch(registry, image, tag, output, os, architecture, variant, secure=True):
     img = docker_registry.Image(
-        registry, image, tag, os, architecture, variant)
+        registry, image, tag, os, architecture, variant, secure=secure)
     for image_element in img.fetch(fetch_callback=output.fetch_callback):
         output.process_image_element(*image_element)
     output.finalize()
@@ -44,12 +45,14 @@ def _fetch(registry, image, tag, output, os, architecture, variant):
 @click.argument('path')
 @click.option('--use-unique-names', is_flag=True)
 @click.option('--expand', is_flag=True)
+@click.option('--insecure', is_flag=True, default=False)
 @click.pass_context
-def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names, expand):
+def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names,
+                       expand, insecure):
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand)
     _fetch(registry, image, tag, d, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
-           ctx.obj['VARIANT'])
+           ctx.obj['VARIANT'], secure=(not insecure))
 
     if expand:
         d.write_bundle()
@@ -63,11 +66,12 @@ cli.add_command(fetch_to_extracted)
 @click.argument('image')
 @click.argument('tag')
 @click.argument('path')
+@click.option('--insecure', is_flag=True, default=False)
 @click.pass_context
-def fetch_to_oci(ctx, registry, image, tag, path):
+def fetch_to_oci(ctx, registry, image, tag, path, insecure):
     d = output_ocibundle.OCIBundleWriter(image, tag, path)
     _fetch(registry, image, tag, d, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
-           ctx.obj['VARIANT'])
+           ctx.obj['VARIANT'], secure=(not insecure))
     d.write_bundle()
 
 
@@ -79,11 +83,12 @@ cli.add_command(fetch_to_oci)
 @click.argument('image')
 @click.argument('tag')
 @click.argument('tarfile')
+@click.option('--insecure', is_flag=True, default=False)
 @click.pass_context
-def fetch_to_tarfile(ctx, registry, image, tag, tarfile):
+def fetch_to_tarfile(ctx, registry, image, tag, tarfile, insecure):
     tar = output_tarfile.TarWriter(image, tag, tarfile)
     _fetch(registry, image, tag, tar, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
-           ctx.obj['VARIANT'])
+           ctx.obj['VARIANT'], secure=(not insecure))
 
 
 cli.add_command(fetch_to_tarfile)

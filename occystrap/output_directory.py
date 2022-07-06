@@ -163,16 +163,39 @@ class DirWriter(object):
                 # Build a in-memory map of the layout of the final image bundle
                 with tarfile.open(layer_file_in_dir) as layer:
                     for mem in layer.getmembers():
-                        filename = os.path.split(mem.name)[1]
-                        if filename.startswith('.wh.'):
+                        path = mem.name
+                        dirname, filename = os.path.split(mem.name)
+
+                        # Some light reading on how this works...
+                        # https://github.com/opencontainers/image-spec/blob/main/layer.md#opaque-whiteout
+                        if filename == '.wh..wh..opq':
+                            # A deleted directory, but only for layers below
+                            # this one.
+                            for ent in self.bundle:
+                                if (ent.startswith(dirname) and
+                                        self.bundle[ent][-1].tarpath != layer_file):
+                                    self.bundle[ent].append(
+                                        BundleDeletedFile(ent, layer_file, mem))
+                            continue
+
+                        elif filename.startswith('.wh.'):
+                            # A single deleted element, which might not be a
+                            # file.
+                            path = os.path.join(dirname, filename[4:])
+                            if type(self.bundle[path][-1]) is BundleDirectory:
+                                for ent in self.bundle:
+                                    if ent.startswith(path):
+                                        self.bundle[ent].append(
+                                            BundleDeletedFile(ent, layer_file, mem))
+
                             serialized = BundleDeletedFile(
-                                mem.name, layer_file, mem)
+                                path, layer_file, mem)
                         else:
                             serialized = TARFILE_TYPE_MAP[mem.type](
                                 mem.name, layer_file, mem)
 
-                        self.bundle.setdefault(mem.name, [])
-                        self.bundle[mem.name].append(serialized)
+                        self.bundle.setdefault(path, [])
+                        self.bundle[path].append(serialized)
 
     def _log_bundle(self):
         savings = 0
@@ -180,10 +203,15 @@ class DirWriter(object):
         for path in self.bundle:
             versions = len(self.bundle[path])
             if versions > 1:
-                LOG.info('Bundle path %s has %d versions'
+                path_savings = 0
+                LOG.info('Bundle path "%s" has %d versions'
                          % (path, versions))
                 for ver in self.bundle[path][:-1]:
-                    savings += ver.size
+                    path_savings += ver.size
+                if type(self.bundle[path][-1]) is BundleDeletedFile:
+                    LOG.info('Bundle path "%s" final version is a deleted file, '
+                             'which wasted %d bytes.' % (path, path_savings))
+                savings += path_savings
 
         LOG.info('Flattening image would save %d bytes' % savings)
 
