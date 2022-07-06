@@ -7,7 +7,6 @@
 
 import hashlib
 import io
-import json
 import logging
 import os
 import re
@@ -22,7 +21,7 @@ from occystrap import util
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
 
-DELETED_FILE_RE = re.compile('.*/\.wh\.(.*)$')
+DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
 
 
 def always_fetch():
