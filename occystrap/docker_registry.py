@@ -171,7 +171,7 @@ class Image(object):
 
                 if h.hexdigest() != layer_filename:
                     LOG.error('Hash verification failed for layer (%s vs %s)'
-                              % (name, h.hexdigest()))
+                              % (layer_filename, h.hexdigest()))
                     sys.exit(1)
 
                 with tarfile.open(tf.name) as layer:

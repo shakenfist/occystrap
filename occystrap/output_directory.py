@@ -130,8 +130,7 @@ class DirWriter(object):
         return d
 
     def fetch_callback(self, digest):
-        layer_file_in_dir = os.path.join(self.image_path,
-                                         digest, 'layer.tar')
+        layer_file_in_dir = os.path.join(self.image_path, digest, 'layer.tar')
         LOG.info('Layer file is %s' % layer_file_in_dir)
         return not os.path.exists(layer_file_in_dir)
 
@@ -186,8 +185,7 @@ class DirWriter(object):
                 for ver in self.bundle[path][:-1]:
                     savings += ver.size
 
-        LOG.info('Flattening image would save %d bytes'
-                 % savings)
+        LOG.info('Flattening image would save %d bytes' % savings)
 
     def finalize(self):
         if self.expand:
@@ -210,13 +208,7 @@ class DirWriter(object):
         with open(catalog_path, 'w') as f:
             f.write(json.dumps(c, indent=4, sort_keys=True))
 
-    def write_bundle(self):
-        manifest_filename = self._manifest_filename()
-        manifest_path = os.path.join(self.image_path, manifest_filename)
-        if not os.path.exists(manifest_path):
-            os.makedirs(manifest_path)
-        LOG.info('Writing image bundle to %s' % manifest_path)
-
+    def _extract_rootfs(self, rootfs_path):
         # Reading tarfiles is expensive, as tarfile needs to scan the
         # entire file to find the right entry. It builds a cache while
         # doing this however, so performance improves if you access a
@@ -246,14 +238,22 @@ class DirWriter(object):
         for tarpath in entities_by_layer:
             with tarfile.open(os.path.join(self.image_path, tarpath)) as layer:
                 for ent in entities_by_layer[tarpath]:
-                    entdest = os.path.join(manifest_path, ent.name)
+                    entdest = os.path.join(rootfs_path, ent.name)
                     layer.extract(ent.name, path=os.path.split(entdest)[0])
 
         for tarpath in deferred_by_layer:
             with tarfile.open(os.path.join(self.image_path, tarpath)) as layer:
                 for ent in deferred_by_layer[tarpath]:
-                    entdest = os.path.join(manifest_path, ent.name)
+                    entdest = os.path.join(rootfs_path, ent.name)
                     layer.extract(ent.name, path=os.path.split(entdest)[0])
+
+    def write_bundle(self):
+        manifest_filename = self._manifest_filename()
+        manifest_path = os.path.join(self.image_path, manifest_filename)
+        if not os.path.exists(manifest_path):
+            os.makedirs(manifest_path)
+        LOG.info('Writing image bundle to %s' % manifest_path)
+        self._extract_rootfs(manifest_path)
 
 
 class NoSuchImageException(Exception):

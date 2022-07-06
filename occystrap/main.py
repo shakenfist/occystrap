@@ -1,7 +1,7 @@
 import click
 import logging
 
-from occystrap import docker_registry
+from occystrap import docker_registry, output_ocibundle
 from occystrap import output_directory
 from occystrap import output_tarfile
 
@@ -48,8 +48,8 @@ def _fetch(registry, image, tag, output, os, architecture, variant):
 def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names, expand):
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand)
-    _fetch(registry, image, tag, d,
-           ctx.obj['OS'], ctx.obj['ARCHITECTURE'], ctx.obj['VARIANT'])
+    _fetch(registry, image, tag, d, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+           ctx.obj['VARIANT'])
 
     if expand:
         d.write_bundle()
@@ -62,12 +62,28 @@ cli.add_command(fetch_to_extracted)
 @click.argument('registry')
 @click.argument('image')
 @click.argument('tag')
+@click.argument('path')
+@click.pass_context
+def fetch_to_oci(ctx, registry, image, tag, path):
+    d = output_ocibundle.OCIBundleWriter(image, tag, path)
+    _fetch(registry, image, tag, d, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+           ctx.obj['VARIANT'])
+    d.write_bundle()
+
+
+cli.add_command(fetch_to_oci)
+
+
+@click.command()
+@click.argument('registry')
+@click.argument('image')
+@click.argument('tag')
 @click.argument('tarfile')
 @click.pass_context
 def fetch_to_tarfile(ctx, registry, image, tag, tarfile):
     tar = output_tarfile.TarWriter(image, tag, tarfile)
-    _fetch(registry, image, tag, tar,
-           ctx.obj['OS'], ctx.obj['ARCHITECTURE'], ctx.obj['VARIANT'])
+    _fetch(registry, image, tag, tar, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+           ctx.obj['VARIANT'])
 
 
 cli.add_command(fetch_to_tarfile)
