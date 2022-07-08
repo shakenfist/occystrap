@@ -7,12 +7,10 @@
 
 import hashlib
 import io
-import json
 import logging
 import os
 import re
 import sys
-import tarfile
 import tempfile
 import zlib
 
@@ -22,7 +20,7 @@ from occystrap import util
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
 
-DELETED_FILE_RE = re.compile('.*/\.wh\.(.*)$')
+DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
 
 
 def always_fetch():
@@ -30,13 +28,15 @@ def always_fetch():
 
 
 class Image(object):
-    def __init__(self, registry, image, tag, os='linux', architecture='amd64', variant=''):
+    def __init__(self, registry, image, tag, os='linux', architecture='amd64', variant='',
+                 secure=True):
         self.registry = registry
         self.image = image
         self.tag = tag
         self.os = os
         self.architecture = architecture
         self.variant = variant
+        self.secure = secure
 
         self._cached_auth = None
 
@@ -66,10 +66,15 @@ class Image(object):
 
     def fetch(self, fetch_callback=always_fetch):
         LOG.info('Fetching manifest')
+        moniker = 'https'
+        if not self.secure:
+            moniker = 'http'
+
         r = self.request_url(
             'GET',
-            'https://%(registry)s/v2/%(image)s/manifests/%(tag)s'
+            '%(moniker)s://%(registry)s/v2/%(image)s/manifests/%(tag)s'
             % {
+                'moniker': moniker,
                 'registry': self.registry,
                 'image': self.image,
                 'tag': self.tag
@@ -97,8 +102,9 @@ class Image(object):
                     LOG.info('Fetching matching manifest')
                     r = self.request_url(
                         'GET',
-                        'https://%(registry)s/v2/%(image)s/manifests/%(tag)s'
+                        '%(moniker)s://%(registry)s/v2/%(image)s/manifests/%(tag)s'
                         % {
+                            'moniker': moniker,
                             'registry': self.registry,
                             'image': self.image,
                             'tag': m['digest']
@@ -117,8 +123,9 @@ class Image(object):
         LOG.info('Fetching config file')
         r = self.request_url(
             'GET',
-            'https://%(registry)s/v2/%(image)s/blobs/%(config)s'
+            '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(config)s'
             % {
+                'moniker': moniker,
                 'registry': self.registry,
                 'image': self.image,
                 'config': config_digest
@@ -147,8 +154,9 @@ class Image(object):
                      % (layer['digest'], layer['size']))
             r = self.request_url(
                 'GET',
-                'https://%(registry)s/v2/%(image)s/blobs/%(layer)s'
+                '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
                 % {
+                    'moniker': moniker,
                     'registry': self.registry,
                     'image': self.image,
                     'layer': layer['digest']
@@ -172,15 +180,8 @@ class Image(object):
 
                 if h.hexdigest() != layer_filename:
                     LOG.error('Hash verification failed for layer (%s vs %s)'
-                              % (name, h.hexdigest()))
+                              % (layer_filename, h.hexdigest()))
                     sys.exit(1)
-
-                with tarfile.open(tf.name) as layer:
-                    for mem in layer.getmembers():
-                        m = DELETED_FILE_RE.match(mem.name)
-                        if m:
-                            LOG.info('Layer tarball contains deleted file: %s'
-                                     % mem.name)
 
                 with open(tf.name, 'rb') as f:
                     yield(constants.IMAGE_LAYER, layer_filename, f)
