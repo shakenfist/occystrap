@@ -266,14 +266,12 @@ class DirWriter(object):
         for tarpath in entities_by_layer:
             with tarfile.open(os.path.join(self.image_path, tarpath)) as layer:
                 for ent in entities_by_layer[tarpath]:
-                    entdest = os.path.join(rootfs_path, ent.name)
-                    layer.extract(ent.name, path=os.path.split(entdest)[0])
+                    layer.extract(ent.name, path=rootfs_path)
 
         for tarpath in deferred_by_layer:
             with tarfile.open(os.path.join(self.image_path, tarpath)) as layer:
                 for ent in deferred_by_layer[tarpath]:
-                    entdest = os.path.join(rootfs_path, ent.name)
-                    layer.extract(ent.name, path=os.path.split(entdest)[0])
+                    layer.extract(ent.name, path=rootfs_path)
 
     def write_bundle(self):
         manifest_filename = self._manifest_filename()
