@@ -76,6 +76,23 @@ occystrap fetch-to-extracted --expand quay.io \
 
 Note that layers delete files from previous layers with files named ".wh.$previousfilename". These files are _not_ processed in the expanded layers, so that they are visible to the user. They are however processed in the merged layer named for the manifest file.
 
+## Generating an OCI runtime bundle
+
+This isn't fully supported yet, but you can extract an image to an OCI image bundle
+with the following command:
+
+```
+occystrap fetch-to-oci registry-1.docker.io library/hello-world latest bar
+```
+
+You should then be able to run that container by doing something like:
+
+```
+cd bar
+sudo apt-get install runc
+sudo runc run id-0001
+```
+
 ## Supporting non-default architectures
 
 Docker image repositories can store multiple versions of a single image, with each image corresponding to a different (operating system, cpu architecture, cpu variant) tuple. Occy Strap supports letting you specify which to use with global command line flags. Occy Strap defaults to linux amd64 if you don't specify something different. For example, to fetch the linux arm64 v8 image for busybox, you would run:
