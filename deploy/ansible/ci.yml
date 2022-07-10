@@ -209,3 +209,12 @@
         chdir: /srv/occystrap/deploy/occystrap_ci/testdata
       with_items:
         - deletion_layers
+
+    - name: Replace a localhost entry with our own
+      lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.0\.1'
+        line: 127.0.0.1 localhost primary
+        owner: root
+        group: root
+        mode: "0644"
