@@ -1,5 +1,6 @@
-click>=7.1.1        # bsd
-pbr                 # apache2
-requests            # apache2
-prettytable         # bsd
-oslo.concurrency    # apache2
+click>=7.1.1         # bsd
+pbr                  # apache2
+requests             # apache2
+prettytable          # bsd
+oslo.concurrency     # apache2
+shakenfist-utilities # apache2

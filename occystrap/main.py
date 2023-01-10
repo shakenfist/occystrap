@@ -1,6 +1,7 @@
 import click
 import logging
 import os
+from shakenfist_utilities import logs
 import sys
 
 from occystrap import docker_registry
@@ -9,10 +10,8 @@ from occystrap import output_mounts
 from occystrap import output_ocibundle
 from occystrap import output_tarfile
 
-logging.basicConfig(level=logging.INFO)
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 @click.group()
