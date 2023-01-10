@@ -1,0 +1,78 @@
+name: Functional tests
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  functional:
+    runs-on: self-hosted
+    timeout-minutes: 120
+
+    # NOTE(mikal): git repos are checked out to /srv/github/_work/{repo}/{repo}
+    # which is available as GITHUB_WORKSPACE. You can find other environment
+    # variables at https://docs.github.com/en/actions/learn-github-actions/environment-variables
+
+    steps:
+      - name: Remove previous unfinished runs
+        uses: n1hility/cancel-previous-runs@v2
+        with: 
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get rid of sudo error messages
+        run: |
+          hostname=$(cat /etc/hostname)
+          sudo chmod ugo+rw /etc/hosts
+          echo "127.0.1.1 $hostname" >> /etc/hosts
+
+      - name: Install minimum dependencies
+        run: |
+          echo 'Acquire::http::Proxy "http://192.168.1.50:8000";' > /tmp/00proxy
+          sudo mv /tmp/00proxy /etc/apt/apt.conf.d/
+          sudo apt-get update
+          sudo apt-get dist-upgrade -y
+          sudo apt-get install -y python3 python3-dev python3-pip python3-wheel apparmor docker.io runc
+          sudo systemctl restart apparmor
+
+      - name: Log docker setup
+        run: |
+          sudo chown debian.debian /var/run/docker.sock
+
+          echo "/var/run/docker.sock:"
+          sudo ls -l /var/run/docker.sock
+
+      - name: Checkout occystrap
+        uses: actions/checkout@v3
+        with:
+          path: occystrap
+          fetch-depth: 0
+
+      - name: Build occystrap wheel and install it
+        run: |
+          cd /srv/github/_work/occystrap/occystrap/occystrap
+          rm -f dist/*
+          python3 setup.py sdist bdist_wheel
+          pip3 install dist/occystrap*.whl
+
+      - name: Run a local docker registry to talk to, and populate it with test data
+        run: |
+          docker run -d -p 5000:5000 --restart=always --name registry registry:2
+          cd /srv/github/_work/occystrap/occystrap/occystrap/deploy/occystrap_ci/testdata
+
+          for img in deletion_layers; do
+            cd $img
+            docker build -t localhost:5000/occystrap_$img:latest .
+            docker push localhost:5000/occystrap_$img:latest
+            cd /srv/github/_work/occystrap/occystrap/occystrap/deploy/occystrap_ci/testdata
+          done
+
+      - name: Run functional tests
+        run: |
+          cd /srv/github/_work/occystrap/occystrap/occystrap/deploy
+          sudo pip3 install -r requirements.txt
+          sudo pip3 install -r test-requirements.txt
+          stestr run --concurrency=5

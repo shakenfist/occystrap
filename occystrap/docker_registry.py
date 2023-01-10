@@ -147,7 +147,7 @@ class Image(object):
             layer_filename = layer['digest'].split(':')[1]
             if not fetch_callback(layer_filename):
                 LOG.info('Fetch callback says skip layer %s' % layer['digest'])
-                yield(constants.IMAGE_LAYER, layer_filename, None)
+                yield (constants.IMAGE_LAYER, layer_filename, None)
                 continue
 
             LOG.info('Fetching layer %s (%d bytes)'
@@ -184,7 +184,7 @@ class Image(object):
                     sys.exit(1)
 
                 with open(tf.name, 'rb') as f:
-                    yield(constants.IMAGE_LAYER, layer_filename, f)
+                    yield (constants.IMAGE_LAYER, layer_filename, f)
 
             finally:
                 os.unlink(tf.name)

@@ -1,13 +1,8 @@
-import hashlib
 import io
 import json
 import logging
 import os
-import re
-import sys
 import tarfile
-import tempfile
-import zlib
 
 from occystrap import constants
 

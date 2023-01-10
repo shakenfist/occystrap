@@ -23,7 +23,7 @@ STATUS_CODES_TO_ERRORS = {
 def get_user_agent():
     try:
         version = VersionInfo('occystrap').version_string()
-    except:
+    except Exception:
         version = '0.0.0'
     return 'Mozilla/5.0 (Ubuntu; Linux x86_64) Occy Strap/%s' % version
 
