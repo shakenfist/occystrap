@@ -311,7 +311,7 @@ class DirReader(object):
 
         config_filename = manifest[0]['Config']
         with open(os.path.join(self.path, config_filename), 'rb') as f:
-            yield(constants.CONFIG_FILE, config_filename, f)
+            yield (constants.CONFIG_FILE, config_filename, f)
 
         for layer in manifest[0]['Layers']:
             with open(os.path.join(self.path, layer), 'rb') as f:
