@@ -1,15 +1,17 @@
 import click
 import logging
+import os
+from shakenfist_utilities import logs
+import sys
 
 from occystrap import docker_registry
 from occystrap import output_directory
+from occystrap import output_mounts
 from occystrap import output_ocibundle
 from occystrap import output_tarfile
 
-logging.basicConfig(level=logging.INFO)
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 @click.group()
@@ -92,6 +94,30 @@ def fetch_to_tarfile(ctx, registry, image, tag, tarfile, insecure):
 
 
 cli.add_command(fetch_to_tarfile)
+
+
+@click.command()
+@click.argument('registry')
+@click.argument('image')
+@click.argument('tag')
+@click.argument('path')
+@click.option('--insecure', is_flag=True, default=False)
+@click.pass_context
+def fetch_to_mounts(ctx, registry, image, tag, path, insecure):
+    if not hasattr(os, 'setxattr'):
+        print('Sorry, your OS module implementation lacks setxattr')
+        sys.exit(1)
+    if not hasattr(os, 'mknod'):
+        print('Sorry, your OS module implementation lacks mknod')
+        sys.exit(1)
+
+    d = output_mounts.MountWriter(image, tag, path)
+    _fetch(registry, image, tag, d, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+           ctx.obj['VARIANT'], secure=(not insecure))
+    d.write_bundle()
+
+
+cli.add_command(fetch_to_mounts)
 
 
 @click.command()

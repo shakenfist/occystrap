@@ -1,5 +1,6 @@
 import json
 import logging
+from oslo_concurrency import processutils
 from pbr.version import VersionInfo
 import requests
 
@@ -74,3 +75,10 @@ def request_url(method, url, headers=None, data=None, stream=False):
         raise APIException(
             'API request failed', method, url, r.status_code, r.text, r.headers)
     return r
+
+
+def execute(command, check_exit_code=[0], env_variables=None,
+            cwd=None):
+    return processutils.execute(
+        command, check_exit_code=check_exit_code,
+        env_variables=env_variables, shell=True, cwd=cwd)

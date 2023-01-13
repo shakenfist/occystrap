@@ -56,7 +56,7 @@ jobs:
           cd /srv/github/_work/occystrap/occystrap/occystrap
           rm -f dist/*
           python3 setup.py sdist bdist_wheel
-          pip3 install dist/occystrap*.whl
+          sudo pip3 install dist/occystrap*.whl
 
       - name: Run a local docker registry to talk to, and populate it with test data
         run: |
@@ -75,4 +75,7 @@ jobs:
           cd /srv/github/_work/occystrap/occystrap/occystrap/deploy
           sudo pip3 install -r requirements.txt
           sudo pip3 install -r test-requirements.txt
-          stestr run --concurrency=5
+
+          # This needs to run as root because some of the tests require
+          # escalated permissions.
+          sudo stestr run --concurrency=5
