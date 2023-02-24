@@ -3,3 +3,4 @@ testtools           # mit
 mock                # bsd
 stestr              # apache2
 flake8              # mit
+tox>3.17            # mit
