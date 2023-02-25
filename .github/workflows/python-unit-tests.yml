@@ -13,7 +13,7 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Checkout code with two commits
@@ -23,11 +23,31 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           sudo apt-get update
           sudo apt-get dist-upgrade -y
-          sudo apt-get install -y -q tox
+          sudo apt-get remove -y -q python3-virtualenv
+          pip install -U -r test-requirements.txt
 
       - name: Lint with flake8
         run: |
           tox -eflake8
+
+  build38:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code with two commits
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get dist-upgrade -y
+          sudo apt-get remove -y -q python3-virtualenv
+          pip install -r test-requirements.txt
+
+      - name: Run python3 unit tests
+        run: |
+          tox -epy3
