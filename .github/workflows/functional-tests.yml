@@ -51,7 +51,7 @@ jobs:
 
       - name: Build occystrap wheel and install it
         run: |
-          cd /srv/github/_work/occystrap/occystrap/occystrap
+          cd /srv/ci/runner/_work/occystrap/occystrap/occystrap
           rm -f dist/*
           python3 setup.py sdist bdist_wheel
           sudo pip3 install dist/occystrap*.whl
@@ -59,18 +59,18 @@ jobs:
       - name: Run a local docker registry to talk to, and populate it with test data
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
-          cd /srv/github/_work/occystrap/occystrap/occystrap/deploy/occystrap_ci/testdata
+          cd /srv/ci/runner/_work/occystrap/occystrap/occystrap/deploy/occystrap_ci/testdata
 
           for img in deletion_layers; do
             cd $img
             docker build -t localhost:5000/occystrap_$img:latest .
             docker push localhost:5000/occystrap_$img:latest
-            cd /srv/github/_work/occystrap/occystrap/occystrap/deploy/occystrap_ci/testdata
+            cd /srv/ci/runner/_work/occystrap/occystrap/occystrap/deploy/occystrap_ci/testdata
           done
 
       - name: Run functional tests
         run: |
-          cd /srv/github/_work/occystrap/occystrap/occystrap/deploy
+          cd /srv/ci/runner/_work/occystrap/occystrap/occystrap/deploy
           sudo pip3 install -r requirements.txt
           sudo pip3 install -r test-requirements.txt
 
