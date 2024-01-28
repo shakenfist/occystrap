@@ -5,6 +5,9 @@
 # format, noting that the response format you get back varies based on what you have
 # in your accept header for the request.
 
+# https://github.com/opencontainers/image-spec/blob/main/media-types.md documents
+# the new OCI mime types.
+
 import hashlib
 import io
 import logging
@@ -86,7 +89,9 @@ class Image(object):
         if r.headers['Content-Type'] == 'application/vnd.docker.distribution.manifest.v2+json':
             manifest = r.json()
             config_digest = manifest['config']['digest']
-        elif r.headers['Content-Type'] == 'application/vnd.docker.distribution.manifest.list.v2+json':
+        elif r.headers['Content-Type'] in [
+                'application/vnd.docker.distribution.manifest.list.v2+json',
+                'application/vnd.oci.image.index.v1+json']:
             for m in r.json()['manifests']:
                 if 'variant' in m['platform']:
                     LOG.info('Found manifest for %s on %s %s'
@@ -109,7 +114,8 @@ class Image(object):
                             'image': self.image,
                             'tag': m['digest']
                         },
-                        headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json')})
+                        headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json, '
+                                            'application/vnd.oci.image.manifest.v1+json')})
                     manifest = r.json()
                     config_digest = manifest['config']['digest']
 
