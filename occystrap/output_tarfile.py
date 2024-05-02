@@ -11,6 +11,10 @@ LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
 
 
+# This code creates v1.2 format image tarballs.
+# v1.2 is documented at https://github.com/moby/docker-image-spec/blob/v1.2.0/v1.2.md
+# v2 is documented at https://github.com/opencontainers/image-spec/blob/main/
+
 class TarWriter(object):
     def __init__(self, image, tag, image_path):
         self.image = image

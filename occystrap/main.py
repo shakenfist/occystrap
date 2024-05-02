@@ -5,6 +5,7 @@ from shakenfist_utilities import logs
 import sys
 
 from occystrap import docker_registry
+from occystrap import input_tarfile
 from occystrap import output_directory
 from occystrap import output_mounts
 from occystrap import output_ocibundle
@@ -32,9 +33,7 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None):
     ctx.obj['VARIANT'] = variant
 
 
-def _fetch(registry, image, tag, output, os, architecture, variant, secure=True):
-    img = docker_registry.Image(
-        registry, image, tag, os, architecture, variant, secure=secure)
+def _fetch(img, output):
     for image_element in img.fetch(fetch_callback=output.fetch_callback):
         output.process_image_element(*image_element)
     output.finalize()
@@ -53,8 +52,10 @@ def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names,
                        expand, insecure):
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand)
-    _fetch(registry, image, tag, d, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
-           ctx.obj['VARIANT'], secure=(not insecure))
+    img = img = docker_registry.Image(
+        registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+        ctx.obj['VARIANT'], secure=(not insecure))
+    _fetch(img, d)
 
     if expand:
         d.write_bundle()
@@ -72,8 +73,10 @@ cli.add_command(fetch_to_extracted)
 @click.pass_context
 def fetch_to_oci(ctx, registry, image, tag, path, insecure):
     d = output_ocibundle.OCIBundleWriter(image, tag, path)
-    _fetch(registry, image, tag, d, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
-           ctx.obj['VARIANT'], secure=(not insecure))
+    img = img = docker_registry.Image(
+        registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+        ctx.obj['VARIANT'], secure=(not insecure))
+    _fetch(img, d)
     d.write_bundle()
 
 
@@ -89,8 +92,10 @@ cli.add_command(fetch_to_oci)
 @click.pass_context
 def fetch_to_tarfile(ctx, registry, image, tag, tarfile, insecure):
     tar = output_tarfile.TarWriter(image, tag, tarfile)
-    _fetch(registry, image, tag, tar, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
-           ctx.obj['VARIANT'], secure=(not insecure))
+    img = img = docker_registry.Image(
+        registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+        ctx.obj['VARIANT'], secure=(not insecure))
+    _fetch(img, tar)
 
 
 cli.add_command(fetch_to_tarfile)
@@ -112,8 +117,10 @@ def fetch_to_mounts(ctx, registry, image, tag, path, insecure):
         sys.exit(1)
 
     d = output_mounts.MountWriter(image, tag, path)
-    _fetch(registry, image, tag, d, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
-           ctx.obj['VARIANT'], secure=(not insecure))
+    img = img = docker_registry.Image(
+        registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+        ctx.obj['VARIANT'], secure=(not insecure))
+    _fetch(img, d)
     d.write_bundle()
 
 
@@ -135,3 +142,22 @@ def recreate_image(ctx, path, image, tag, tarfile):
 
 
 cli.add_command(recreate_image)
+
+
+@click.command()
+@click.argument('tarfile')
+@click.argument('path')
+@click.option('--use-unique-names', is_flag=True)
+@click.option('--expand', is_flag=True)
+@click.pass_context
+def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand):
+    img = input_tarfile.Image(tarfile)
+    d = output_directory.DirWriter(
+        img.image, img.tag, path, unique_names=use_unique_names, expand=expand)
+    _fetch(img, d)
+
+    if expand:
+        d.write_bundle()
+
+
+cli.add_command(tarfile_to_extracted)
