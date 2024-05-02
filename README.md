@@ -65,6 +65,16 @@ To extract a single image from such a shared directory, use the `recreate-image`
 occystrap recreate-image merged_images homeassistant/home-assistant latest ha-latest.tar
 ```
 
+## Storing an image tarfile in a merged directory
+
+Sometimes you have image tarfiles instead of images in a registry -- for example
+the output of `docker save`. These can be converted to a merged directory to
+save storage space as well:
+
+```
+occystrap tarfile-to-extracted --use-unique-names file.tar merged_images
+```
+
 ## Exploring the contents of layers and overwritten files
 
 Similarly, if you'd like the layers to be expanded from their tarballs to the filesystem, you can pass the `--expand` argument to `fetch-to-extracted` to have them extracted. This will also create a filesystem at the name of the manifest which is the final state of the image (the layers applied sequential). For example:

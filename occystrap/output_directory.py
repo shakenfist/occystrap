@@ -110,9 +110,7 @@ class DirWriter(object):
             self.tar_manifest[0]['ImageName'] = self.image
 
         self.bundle = {}
-
-        if not os.path.exists(self.image_path):
-            os.makedirs(self.image_path)
+        os.makedirs(self.image_path, exist_ok=True)
 
     def _manifest_filename(self):
         if not self.unique_names:
@@ -136,15 +134,18 @@ class DirWriter(object):
 
     def process_image_element(self, element_type, name, data):
         if element_type == constants.CONFIG_FILE:
-            with open(os.path.join(self.image_path, name), 'wb') as f:
+            config_file = os.path.join(self.image_path, name)
+            config_dir = os.path.dirname(config_file)
+            os.makedirs(config_dir, exist_ok=True)
+
+            with open(config_file, 'wb') as f:
                 d = json.loads(data.read())
                 f.write(json.dumps(d, indent=4, sort_keys=True).encode('ascii'))
             self.tar_manifest[0]['Config'] = name
 
         elif element_type == constants.IMAGE_LAYER:
             layer_dir = os.path.join(self.image_path, name)
-            if not os.path.exists(layer_dir):
-                os.makedirs(layer_dir)
+            os.makedirs(layer_dir, exist_ok=True)
 
             layer_file = os.path.join(name, 'layer.tar')
             self.tar_manifest[0]['Layers'].append(layer_file)
@@ -276,8 +277,7 @@ class DirWriter(object):
     def write_bundle(self):
         manifest_filename = self._manifest_filename()
         manifest_path = os.path.join(self.image_path, manifest_filename)
-        if not os.path.exists(manifest_path):
-            os.makedirs(manifest_path)
+        os.makedirs(manifest_path, exist_ok=True)
         LOG.info('Writing image bundle to %s' % manifest_path)
         self._extract_rootfs(manifest_path)
 
