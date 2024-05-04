@@ -48,12 +48,13 @@ def _fetch(img, output):
 @click.option('--expand', is_flag=True)
 @click.option('--insecure', is_flag=True, default=False)
 @click.option('--compress-layers', is_flag=True)
+@click.option('--catalog-file', default='catalog.json')
 @click.pass_context
 def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names,
-                       expand, insecure, compress_layers):
+                       expand, insecure, compress_layers, catalog_file):
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand,
-        compress_layers=compress_layers)
+        compress_layers=compress_layers, catalog_file=catalog_file)
     img = img = docker_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not insecure))
@@ -134,9 +135,10 @@ cli.add_command(fetch_to_mounts)
 @click.argument('image')
 @click.argument('tag')
 @click.argument('tarfile')
+@click.option('--catalog-file', default='catalog.json')
 @click.pass_context
-def recreate_image(ctx, path, image, tag, tarfile):
-    d = output_directory.DirReader(path, image, tag)
+def recreate_image(ctx, path, image, tag, tarfile, catalog_file):
+    d = output_directory.DirReader(path, image, tag, catalog_file=catalog_file)
     tar = output_tarfile.TarWriter(image, tag, tarfile)
     for image_element in d.fetch():
         tar.process_image_element(*image_element)
@@ -152,13 +154,14 @@ cli.add_command(recreate_image)
 @click.option('--use-unique-names', is_flag=True)
 @click.option('--expand', is_flag=True)
 @click.option('--compress-layers', is_flag=True)
+@click.option('--catalog-file', default='catalog.json')
 @click.pass_context
 def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand,
-                         compress_layers):
+                         compress_layers, catalog_file):
     img = input_tarfile.Image(tarfile)
     d = output_directory.DirWriter(
         img.image, img.tag, path, unique_names=use_unique_names, expand=expand,
-        compress_layers=compress_layers)
+        compress_layers=compress_layers, catalog_file=catalog_file)
     _fetch(img, d)
 
     if expand:

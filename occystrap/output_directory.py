@@ -97,13 +97,14 @@ TARFILE_TYPE_MAP = {
 
 class DirWriter(object):
     def __init__(self, image, tag, image_path, unique_names=False, expand=False,
-                 compress_layers=True):
+                 compress_layers=True, catalog_file='catalog.json'):
         self.image = image
         self.tag = tag
         self.image_path = image_path
         self.unique_names = unique_names
         self.expand = expand
         self.compress_layers = compress_layers
+        self.catalog_file = catalog_file
 
         self.tar_manifest = [{
             'Layers': [],
@@ -238,7 +239,7 @@ class DirWriter(object):
                                sort_keys=True).encode('ascii'))
 
         c = {}
-        catalog_path = os.path.join(self.image_path, 'catalog.json')
+        catalog_path = os.path.join(self.image_path, self.catalog_file)
         if os.path.exists(catalog_path):
             with open(catalog_path, 'r') as f:
                 c = json.loads(f.read())
@@ -298,13 +299,14 @@ class NoSuchImageException(Exception):
 
 
 class DirReader(object):
-    def __init__(self, path, image, tag):
+    def __init__(self, path, image, tag, catalog_file='catalog.json'):
         self.path = path
         self.image = image
         self.tag = tag
+        self.catalog_file = catalog_file
 
         c = {}
-        catalog_path = os.path.join(self.path, 'catalog.json')
+        catalog_path = os.path.join(self.path, self.catalog_file)
         if os.path.exists(catalog_path):
             with open(catalog_path, 'r') as f:
                 c = json.loads(f.read())

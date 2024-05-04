@@ -62,11 +62,23 @@ Optionally, you can also compress the layers to save even more space with the
 
 `catalog.json` is an Occy Strap specific artefact which maps which layers are used by which image. Each of the manifest files for the various images have been converted to have a unique name instead of `manifest.json` as well.
 
+You can use a different name for `catalog.json` if you'd like to store more than
+one set of Docker images in a single directory. This is useful when you want to
+store two sets of images, but it is likely they overlap. An example might be a
+single repository which stores multiple daily builds of a set of images. Specify
+a catalog filename with the `catalog-file` flag. This is just the filename, with
+a path relative to the merged directory.
+
+## Recovering an image from a merged directory
+
 To extract a single image from such a shared directory, use the `recreate-image` command:
 
 ```
 occystrap recreate-image merged_images homeassistant/home-assistant latest ha-latest.tar
 ```
+
+You can specify a catalog filename with `catalog-file` much like you did when
+creating the merged directory.
 
 ## Storing an image tarfile in a merged directory
 
@@ -79,7 +91,8 @@ occystrap tarfile-to-extracted --use-unique-names file.tar merged_images
 ```
 
 Similarly to `fetch-to-extracted`, you can specify that the layer files be
-compressed by using the `compress-layers` flag.
+compressed by using the `compress-layers` flag, and the catalog filename with
+`catalog-file`.
 
 ## Exploring the contents of layers and overwritten files
 
