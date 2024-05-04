@@ -57,6 +57,9 @@ manifest-homeassistant_home-assistant-latest.json
 manifest-homeassistant_home-assistant-stable.json
 ```
 
+Optionally, you can also compress the layers to save even more space with the
+`compress-layers` flag to `fetch-to-extracted`.
+
 `catalog.json` is an Occy Strap specific artefact which maps which layers are used by which image. Each of the manifest files for the various images have been converted to have a unique name instead of `manifest.json` as well.
 
 To extract a single image from such a shared directory, use the `recreate-image` command:
@@ -74,6 +77,9 @@ save storage space as well:
 ```
 occystrap tarfile-to-extracted --use-unique-names file.tar merged_images
 ```
+
+Similarly to `fetch-to-extracted`, you can specify that the layer files be
+compressed by using the `compress-layers` flag.
 
 ## Exploring the contents of layers and overwritten files
 

@@ -1,3 +1,4 @@
+import gzip
 import json
 import logging
 import os
@@ -95,12 +96,14 @@ TARFILE_TYPE_MAP = {
 
 
 class DirWriter(object):
-    def __init__(self, image, tag, image_path, unique_names=False, expand=False):
+    def __init__(self, image, tag, image_path, unique_names=False, expand=False,
+                 compress_layers=True):
         self.image = image
         self.tag = tag
         self.image_path = image_path
         self.unique_names = unique_names
         self.expand = expand
+        self.compress_layers = compress_layers
 
         self.tar_manifest = [{
             'Layers': [],
@@ -132,6 +135,11 @@ class DirWriter(object):
         LOG.info('Layer file is %s' % layer_file_in_dir)
         return not os.path.exists(layer_file_in_dir)
 
+    def _open_for_write(self, path):
+        if self.compress_layers:
+            return gzip.open(path, 'wb')
+        return open(path, 'wb')
+
     def process_image_element(self, element_type, name, data):
         if element_type == constants.CONFIG_FILE:
             config_file = os.path.join(self.image_path, name)
@@ -147,14 +155,17 @@ class DirWriter(object):
             layer_dir = os.path.join(self.image_path, name)
             os.makedirs(layer_dir, exist_ok=True)
 
-            layer_file = os.path.join(name, 'layer.tar')
+            if self.compress_layers:
+                layer_file = os.path.join(name, 'layer.tgz')
+            else:
+                layer_file = os.path.join(name, 'layer.tar')
             self.tar_manifest[0]['Layers'].append(layer_file)
 
             layer_file_in_dir = os.path.join(self.image_path, layer_file)
             if os.path.exists(layer_file_in_dir):
                 LOG.info('Skipping layer already in output directory')
             else:
-                with open(layer_file_in_dir, 'wb') as f:
+                with self._open_for_write(layer_file_in_dir) as f:
                     d = data.read(102400)
                     while d:
                         f.write(d)
@@ -305,6 +316,11 @@ class DirReader(object):
 
         self.manifest_filename = c[self.image][self.tag]
 
+    def _open_to_read(self, path):
+        if path.endswith('tgz'):
+            return gzip.open(path, 'rb')
+        return open(path, 'rb')
+
     def fetch(self):
         with open(os.path.join(self.path, self.manifest_filename)) as f:
             manifest = json.loads(f.read())
@@ -314,5 +330,5 @@ class DirReader(object):
             yield (constants.CONFIG_FILE, config_filename, f)
 
         for layer in manifest[0]['Layers']:
-            with open(os.path.join(self.path, layer), 'rb') as f:
+            with self._open_to_read(os.path.join(self.path, layer)) as f:
                 yield (constants.IMAGE_LAYER, layer, f)

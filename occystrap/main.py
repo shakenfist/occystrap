@@ -47,11 +47,13 @@ def _fetch(img, output):
 @click.option('--use-unique-names', is_flag=True)
 @click.option('--expand', is_flag=True)
 @click.option('--insecure', is_flag=True, default=False)
+@click.option('--compress-layers', is_flag=True)
 @click.pass_context
 def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names,
-                       expand, insecure):
+                       expand, insecure, compress_layers):
     d = output_directory.DirWriter(
-        image, tag, path, unique_names=use_unique_names, expand=expand)
+        image, tag, path, unique_names=use_unique_names, expand=expand,
+        compress_layers=compress_layers)
     img = img = docker_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not insecure))
@@ -149,11 +151,14 @@ cli.add_command(recreate_image)
 @click.argument('path')
 @click.option('--use-unique-names', is_flag=True)
 @click.option('--expand', is_flag=True)
+@click.option('--compress-layers', is_flag=True)
 @click.pass_context
-def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand):
+def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand,
+                         compress_layers):
     img = input_tarfile.Image(tarfile)
     d = output_directory.DirWriter(
-        img.image, img.tag, path, unique_names=use_unique_names, expand=expand)
+        img.image, img.tag, path, unique_names=use_unique_names, expand=expand,
+        compress_layers=compress_layers)
     _fetch(img, d)
 
     if expand:
