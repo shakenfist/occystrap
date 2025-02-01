@@ -9,6 +9,7 @@ from occystrap import input_tarfile
 from occystrap import output_directory
 from occystrap import output_mounts
 from occystrap import output_ocibundle
+from occystrap import output_staticregistry
 from occystrap import output_tarfile
 
 
@@ -52,7 +53,7 @@ def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names,
                        expand, insecure):
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand)
-    img = img = docker_registry.Image(
+    img = docker_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not insecure))
     _fetch(img, d)
@@ -73,7 +74,7 @@ cli.add_command(fetch_to_extracted)
 @click.pass_context
 def fetch_to_oci(ctx, registry, image, tag, path, insecure):
     d = output_ocibundle.OCIBundleWriter(image, tag, path)
-    img = img = docker_registry.Image(
+    img = docker_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not insecure))
     _fetch(img, d)
@@ -92,7 +93,7 @@ cli.add_command(fetch_to_oci)
 @click.pass_context
 def fetch_to_tarfile(ctx, registry, image, tag, tarfile, insecure):
     tar = output_tarfile.TarWriter(image, tag, tarfile)
-    img = img = docker_registry.Image(
+    img = docker_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not insecure))
     _fetch(img, tar)
@@ -117,7 +118,7 @@ def fetch_to_mounts(ctx, registry, image, tag, path, insecure):
         sys.exit(1)
 
     d = output_mounts.MountWriter(image, tag, path)
-    img = img = docker_registry.Image(
+    img = docker_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not insecure))
     _fetch(img, d)
@@ -161,3 +162,18 @@ def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand):
 
 
 cli.add_command(tarfile_to_extracted)
+
+
+@click.command()
+@click.argument('tarfile')
+@click.argument('path')
+@click.option('--catalog-file', default='catalog.json')
+@click.pass_context
+def tarfile_to_staticregistry(ctx, tarfile, path, catalog_file):
+    img = input_tarfile.Image(tarfile)
+    d = output_staticregistry.DirWriter(
+        img.image, img.tag, path, catalog_file=catalog_file)
+    _fetch(img, d)
+
+
+cli.add_command(tarfile_to_staticregistry)

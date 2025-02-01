@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 import tarfile
 
 from occystrap import constants
@@ -133,14 +134,34 @@ class DirWriter(object):
         return not os.path.exists(layer_file_in_dir)
 
     def process_image_element(self, element_type, name, data):
-        if element_type == constants.CONFIG_FILE:
+        if element_type == constants.INDEX_ENTRY:
+            index_file = os.path.join(self.image_path, name)
+            with open(index_file, 'wb') as f:
+                try:
+                    d = json.loads(data.read())
+                    f.write(json.dumps(
+                        d, indent=4, sort_keys=True).encode('ascii'))
+                except UnicodeDecodeError as e:
+                    data.seek(0)
+                    print(f'Error processing index file: {e}')
+                    print(f'Data is: {data.read(100)}')
+                    sys.exit(1)
+
+        elif element_type == constants.CONFIG_FILE:
             config_file = os.path.join(self.image_path, name)
             config_dir = os.path.dirname(config_file)
             os.makedirs(config_dir, exist_ok=True)
 
             with open(config_file, 'wb') as f:
-                d = json.loads(data.read())
-                f.write(json.dumps(d, indent=4, sort_keys=True).encode('ascii'))
+                try:
+                    d = json.loads(data.read())
+                    f.write(json.dumps(
+                        d, indent=4, sort_keys=True).encode('ascii'))
+                except UnicodeDecodeError as e:
+                    data.seek(0)
+                    print(f'Error processing config file: {e}')
+                    print(f'Data is: {data.read(100)}')
+                    sys.exit(1)
             self.tar_manifest[0]['Config'] = name
 
         elif element_type == constants.IMAGE_LAYER:
@@ -155,10 +176,8 @@ class DirWriter(object):
                 LOG.info('Skipping layer already in output directory')
             else:
                 with open(layer_file_in_dir, 'wb') as f:
-                    d = data.read(102400)
-                    while d:
+                    while d := data.read(102400):
                         f.write(d)
-                        d = data.read(102400)
 
             if self.expand:
                 # Build a in-memory map of the layout of the final image bundle

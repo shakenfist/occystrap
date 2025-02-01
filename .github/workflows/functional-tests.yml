@@ -9,20 +9,81 @@ on:
       - master
 
 jobs:
+  sanity_checks:
+    runs-on: [self-hosted, vm]
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-lint
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout code with two commits
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get dist-upgrade -y
+          sudo apt-get install -y -q tox
+
+      - name: Lint with flake8
+        run: |
+          tox -eflake8
+
+      # - name: Run python3 unit tests
+      #   timeout-minutes: 10
+      #   run: |
+      #     /usr/bin/tox -epy3
+
+      # - name: List failing tests
+      #   if: failure()
+      #   id: failures
+      #   run: |
+      #     echo "Gathering list of failed tests..."
+      #     touch ${GITHUB_WORKSPACE}/failed
+      #     /usr/bin/tox -efailing || true > ${GITHUB_WORKSPACE}/failed
+      #     echo
+
+      #     failed=$(cat ${GITHUB_WORKSPACE}/failed | egrep "^FAIL: " | \
+      #         sed -z 's/FAIL: shakenfist_ci\.//g;s/\n/, /g;s/, $/\n/')
+
+      #     echo "Failed tests:"
+      #     cat ${GITHUB_WORKSPACE}/failed
+      #     echo
+
+      #     echo "failures<<EOF" >> ${GITHUB_OUTPUT}
+      #     echo "${failed}" >> ${GITHUB_OUTPUT}
+      #     echo "EOF" >> ${GITHUB_OUTPUT}
+      #     echo "GITHUB_OUTPUT is:"
+      #     cat ${GITHUB_OUTPUT}
+
+      # - name: Generate coverage report
+      #   timeout-minutes: 10
+      #   run: |
+      #     /usr/bin/tox -ecover
+      #     zip -r cover.zip cover
+
+      # - uses: actions/upload-artifact@v4
+      #   with:
+      #     name: coverage
+      #     retention-days: 90
+      #     if-no-files-found: error
+      #     path: cover.zip
+
   functional:
-    runs-on: self-hosted
+    runs-on: [self-hosted, vm]
+    needs: sanity_checks
     timeout-minutes: 120
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-functional
+      cancel-in-progress: true
 
     # NOTE(mikal): git repos are checked out to /srv/github/_work/{repo}/{repo}
     # which is available as GITHUB_WORKSPACE. You can find other environment
     # variables at https://docs.github.com/en/actions/learn-github-actions/environment-variables
 
     steps:
-      - name: Remove previous unfinished runs
-        uses: n1hility/cancel-previous-runs@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Get rid of sudo error messages
         run: |
           hostname=$(cat /etc/hostname)
@@ -33,7 +94,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get dist-upgrade -y
-          sudo apt-get install -y python3 python3-dev python3-pip python3-wheel apparmor docker.io runc
+          sudo apt-get install -y python3 python3-dev python3-pip python3-wheel \
+            apparmor docker.io runc
           sudo systemctl restart apparmor
 
       - name: Log docker setup

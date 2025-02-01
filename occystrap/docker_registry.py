@@ -10,6 +10,7 @@
 
 import hashlib
 import io
+import json
 import logging
 import os
 import re
@@ -68,7 +69,7 @@ class Image(object):
                 method, url, headers=headers, data=data, stream=stream)
 
     def fetch(self, fetch_callback=always_fetch):
-        LOG.info('Fetching manifest')
+        LOG.debug('Fetching manifest')
         moniker = 'https'
         if not self.secure:
             moniker = 'http'
@@ -82,29 +83,51 @@ class Image(object):
                 'image': self.image,
                 'tag': self.tag
             },
-            headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json,'
-                                'application/vnd.docker.distribution.manifest.list.v2+json')})
+            headers={
+                'Accept': (
+                    'application/vnd.docker.distribution.manifest.v2+json,'
+                    'application/vnd.docker.distribution.manifest.list.v2+json'
+                )
+            }
+        )
 
         config_digest = None
-        if r.headers['Content-Type'] == 'application/vnd.docker.distribution.manifest.v2+json':
+        if r.headers['Content-Type'] == \
+                'application/vnd.docker.distribution.manifest.v2+json':
             manifest = r.json()
             config_digest = manifest['config']['digest']
+
         elif r.headers['Content-Type'] in [
                 'application/vnd.docker.distribution.manifest.list.v2+json',
                 'application/vnd.oci.image.index.v1+json']:
             for m in r.json()['manifests']:
                 if 'variant' in m['platform']:
-                    LOG.info('Found manifest for %s on %s %s'
-                             % (m['platform']['os'], m['platform']['architecture'],
-                                m['platform']['variant']))
+                    LOG.debug('Found manifest for %s on %s %s'
+                              % (m['platform']['os'],
+                                 m['platform']['architecture'],
+                                 m['platform']['variant']))
                 else:
-                    LOG.info('Found manifest for %s on %s'
-                             % (m['platform']['os'], m['platform']['architecture']))
+                    LOG.debug('Found manifest for %s on %s'
+                              % (m['platform']['os'],
+                                 m['platform']['architecture']))
 
                 if (m['platform']['os'] == self.os and
                     m['platform']['architecture'] == self.architecture and
                         m['platform'].get('variant', '') == self.variant):
-                    LOG.info('Fetching matching manifest')
+                    yield (
+                        constants.INDEX_ENTRY,
+                        'index.json',
+                        io.BytesIO(
+                            json.dumps({
+                                'manifests': [m],
+                                'mediaType':
+                                'application/vnd.oci.image.index.v1+json',
+                                'schemaVersion': 2
+                            }).encode()
+                        )
+                    )
+
+                    LOG.debug('Fetching matching manifest')
                     r = self.request_url(
                         'GET',
                         '%(moniker)s://%(registry)s/v2/%(image)s/manifests/%(tag)s'
@@ -114,19 +137,24 @@ class Image(object):
                             'image': self.image,
                             'tag': m['digest']
                         },
-                        headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json, '
-                                            'application/vnd.oci.image.manifest.v1+json')})
+                        headers={
+                            'Accept': (
+                                'application/vnd.docker.distribution.manifest.v2+json, '
+                                'application/vnd.oci.image.manifest.v1+json'
+                            )
+                        })
                     manifest = r.json()
                     config_digest = manifest['config']['digest']
+                    continue
 
             if not config_digest:
                 raise Exception('Could not find a matching manifest for this '
                                 'os / architecture / variant')
         else:
-            raise Exception('Unknown manifest content type %s!' %
-                            r.headers['Content-Type'])
+            raise Exception('Unknown manifest content type %s!'
+                            % r.headers['Content-Type'])
 
-        LOG.info('Fetching config file')
+        LOG.debug('Fetching config file')
         r = self.request_url(
             'GET',
             '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(config)s'
@@ -148,16 +176,17 @@ class Image(object):
         yield (constants.CONFIG_FILE, config_filename,
                io.BytesIO(config))
 
-        LOG.info('There are %d image layers' % len(manifest['layers']))
+        LOG.debug('There are %d image layers' % len(manifest['layers']))
         for layer in manifest['layers']:
             layer_filename = layer['digest'].split(':')[1]
             if not fetch_callback(layer_filename):
-                LOG.info('Fetch callback says skip layer %s' % layer['digest'])
+                LOG.debug('Fetch callback says skip layer %s' %
+                          layer['digest'])
                 yield (constants.IMAGE_LAYER, layer_filename, None)
                 continue
 
-            LOG.info('Fetching layer %s (%d bytes)'
-                     % (layer['digest'], layer['size']))
+            LOG.debug('Fetching layer %s (%d bytes)'
+                      % (layer['digest'], layer['size']))
             r = self.request_url(
                 'GET',
                 '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
@@ -179,7 +208,7 @@ class Image(object):
                 d = zlib.decompressobj(16 + zlib.MAX_WBITS)
 
                 with tempfile.NamedTemporaryFile(delete=False) as tf:
-                    LOG.info('Temporary file for layer is %s' % tf.name)
+                    LOG.debug('Temporary file for layer is %s' % tf.name)
                     for chunk in r.iter_content(8192):
                         tf.write(d.decompress(chunk))
                         h.update(chunk)
@@ -195,4 +224,4 @@ class Image(object):
             finally:
                 os.unlink(tf.name)
 
-        LOG.info('Done')
+        LOG.debug('Done')

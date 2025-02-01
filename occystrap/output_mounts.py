@@ -38,7 +38,10 @@ class MountWriter(object):
         return not os.path.exists(layer_file_in_dir)
 
     def process_image_element(self, element_type, name, data):
-        if element_type == constants.CONFIG_FILE:
+        if element_type == constants.INDEX_ENTRY:
+            ...
+
+        elif element_type == constants.CONFIG_FILE:
             with open(os.path.join(self.image_path, name), 'wb') as f:
                 d = json.loads(data.read())
                 f.write(json.dumps(d, indent=4, sort_keys=True).encode('ascii'))
