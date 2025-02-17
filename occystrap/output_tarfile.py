@@ -31,8 +31,16 @@ class TarWriter(object):
         return True
 
     def process_image_element(self, element_type, name, data):
-        if element_type == constants.CONFIG_FILE:
-            LOG.info('Writing config file to tarball')
+        if element_type == constants.INDEX_ENTRY:
+            LOG.info(f'Writing index file to tarball: {name}')
+
+            ti = tarfile.TarInfo(name)
+            ti.size = len(data.read())
+            data.seek(0)
+            self.image_tar.addfile(ti, data)
+
+        elif element_type == constants.CONFIG_FILE:
+            LOG.info(f'Writing config file to tarball: {name}')
 
             ti = tarfile.TarInfo(name)
             ti.size = len(data.read())
@@ -41,9 +49,9 @@ class TarWriter(object):
             self.tar_manifest[0]['Config'] = name
 
         elif element_type == constants.IMAGE_LAYER:
-            LOG.info('Writing layer to tarball')
-
             name += '/layer.tar'
+            LOG.info(f'Writing layer to tarball: {name}')
+
             ti = tarfile.TarInfo(name)
             data.seek(0, os.SEEK_END)
             ti.size = data.tell()
@@ -52,8 +60,13 @@ class TarWriter(object):
             self.tar_manifest[0]['Layers'].append(name)
 
     def finalize(self):
-        LOG.info('Writing manifest file to tarball')
-        encoded_manifest = json.dumps(self.tar_manifest).encode('utf-8')
+        LOG.info('Writing manifest file to tarball: manifest.json')
+        manifest_json = json.dumps(self.tar_manifest, indent=4, sort_keys=True)
+        for line in manifest_json.split('\n'):
+            LOG.info(f'    manifest: {line}')
+        LOG.info('--- end --- ')
+
+        encoded_manifest = manifest_json.encode('utf-8')
         ti = tarfile.TarInfo('manifest.json')
         ti.size = len(encoded_manifest)
         self.image_tar.addfile(ti, io.BytesIO(encoded_manifest))

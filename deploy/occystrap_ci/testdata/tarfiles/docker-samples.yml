@@ -1,0 +1,69 @@
+- hosts: localhost
+  gather_facts: yes
+  connection: ssh
+  vars:
+    identifier: "unknown"
+    base_image: "https://sfcbr.shakenfist.com/static/ubuntu2004-ci-template.qcow2"
+    base_image_user: "ubuntu"
+
+  tasks:
+    - name: Create an instance
+      sf_instance:
+        name: "docker"
+        cpu: 2
+        ram: 2048
+        disks:
+          - "20@{{base_image}}"
+          - "30@sf://label/ci-images/dependencies"
+        networkspecs:
+          - network_uuid={{identifier}},address=10.0.0.10
+        ssh_key: "{{ lookup('file', '/srv/github/id_ci.pub') }}"
+        namespace: "{{identifier}}"
+        state: present
+        await: true
+        await_timeout: 600
+      register: primary
+
+    - name: Add primary node to ansible
+      add_host:
+        hostname: primary
+        egress_ip: "{{primary['meta']['interfaces'][0]['ipv4']}}"
+        ansible_ssh_host: "{{primary['meta']['interfaces'][0]['ipv4']}}"
+        ansible_ssh_extra_args: "-o StrictHostKeyChecking=no -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_user: "{{base_image_user}}"
+        ansible_ssh_private_key_file: "/srv/github/id_ci"
+        sf_uuid: "{{primary['meta']['uuid']}}"
+        groups: sfall
+
+    - name: Log instance details
+      debug:
+        msg:
+          - "Docker instance: is {{primary['meta']['uuid']}} at {{primary['meta']['interfaces'][0]['ipv4']}}"
+
+    - name: Write details of instances to workspace
+      copy:
+        content: |
+          {% for svr in groups.sfall %}
+          export {{ svr | replace('-', '_') }}={{hostvars[svr]['ansible_ssh_host']}}
+          export {{ svr | replace('-', '_') }}_uuid={{hostvars[svr]['sf_uuid']}}
+          {% endfor %}
+
+          export baseuser={{base_image_user}}
+          export identifier={{identifier}}
+          export nodes="{{ groups.sfall | join(' ') | replace('-', '_') }}"
+        dest: "{{ lookup('env', 'GITHUB_WORKSPACE') }}/ci-environment.sh"
+        owner: debian
+        group: debian
+        mode: u=r,g=r,o=r
+
+    - name: Log environment details path
+      debug:
+        msg: "Environment details written to {{ lookup('env', 'GITHUB_WORKSPACE') }}/ci-environment.sh"
+
+    - name: Wait for all instances to present an "OpenSSH" prompt
+      wait_for:
+        port: 22
+        host: "{{hostvars[item]['ansible_ssh_host']}}"
+        search_regex: OpenSSH
+        delay: 10
+      with_items: "{{ groups['sfall'] }}"

@@ -1,0 +1,133 @@
+name: Gather historical tarfile formats
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  generate_matrix:
+    runs-on: [self-hosted, vm]
+    name: "Generate matrix entries"
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Generate matrix entries
+        id: set-matrix
+        run: |
+          echo "matrix<<EOF" >> ${GITHUB_OUTPUT}
+          echo "{" >> ${GITHUB_OUTPUT}
+          echo "  \"os\": [" >> ${GITHUB_OUTPUT}
+
+          # Early Docker releases used a traditional numbering system
+          echo "    {" >> ${GITHUB_OUTPUT}
+          echo "      \"base_image\": \"ubuntu:22.04\"," >> ${GITHUB_OUTPUT}
+          echo "      \"base_image_user\": \"ubuntu\"," >> ${GITHUB_OUTPUT}
+          echo "      \"docker_version\": \"0.9.0\"" >> ${GITHUB_OUTPUT}
+          echo "    }," >> ${GITHUB_OUTPUT}
+
+          # for i in $(seq 0 13); do
+          #   echo "    {" >> ${GITHUB_OUTPUT}
+          #   echo "      \"base_image\": \"ubuntu:22.04\"," >> ${GITHUB_OUTPUT}
+          #   echo "      \"base_image_user\": \"ubuntu\"," >> ${GITHUB_OUTPUT}
+          #   echo "      \"docker_version\": \"1.${i}.0\"" >> ${GITHUB_OUTPUT}
+          #   echo "    }," >> ${GITHUB_OUTPUT}
+          # done
+
+          # # Then they moved to a YY.MM style release numbering system.
+          # # Its actually hard to tell which releases are important. They
+          # # originally said it would be quarterly, but that hasn't
+          # # always been true, so we just have to iterate through all of
+          # # them...
+          # for y in $(seq 17 24); do
+          #   for m in $(seq 1 12); do
+          #     echo "    {" >> ${GITHUB_OUTPUT}
+          #     echo "      \"base_image\": \"ubuntu:22.04\"," >> ${GITHUB_OUTPUT}
+          #     echo "      \"base_image_user\": \"ubuntu\"," >> ${GITHUB_OUTPUT}
+          #     echo "      \"docker_version\": \"${y}.${m}.0\"" >> ${GITHUB_OUTPUT}
+          #     echo "    }," >> ${GITHUB_OUTPUT}
+          #   done
+          # done
+
+          # And then the final one has no comma of course
+          echo "    {" >> ${GITHUB_OUTPUT}
+          echo "      \"base_image\": \"ubuntu:24.04\"," >> ${GITHUB_OUTPUT}
+          echo "      \"base_image_user\": \"ubuntu\"," >> ${GITHUB_OUTPUT}
+          echo "      \"docker_version\": \"25.1.0\"" >> ${GITHUB_OUTPUT}
+          echo "    }" >> ${GITHUB_OUTPUT}
+
+          echo "  ]" >> ${GITHUB_OUTPUT}
+          echo "}" >> ${GITHUB_OUTPUT}
+          echo "EOF" >> ${GITHUB_OUTPUT}
+
+          echo
+          echo "-------"
+          cat ${GITHUB_OUTPUT}
+
+  capture_tarfile_samples:
+    runs-on: [self-hosted, vm]
+    needs: generate_matrix
+    name: "${{ matrix.os.docker_version }}"
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate_matrix.outputs.matrix) }}
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.os.docker_version }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Log matrix details
+        run: |
+          echo "job_name: ${{ matrix.os.job_name }}"
+          echo "base_image: ${{ matrix.os.base_image }}"
+          echo "base_image_user: ${{ matrix.os.base_image_user }}"
+          echo "docker version: ${{ matrix.os.docker_version }}"
+
+      - name: Set environment variables
+        shell: bash
+        run: |
+          echo "SHAKENFIST_NAMESPACE=$(hostname)" >> $GITHUB_ENV
+
+      - name: Checkout code with two commits
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 2
+
+      - name: Build infrastructure
+        run: |
+          ansible-playbook -i /home/debian/ansible-hosts \
+              --extra-vars "identifier=${SHAKENFIST_NAMESPACE} \
+                  base_image=${{ matrix.os.base_image }} \
+                  base_image_user=${{ matrix.os.base_image_user }}" \
+              deploy/occystrap_ci/testdata/tarfiles/docker-samples.yml
+
+      - name: Create sample exports
+        timeout-minutes: 5
+        run: |
+          . ${GITHUB_WORKSPACE}/ci-environment.sh
+
+          scp -i /srv/github/id_ci -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null -rp \
+              deploy/occystrap_ci/testdata/tarfiles \
+              ${{ matrix.os.base_image_user }}@${primary}:.
+
+          ssh -i /srv/github/id_ci -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              ${{ matrix.os.base_image_user }}@${primary} \
+              "sudo tarfiles/capture.sh ${{ matrix.os.docker_version }}"
+
+          scp -i /srv/github/id_ci -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null -rp \
+              ${{ matrix.os.base_image_user }}@${primary}:bundle.zip .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bundle-docker-tarfile-samples-${{ matrix.os.docker_version }}
+          retention-days: 90
+          if-no-files-found: error
+          path: bundle.zip

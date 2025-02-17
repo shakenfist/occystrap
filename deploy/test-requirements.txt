@@ -1,2 +1,2 @@
 testtools           # mit
-stestr==3.2.0       # apache2
+stestr==4.1.0       # apache2
