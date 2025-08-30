@@ -10,7 +10,7 @@ on:
 
 jobs:
   functional:
-    runs-on: self-hosted
+    runs-on: [self-hosted, vm, debian-11]
     timeout-minutes: 120
 
     # NOTE(mikal): git repos are checked out to /srv/github/_work/{repo}/{repo}
@@ -46,31 +46,29 @@ jobs:
       - name: Checkout occystrap
         uses: actions/checkout@v3
         with:
-          path: occystrap
           fetch-depth: 0
 
       - name: Build occystrap wheel and install it
         run: |
-          cd /srv/ci/runner/_work/occystrap/occystrap/occystrap
-          rm -f dist/*
           python3 setup.py sdist bdist_wheel
           sudo pip3 install dist/occystrap*.whl
 
       - name: Run a local docker registry to talk to, and populate it with test data
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
-          cd /srv/ci/runner/_work/occystrap/occystrap/occystrap/deploy/occystrap_ci/testdata
+          cd deploy/occystrap_ci/testdata
+          start_dir=$(pwd)
 
           for img in deletion_layers; do
             cd $img
             docker build -t localhost:5000/occystrap_$img:latest .
             docker push localhost:5000/occystrap_$img:latest
-            cd /srv/ci/runner/_work/occystrap/occystrap/occystrap/deploy/occystrap_ci/testdata
+            cd ${start_dir}
           done
 
       - name: Run functional tests
         run: |
-          cd /srv/ci/runner/_work/occystrap/occystrap/occystrap/deploy
+          cd deploy
           sudo pip3 install -r requirements.txt
           sudo pip3 install -r test-requirements.txt
 
