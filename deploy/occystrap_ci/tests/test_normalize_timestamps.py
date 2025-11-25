@@ -1,6 +1,5 @@
 import hashlib
 import io
-import json
 import os
 import tarfile
 import tempfile
