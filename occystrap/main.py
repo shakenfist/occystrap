@@ -89,9 +89,15 @@ cli.add_command(fetch_to_oci)
 @click.argument('tag')
 @click.argument('tarfile')
 @click.option('--insecure', is_flag=True, default=False)
+@click.option('--normalize-timestamps', is_flag=True, default=False)
+@click.option('--timestamp', default=0, type=int)
 @click.pass_context
-def fetch_to_tarfile(ctx, registry, image, tag, tarfile, insecure):
-    tar = output_tarfile.TarWriter(image, tag, tarfile)
+def fetch_to_tarfile(ctx, registry, image, tag, tarfile, insecure,
+                     normalize_timestamps, timestamp):
+    tar = output_tarfile.TarWriter(
+        image, tag, tarfile,
+        normalize_timestamps=normalize_timestamps,
+        timestamp=timestamp)
     img = img = docker_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not insecure))
@@ -132,10 +138,16 @@ cli.add_command(fetch_to_mounts)
 @click.argument('image')
 @click.argument('tag')
 @click.argument('tarfile')
+@click.option('--normalize-timestamps', is_flag=True, default=False)
+@click.option('--timestamp', default=0, type=int)
 @click.pass_context
-def recreate_image(ctx, path, image, tag, tarfile):
+def recreate_image(ctx, path, image, tag, tarfile, normalize_timestamps,
+                   timestamp):
     d = output_directory.DirReader(path, image, tag)
-    tar = output_tarfile.TarWriter(image, tag, tarfile)
+    tar = output_tarfile.TarWriter(
+        image, tag, tarfile,
+        normalize_timestamps=normalize_timestamps,
+        timestamp=timestamp)
     for image_element in d.fetch():
         tar.process_image_element(*image_element)
     tar.finalize()

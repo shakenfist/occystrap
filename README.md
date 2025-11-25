@@ -12,6 +12,22 @@ occystrap fetch-to-tarfile registry-1.docker.io library/busybox latest busybox.t
 
 In this example we're pulling from the Docker Hub (registry-1.docker.io), and are downloading busybox's latest version into a tarball named `busybox-occy.tar`. This tarball can be loaded with `docker load -i busybox.tar` on an airgapped Docker environment.
 
+### Repeatable builds with normalized timestamps
+
+To make builds more repeatable, you can normalize file access and modification times in the image layers. This is useful when you want to ensure that the same image content produces the same tarball hash, regardless of when the files were originally created. Use the `--normalize-timestamps` flag:
+
+```
+occystrap fetch-to-tarfile --normalize-timestamps registry-1.docker.io library/busybox latest busybox.tar
+```
+
+This will set all timestamps in the layer tarballs to 0 (Unix epoch: January 1, 1970). You can also specify a custom timestamp using the `--timestamp` option:
+
+```
+occystrap fetch-to-tarfile --normalize-timestamps --timestamp 1609459200 registry-1.docker.io library/busybox latest busybox.tar
+```
+
+When timestamps are normalized, the layer SHAs are recalculated and the manifest is updated to reflect the new hashes. This ensures the tarball structure remains consistent and valid.
+
 ## Downloading an image from a repository and storing as an extracted tarball
 
 The format of the tarball in the previous example is two JSON configuration files and a series of image layers as tarballs inside the main tarball. You can write these elements to a directory instead of to a tarball if you'd like to inspect them. For example:
@@ -63,6 +79,12 @@ To extract a single image from such a shared directory, use the `recreate-image`
 
 ```
 occystrap recreate-image merged_images homeassistant/home-assistant latest ha-latest.tar
+```
+
+The `recreate-image` command also supports the `--normalize-timestamps` and `--timestamp` options for creating repeatable builds:
+
+```
+occystrap recreate-image --normalize-timestamps merged_images homeassistant/home-assistant latest ha-latest.tar
 ```
 
 ## Storing an image tarfile in a merged directory
