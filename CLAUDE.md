@@ -73,6 +73,8 @@ The codebase follows an input/output pipeline pattern:
 
 **Timestamp normalization**: `--normalize-timestamps` rewrites layer tar mtimes for reproducible builds, recalculating layer SHAs.
 
+**Registry authentication**: Use `--username` and `--password` global options (or `OCCYSTRAP_USERNAME`/`OCCYSTRAP_PASSWORD` environment variables) to authenticate with private registries like GitLab Container Registry.
+
 ## CI Tests
 
 Integration tests in `deploy/occystrap_ci/tests/` run against a local registry (`localhost:5000`) and test whiteout handling, OCI bundle creation, and timestamp normalization.

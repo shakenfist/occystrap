@@ -29,7 +29,7 @@ def get_user_agent():
     return 'Mozilla/5.0 (Ubuntu; Linux x86_64) Occy Strap/%s' % version
 
 
-def request_url(method, url, headers=None, data=None, stream=False):
+def request_url(method, url, headers=None, data=None, stream=False, auth=None):
     if not headers:
         headers = {}
     headers.update({'User-Agent': get_user_agent()})
@@ -38,7 +38,8 @@ def request_url(method, url, headers=None, data=None, stream=False):
     r = requests.request(method, url,
                          data=json.dumps(data),
                          headers=headers,
-                         stream=stream)
+                         stream=stream,
+                         auth=auth)
 
     LOG.debug('-------------------------------------------------------')
     LOG.debug('API client requested: %s %s (stream=%s)'

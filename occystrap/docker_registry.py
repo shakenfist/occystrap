@@ -32,7 +32,7 @@ def always_fetch():
 
 class Image(object):
     def __init__(self, registry, image, tag, os='linux', architecture='amd64', variant='',
-                 secure=True):
+                 secure=True, username=None, password=None):
         self.registry = registry
         self.image = image
         self.tag = tag
@@ -40,6 +40,8 @@ class Image(object):
         self.architecture = architecture
         self.variant = variant
         self.secure = secure
+        self.username = username
+        self.password = password
 
         self._cached_auth = None
 
@@ -55,11 +57,17 @@ class Image(object):
                                     stream=stream)
         except util.UnauthorizedException as e:
             auth_re = re.compile('Bearer realm="([^"]*)",service="([^"]*)"')
-            m = auth_re.match(e.args[5].get('Www-Authenticate'))
+            m = auth_re.match(e.args[5].get('Www-Authenticate', ''))
             if m:
                 auth_url = ('%s?service=%s&scope=repository:%s:pull'
                             % (m.group(1), m.group(2), self.image))
-                r = util.request_url('GET', auth_url)
+                # If credentials are provided, use Basic auth for token request
+                if self.username and self.password:
+                    r = util.request_url(
+                        'GET', auth_url,
+                        auth=(self.username, self.password))
+                else:
+                    r = util.request_url('GET', auth_url)
                 token = r.json().get('token')
                 headers.update({'Authorization': 'Bearer %s' % token})
                 self._cached_auth = token
