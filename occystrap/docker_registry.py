@@ -91,10 +91,14 @@ class Image(object):
                 'tag': self.tag
             },
             headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json,'
-                                'application/vnd.docker.distribution.manifest.list.v2+json')})
+                                'application/vnd.docker.distribution.manifest.list.v2+json,'
+                                'application/vnd.oci.image.manifest.v1+json,'
+                                'application/vnd.oci.image.index.v1+json')})
 
         config_digest = None
-        if r.headers['Content-Type'] == 'application/vnd.docker.distribution.manifest.v2+json':
+        if r.headers['Content-Type'] in [
+                'application/vnd.docker.distribution.manifest.v2+json',
+                'application/vnd.oci.image.manifest.v1+json']:
             manifest = r.json()
             config_digest = manifest['config']['digest']
         elif r.headers['Content-Type'] in [
