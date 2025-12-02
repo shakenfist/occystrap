@@ -193,10 +193,14 @@ cli.add_command(tarfile_to_extracted)
 @click.argument('pattern')
 @click.option('--regex', is_flag=True, default=False,
               help='Use regex pattern instead of glob pattern')
+@click.option('--script-friendly', is_flag=True, default=False,
+              help='Output in script-friendly format: image:tag:layer:path')
 @click.pass_context
-def search_layers(ctx, registry, image, tag, pattern, regex):
+def search_layers(ctx, registry, image, tag, pattern, regex, script_friendly):
     """Search for files matching PATTERN in image layers from a registry."""
-    searcher = search.LayerSearcher(pattern, use_regex=regex)
+    searcher = search.LayerSearcher(
+        pattern, use_regex=regex, image=image, tag=tag,
+        script_friendly=script_friendly)
     img = docker_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not ctx.obj['INSECURE']),
@@ -212,11 +216,15 @@ cli.add_command(search_layers)
 @click.argument('pattern')
 @click.option('--regex', is_flag=True, default=False,
               help='Use regex pattern instead of glob pattern')
+@click.option('--script-friendly', is_flag=True, default=False,
+              help='Output in script-friendly format: image:tag:layer:path')
 @click.pass_context
-def search_layers_tarfile(ctx, tarfile, pattern, regex):
+def search_layers_tarfile(ctx, tarfile, pattern, regex, script_friendly):
     """Search for files matching PATTERN in image layers from a tarball."""
     img = input_tarfile.Image(tarfile)
-    searcher = search.LayerSearcher(pattern, use_regex=regex)
+    searcher = search.LayerSearcher(
+        pattern, use_regex=regex, image=img.image, tag=img.tag,
+        script_friendly=script_friendly)
     _fetch(img, searcher)
 
 

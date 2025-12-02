@@ -12,9 +12,13 @@ LOG.setLevel(logging.INFO)
 
 
 class LayerSearcher(object):
-    def __init__(self, pattern, use_regex=False):
+    def __init__(self, pattern, use_regex=False, image=None, tag=None,
+                 script_friendly=False):
         self.pattern = pattern
         self.use_regex = use_regex
+        self.image = image
+        self.tag = tag
+        self.script_friendly = script_friendly
         self.results = []  # List of (layer_digest, path, file_info_dict)
 
         if use_regex:
@@ -85,7 +89,16 @@ class LayerSearcher(object):
 
     def finalize(self):
         if not self.results:
-            print('No matches found.')
+            if not self.script_friendly:
+                print('No matches found.')
+            return
+
+        if self.script_friendly:
+            # Output format: image:tag:layer:path
+            # One line per match, suitable for piping to other tools
+            for layer_digest, path, file_info in self.results:
+                print('%s:%s:%s:%s'
+                      % (self.image, self.tag, layer_digest, path))
             return
 
         # Group results by layer

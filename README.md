@@ -157,6 +157,21 @@ By default, patterns use shell glob syntax (like `*.conf` or `bin/*`). Patterns 
 occystrap search-layers --regex registry-1.docker.io library/busybox latest ".*\.sh$"
 ```
 
+For use in shell scripts, the `--script-friendly` flag outputs results in a machine-parseable format with one match per line:
+
+```
+occystrap search-layers --script-friendly registry-1.docker.io library/busybox latest "*sh"
+```
+
+This outputs colon-separated values: `image:tag:layer:path`. For example:
+
+```
+library/busybox:latest:e59838ecfec5e79eb4371e9995ef86c8000fe1c67d7b9fa7b57e996d9ba772ff:bin/ash
+library/busybox:latest:e59838ecfec5e79eb4371e9995ef86c8000fe1c67d7b9fa7b57e996d9ba772ff:bin/sh
+```
+
+When using `--script-friendly`, no output is produced for images with no matches, making it easy to pipe results to other tools.
+
 ## Authenticating with private registries
 
 To fetch images from private registries (such as GitLab Container Registry, AWS ECR, or private Docker Hub repositories), use the `--username` and `--password` global options:
