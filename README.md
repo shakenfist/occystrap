@@ -151,7 +151,7 @@ You can also search a local tarball (e.g., from `docker save`):
 occystrap search-layers-tarfile myimage.tar "etc/*.conf"
 ```
 
-By default, patterns use shell glob syntax (like `*.conf` or `bin/*`). For more complex matching, use the `--regex` flag:
+By default, patterns use shell glob syntax (like `*.conf` or `bin/*`). Patterns are matched against both the full path and just the filename, so `*sh` will match `bin/ash`, `bin/sh`, etc. For more complex matching, use the `--regex` flag:
 
 ```
 occystrap search-layers --regex registry-1.docker.io library/busybox latest ".*\.sh$"

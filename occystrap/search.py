@@ -1,5 +1,6 @@
 import fnmatch
 import logging
+import os
 import re
 import tarfile
 
@@ -26,7 +27,11 @@ class LayerSearcher(object):
         if self.use_regex:
             return self._compiled_pattern.search(path) is not None
         else:
-            return fnmatch.fnmatch(path, self.pattern)
+            # Match against full path or just the filename
+            # This allows patterns like "*bash" to match "/bin/bash"
+            filename = os.path.basename(path)
+            return (fnmatch.fnmatch(path, self.pattern) or
+                    fnmatch.fnmatch(filename, self.pattern))
 
     def _get_file_type(self, member):
         if member.isfile():
