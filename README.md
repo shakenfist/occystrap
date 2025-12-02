@@ -125,6 +125,57 @@ sudo apt-get install runc
 sudo runc run id-0001
 ```
 
+## Searching image layers for files
+
+You can search for files matching a pattern within container image layers without downloading the entire image. This is useful for container forensics or finding specific files across images.
+
+To search an image from a registry:
+
+```
+occystrap search-layers registry-1.docker.io library/busybox latest "bin/*sh"
+```
+
+This will output matching files grouped by layer:
+
+```
+Layer: e59838ecfec5e79eb4371e9995ef86c8000fe1c67d7b9fa7b57e996d9ba772ff
+  bin/ash -> bin/[ (hardlink)
+  bin/sh -> bin/[ (hardlink)
+
+Found 2 matches in 1 layer.
+```
+
+You can also search a local tarball (e.g., from `docker save`):
+
+```
+occystrap search-layers-tarfile myimage.tar "etc/*.conf"
+```
+
+By default, patterns use shell glob syntax (like `*.conf` or `bin/*`). For more complex matching, use the `--regex` flag:
+
+```
+occystrap search-layers --regex registry-1.docker.io library/busybox latest ".*\.sh$"
+```
+
+## Authenticating with private registries
+
+To fetch images from private registries (such as GitLab Container Registry, AWS ECR, or private Docker Hub repositories), use the `--username` and `--password` global options:
+
+```
+occystrap --username myuser --password mytoken \
+    fetch-to-tarfile registry.gitlab.com mygroup/myimage latest output.tar
+```
+
+You can also use environment variables to avoid putting credentials on the command line:
+
+```
+export OCCYSTRAP_USERNAME=myuser
+export OCCYSTRAP_PASSWORD=mytoken
+occystrap fetch-to-tarfile registry.gitlab.com mygroup/myimage latest output.tar
+```
+
+For GitLab Container Registry, the username is typically your GitLab username and the password is a personal access token with `read_registry` scope.
+
 ## Supporting non-default architectures
 
 Docker image repositories can store multiple versions of a single image, with each image corresponding to a different (operating system, cpu architecture, cpu variant) tuple. Occy Strap supports letting you specify which to use with global command line flags. Occy Strap defaults to linux amd64 if you don't specify something different. For example, to fetch the linux arm64 v8 image for busybox, you would run:
