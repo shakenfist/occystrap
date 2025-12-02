@@ -13,12 +13,18 @@ import io
 import logging
 import os
 import re
+from requests.exceptions import ChunkedEncodingError, ConnectionError
 import sys
 import tempfile
+import time
 import zlib
 
 from occystrap import constants
 from occystrap import util
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 2  # Exponential backoff: 2^attempt seconds
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
@@ -170,41 +176,67 @@ class Image(object):
 
             LOG.info('Fetching layer %s (%d bytes)'
                      % (layer['digest'], layer['size']))
-            r = self.request_url(
-                'GET',
-                '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
-                % {
-                    'moniker': moniker,
-                    'registry': self.registry,
-                    'image': self.image,
-                    'layer': layer['digest']
-                },
-                stream=True)
 
-            # We can use zlib for streaming decompression, but we need to tell it
-            # to ignore the gzip header which it doesn't understand. Unfortunately
-            # tarfile doesn't do streaming writes (and we need to know the
-            # decompressed size before we can write to the tarfile), so we stream
-            # to a temporary file on disk.
-            try:
-                h = hashlib.sha256()
-                d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            # Retry logic for streaming downloads which can fail mid-transfer
+            last_exception = None
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    r = self.request_url(
+                        'GET',
+                        '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
+                        % {
+                            'moniker': moniker,
+                            'registry': self.registry,
+                            'image': self.image,
+                            'layer': layer['digest']
+                        },
+                        stream=True)
 
-                with tempfile.NamedTemporaryFile(delete=False) as tf:
-                    LOG.info('Temporary file for layer is %s' % tf.name)
-                    for chunk in r.iter_content(8192):
-                        tf.write(d.decompress(chunk))
-                        h.update(chunk)
+                    # We can use zlib for streaming decompression, but we need
+                    # to tell it to ignore the gzip header which it doesn't
+                    # understand. Unfortunately tarfile doesn't do streaming
+                    # writes (and we need to know the decompressed size before
+                    # we can write to the tarfile), so we stream to a temporary
+                    # file on disk.
+                    h = hashlib.sha256()
+                    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
 
-                if h.hexdigest() != layer_filename:
-                    LOG.error('Hash verification failed for layer (%s vs %s)'
-                              % (layer_filename, h.hexdigest()))
-                    sys.exit(1)
+                    with tempfile.NamedTemporaryFile(delete=False) as tf:
+                        LOG.info('Temporary file for layer is %s' % tf.name)
+                        for chunk in r.iter_content(8192):
+                            tf.write(d.decompress(chunk))
+                            h.update(chunk)
 
-                with open(tf.name, 'rb') as f:
-                    yield (constants.IMAGE_LAYER, layer_filename, f)
+                    if h.hexdigest() != layer_filename:
+                        LOG.error('Hash verification failed for layer (%s vs %s)'
+                                  % (layer_filename, h.hexdigest()))
+                        sys.exit(1)
 
-            finally:
-                os.unlink(tf.name)
+                    try:
+                        with open(tf.name, 'rb') as f:
+                            yield (constants.IMAGE_LAYER, layer_filename, f)
+                    finally:
+                        os.unlink(tf.name)
+
+                    # Success - break out of retry loop
+                    break
+
+                except (ChunkedEncodingError, ConnectionError) as e:
+                    last_exception = e
+                    # Clean up temp file if it exists
+                    if 'tf' in dir() and tf.name and os.path.exists(tf.name):
+                        os.unlink(tf.name)
+
+                    if attempt < MAX_RETRIES:
+                        wait_time = RETRY_BACKOFF_BASE ** attempt
+                        LOG.warning(
+                            'Layer download failed (attempt %d/%d): %s. '
+                            'Retrying in %d seconds...'
+                            % (attempt + 1, MAX_RETRIES + 1, str(e), wait_time))
+                        time.sleep(wait_time)
+                    else:
+                        LOG.error('Layer download failed after %d attempts: %s'
+                                  % (MAX_RETRIES + 1, str(e)))
+                        raise last_exception
 
         LOG.info('Done')
