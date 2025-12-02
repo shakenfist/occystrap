@@ -10,6 +10,7 @@ from occystrap import output_directory
 from occystrap import output_mounts
 from occystrap import output_ocibundle
 from occystrap import output_tarfile
+from occystrap import search
 
 
 LOG = logs.setup_console(__name__)
@@ -173,3 +174,40 @@ def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand):
 
 
 cli.add_command(tarfile_to_extracted)
+
+
+@click.command()
+@click.argument('registry')
+@click.argument('image')
+@click.argument('tag')
+@click.argument('pattern')
+@click.option('--regex', is_flag=True, default=False,
+              help='Use regex pattern instead of glob pattern')
+@click.option('--insecure', is_flag=True, default=False)
+@click.pass_context
+def search_layers(ctx, registry, image, tag, pattern, regex, insecure):
+    """Search for files matching PATTERN in image layers from a registry."""
+    searcher = search.LayerSearcher(pattern, use_regex=regex)
+    img = docker_registry.Image(
+        registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
+        ctx.obj['VARIANT'], secure=(not insecure))
+    _fetch(img, searcher)
+
+
+cli.add_command(search_layers)
+
+
+@click.command()
+@click.argument('tarfile')
+@click.argument('pattern')
+@click.option('--regex', is_flag=True, default=False,
+              help='Use regex pattern instead of glob pattern')
+@click.pass_context
+def search_layers_tarfile(ctx, tarfile, pattern, regex):
+    """Search for files matching PATTERN in image layers from a tarball."""
+    img = input_tarfile.Image(tarfile)
+    searcher = search.LayerSearcher(pattern, use_regex=regex)
+    _fetch(img, searcher)
+
+
+cli.add_command(search_layers_tarfile)

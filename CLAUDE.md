@@ -60,6 +60,10 @@ The codebase follows an input/output pipeline pattern:
 - `fetch-to-mounts` - Registry → overlay mounts
 - `recreate-image` - Shared directory → tarball
 - `tarfile-to-extracted` - Tarball → directory
+- `search-layers` - Search file paths in registry image layers
+- `search-layers-tarfile` - Search file paths in tarball image layers
+
+**Search module** (`search.py`): Implements `LayerSearcher` which follows the output interface pattern but searches layers for matching paths instead of writing them.
 
 ## Key Concepts
 
