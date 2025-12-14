@@ -5,7 +5,7 @@ from shakenfist_utilities import logs
 import sys
 
 from occystrap import docker_registry
-from occystrap import input_tarfile
+from occystrap.inputs import tarfile as input_tarfile
 from occystrap import output_directory
 from occystrap import output_mounts
 from occystrap import output_ocibundle

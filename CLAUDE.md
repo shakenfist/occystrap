@@ -36,7 +36,7 @@ The codebase follows an input/output pipeline pattern:
 
 **Input sources** (image fetchers):
 - `docker_registry.py` - Fetches images from Docker/OCI registries via HTTP API
-- `input_tarfile.py` - Reads from existing docker-save tarballs
+- `inputs/tarfile.py` - Reads from existing docker-save tarballs
 
 **Output writers** (all implement the same interface):
 - `output_tarfile.py` - Creates docker-loadable tarballs (v1.2 format)

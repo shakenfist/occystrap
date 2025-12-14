@@ -5,7 +5,7 @@ import tempfile
 import testtools
 
 from occystrap import docker_registry
-from occystrap import input_tarfile
+from occystrap.inputs import tarfile as input_tarfile
 from occystrap import output_tarfile
 from occystrap import search
 
