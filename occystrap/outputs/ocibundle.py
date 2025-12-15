@@ -8,7 +8,7 @@ import shutil
 
 from occystrap.constants import RUNC_SPEC_TEMPLATE
 from occystrap import common
-from occystrap.output_directory import DirWriter
+from occystrap.outputs.directory import DirWriter
 
 
 LOG = logging.getLogger(__name__)

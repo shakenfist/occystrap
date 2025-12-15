@@ -39,11 +39,11 @@ The codebase follows an input/output pipeline pattern:
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
 - `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket
 
-**Output writers** (all implement the same interface):
-- `output_tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
-- `output_directory.py` - Extracts to directory with optional layer deduplication
-- `output_ocibundle.py` - Creates OCI runtime bundles for runc
-- `output_mounts.py` - Creates overlay mount-based extraction
+**Output writers** (in `outputs/`, all implement the same interface):
+- `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
+- `outputs/directory.py` - Extracts to directory with optional layer deduplication
+- `outputs/ocibundle.py` - Creates OCI runtime bundles for runc
+- `outputs/mounts.py` - Creates overlay mount-based extraction
 
 **Shared interface pattern**: All outputs implement:
 - `fetch_callback(digest)` - Returns whether a layer should be fetched
@@ -72,7 +72,7 @@ The codebase follows an input/output pipeline pattern:
 
 ## Key Concepts
 
-**Whiteout files**: OCI layers use `.wh.<filename>` to mark deletions and `.wh..wh..opq` for opaque directories. These are processed in `output_directory.py` when `--expand` is used.
+**Whiteout files**: OCI layers use `.wh.<filename>` to mark deletions and `.wh..wh..opq` for opaque directories. These are processed in `outputs/directory.py` when `--expand` is used.
 
 **Unique names mode**: `--use-unique-names` enables storing multiple images in one directory by prefixing manifest files with image/tag names. A `catalog.json` tracks which layers belong to which images.
 

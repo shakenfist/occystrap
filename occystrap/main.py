@@ -7,10 +7,10 @@ import sys
 from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
-from occystrap import output_directory
-from occystrap import output_mounts
-from occystrap import output_ocibundle
-from occystrap import output_tarfile
+from occystrap.outputs import directory as output_directory
+from occystrap.outputs import mounts as output_mounts
+from occystrap.outputs import ocibundle as output_ocibundle
+from occystrap.outputs import tarfile as output_tarfile
 from occystrap import search
 
 

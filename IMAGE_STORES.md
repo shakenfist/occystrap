@@ -53,29 +53,29 @@ All output image stores implement the standard interface:
 - `process_image_element(type, name, data)` - Element processing
 - `finalize()` - Completion
 
-### output_tarfile.TarWriter
+### outputs.tarfile.TarWriter
 
-Location: `occystrap/output_tarfile.py`
+Location: `occystrap/outputs/tarfile.py`
 
 Creates docker-loadable tarballs in v1.2 format. Supports timestamp
 normalization for reproducible builds.
 
-### output_directory.DirWriter / DirReader
+### outputs.directory.DirWriter / DirReader
 
-Location: `occystrap/output_directory.py`
+Location: `occystrap/outputs/directory.py`
 
 - `DirWriter` - Extracts images to directories with optional deduplication
 - `DirReader` - Reads from shared directories to recreate images
 
-### output_ocibundle.OCIBundleWriter
+### outputs.ocibundle.OCIBundleWriter
 
-Location: `occystrap/output_ocibundle.py`
+Location: `occystrap/outputs/ocibundle.py`
 
 Creates OCI runtime bundles suitable for runc execution.
 
-### output_mounts.MountWriter
+### outputs.mounts.MountWriter
 
-Location: `occystrap/output_mounts.py`
+Location: `occystrap/outputs/mounts.py`
 
 Creates overlay mount-based extraction using extended attributes.
 

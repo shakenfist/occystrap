@@ -19,10 +19,12 @@ occystrap/
         docker.py        # Fetches images from local Docker daemon
         registry.py      # Fetches images from Docker/OCI registries
         tarfile.py       # Reads from docker-save tarballs
-    output_tarfile.py    # Creates docker-loadable tarballs
-    output_directory.py  # Extracts to directory with deduplication
-    output_ocibundle.py  # Creates OCI runtime bundles
-    output_mounts.py     # Creates overlay mount-based extraction
+    outputs/             # Output writer modules
+        __init__.py
+        tarfile.py       # Creates docker-loadable tarballs
+        directory.py     # Extracts to directory with deduplication
+        ocibundle.py     # Creates OCI runtime bundles
+        mounts.py        # Creates overlay mount-based extraction
 ```
 
 ## Pipeline Pattern
@@ -44,11 +46,11 @@ All output writers implement a common interface:
 - `process_image_element(type, name, data)` - Handles CONFIG_FILE or IMAGE_LAYER
 - `finalize()` - Writes manifest and completes output
 
-Output writers:
-- `output_tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
-- `output_directory.py` - Extracts to directory with optional layer deduplication
-- `output_ocibundle.py` - Creates OCI runtime bundles for runc
-- `output_mounts.py` - Creates overlay mount-based extraction
+Output writers (in `outputs/`):
+- `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
+- `outputs/directory.py` - Extracts to directory with optional layer deduplication
+- `outputs/ocibundle.py` - Creates OCI runtime bundles for runc
+- `outputs/mounts.py` - Creates overlay mount-based extraction
 
 ### Element Types
 
@@ -64,7 +66,7 @@ OCI layers use special files to mark deletions:
 - `.wh.<filename>` - Marks a file as deleted
 - `.wh..wh..opq` - Marks directory as opaque (contents replaced)
 
-Processed in `output_directory.py` when `--expand` is used.
+Processed in `outputs/directory.py` when `--expand` is used.
 
 ### Unique Names Mode
 
