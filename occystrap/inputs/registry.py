@@ -21,6 +21,7 @@ import zlib
 
 from occystrap import constants
 from occystrap import util
+from occystrap.inputs.base import ImageInput
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -36,12 +37,12 @@ def always_fetch():
     return True
 
 
-class Image(object):
+class Image(ImageInput):
     def __init__(self, registry, image, tag, os='linux', architecture='amd64',
                  variant='', secure=True, username=None, password=None):
         self.registry = registry
-        self.image = image
-        self.tag = tag
+        self._image = image
+        self._tag = tag
         self.os = os
         self.architecture = architecture
         self.variant = variant
@@ -50,6 +51,16 @@ class Image(object):
         self.password = password
 
         self._cached_auth = None
+
+    @property
+    def image(self):
+        """Return the image name."""
+        return self._image
+
+    @property
+    def tag(self):
+        """Return the image tag."""
+        return self._tag
 
     def request_url(self, method, url, headers=None, data=None, stream=False):
         if not headers:

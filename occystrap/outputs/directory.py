@@ -4,6 +4,7 @@ import os
 import tarfile
 
 from occystrap import constants
+from occystrap.outputs.base import ImageOutput
 
 
 LOG = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ TARFILE_TYPE_MAP = {
 }
 
 
-class DirWriter(object):
+class DirWriter(ImageOutput):
     def __init__(self, image, tag, image_path, unique_names=False, expand=False):
         self.image = image
         self.tag = tag

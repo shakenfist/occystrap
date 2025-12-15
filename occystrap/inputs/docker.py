@@ -34,6 +34,7 @@ import tarfile
 import requests_unixsocket
 
 from occystrap import constants
+from occystrap.inputs.base import ImageInput
 
 
 LOG = logging.getLogger(__name__)
@@ -46,12 +47,22 @@ def always_fetch(digest):
     return True
 
 
-class Image(object):
+class Image(ImageInput):
     def __init__(self, image, tag='latest', socket_path=DEFAULT_SOCKET_PATH):
-        self.image = image
-        self.tag = tag
+        self._image = image
+        self._tag = tag
         self.socket_path = socket_path
         self._session = None
+
+    @property
+    def image(self):
+        """Return the image name."""
+        return self._image
+
+    @property
+    def tag(self):
+        """Return the image tag."""
+        return self._tag
 
     def _get_session(self):
         if self._session is None:

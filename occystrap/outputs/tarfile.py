@@ -7,6 +7,7 @@ import tarfile
 import tempfile
 
 from occystrap import constants
+from occystrap.outputs.base import ImageOutput
 
 
 LOG = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ LOG.setLevel(logging.INFO)
 # v1.2 is documented at https://github.com/moby/docker-image-spec/blob/v1.2.0/v1.2.md
 # v2 is documented at https://github.com/opencontainers/image-spec/blob/main/
 
-class TarWriter(object):
+class TarWriter(ImageOutput):
     def __init__(self, image, tag, image_path, normalize_timestamps=False,
                  timestamp=0):
         self.image = image

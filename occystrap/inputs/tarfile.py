@@ -5,6 +5,7 @@ import os
 import tarfile
 
 from occystrap import constants
+from occystrap.inputs.base import ImageInput
 
 
 LOG = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ def always_fetch(digest):
     return True
 
 
-class Image(object):
+class Image(ImageInput):
     def __init__(self, tarfile_path):
         self.tarfile_path = tarfile_path
         self._manifest = None

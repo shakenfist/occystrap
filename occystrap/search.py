@@ -5,13 +5,14 @@ import re
 import tarfile
 
 from occystrap import constants
+from occystrap.outputs.base import ImageOutput
 
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
 
 
-class LayerSearcher(object):
+class LayerSearcher(ImageOutput):
     def __init__(self, pattern, use_regex=False, image=None, tag=None,
                  script_friendly=False):
         self.pattern = pattern

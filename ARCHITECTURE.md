@@ -13,14 +13,16 @@ occystrap/
     common.py            # Shared utilities
     util.py              # Additional utilities
     docker_extract.py    # Layer extraction utilities
-    search.py            # Layer file search functionality
+    search.py            # Layer file search functionality (implements ImageOutput)
     inputs/              # Input source modules
         __init__.py
+        base.py          # ImageInput abstract base class
         docker.py        # Fetches images from local Docker daemon
         registry.py      # Fetches images from Docker/OCI registries
         tarfile.py       # Reads from docker-save tarballs
     outputs/             # Output writer modules
         __init__.py
+        base.py          # ImageOutput abstract base class
         tarfile.py       # Creates docker-loadable tarballs
         directory.py     # Extracts to directory with deduplication
         ocibundle.py     # Creates OCI runtime bundles
@@ -31,26 +33,33 @@ occystrap/
 
 ### Input Sources
 
-Input sources are responsible for yielding image elements (config files and
-layers) from various sources:
+All input sources inherit from the `ImageInput` abstract base class defined in
+`inputs/base.py`. This ABC defines the interface:
 
+- `image` (property) - Returns the image name
+- `tag` (property) - Returns the image tag
+- `fetch(fetch_callback)` - Yields image elements (config files and layers)
+
+Input source implementations:
 - `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket
 - `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
 
 ### Output Writers
 
-All output writers implement a common interface:
+All output writers inherit from the `ImageOutput` abstract base class defined in
+`outputs/base.py`. This ABC defines the interface:
 
 - `fetch_callback(digest)` - Returns whether a layer should be fetched
 - `process_image_element(type, name, data)` - Handles CONFIG_FILE or IMAGE_LAYER
 - `finalize()` - Writes manifest and completes output
 
-Output writers (in `outputs/`):
+Output writer implementations:
 - `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
 - `outputs/directory.py` - Extracts to directory with optional layer deduplication
-- `outputs/ocibundle.py` - Creates OCI runtime bundles for runc
+- `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from DirWriter)
 - `outputs/mounts.py` - Creates overlay mount-based extraction
+- `search.py` - Searches layers for matching file paths (implements ImageOutput)
 
 ### Element Types
 

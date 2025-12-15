@@ -3,7 +3,29 @@
 This document describes the image store components and their roles in the
 Occystrap codebase.
 
+## Abstract Base Classes
+
+### inputs.base.ImageInput
+
+Location: `occystrap/inputs/base.py`
+
+Abstract base class for all input sources. Defines the interface:
+- `image` (property) - Returns the image name
+- `tag` (property) - Returns the image tag
+- `fetch(fetch_callback)` - Yields image elements (config files and layers)
+
+### outputs.base.ImageOutput
+
+Location: `occystrap/outputs/base.py`
+
+Abstract base class for all output writers. Defines the interface:
+- `fetch_callback(digest)` - Determine whether a layer should be fetched
+- `process_image_element(element_type, name, data)` - Process a single element
+- `finalize()` - Complete the output operation
+
 ## Input Image Stores
+
+All input image stores inherit from `ImageInput`.
 
 ### inputs.docker.Image
 
@@ -48,7 +70,7 @@ and yields config files and layers.
 
 ## Output Image Stores
 
-All output image stores implement the standard interface:
+All output image stores inherit from `ImageOutput`, which defines the interface:
 - `fetch_callback(digest)` - Layer filtering
 - `process_image_element(type, name, data)` - Element processing
 - `finalize()` - Completion
