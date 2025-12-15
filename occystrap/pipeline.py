@@ -5,7 +5,6 @@ chain -> output pipelines from URI specifications.
 """
 
 import os
-import sys
 
 from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
