@@ -12,11 +12,11 @@ occystrap/
     constants.py         # Element type constants (CONFIG_FILE, IMAGE_LAYER)
     common.py            # Shared utilities
     util.py              # Additional utilities
-    docker_registry.py   # Fetches images from Docker/OCI registries
     docker_extract.py    # Layer extraction utilities
     search.py            # Layer file search functionality
     inputs/              # Input source modules
         __init__.py
+        registry.py      # Fetches images from Docker/OCI registries
         tarfile.py       # Reads from docker-save tarballs
     output_tarfile.py    # Creates docker-loadable tarballs
     output_directory.py  # Extracts to directory with deduplication
@@ -31,7 +31,7 @@ occystrap/
 Input sources are responsible for yielding image elements (config files and
 layers) from various sources:
 
-- `docker_registry.py` - Fetches images from Docker/OCI registries via HTTP API
+- `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
 
 ### Output Writers

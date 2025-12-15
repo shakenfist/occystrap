@@ -5,9 +5,9 @@ Occystrap codebase.
 
 ## Input Image Stores
 
-### docker_registry.Image
+### inputs.registry.Image
 
-Location: `occystrap/docker_registry.py`
+Location: `occystrap/inputs/registry.py`
 
 Fetches container images from Docker/OCI registries via HTTP API. Handles:
 - Registry authentication (basic auth, token-based)

@@ -4,7 +4,7 @@ import os
 from shakenfist_utilities import logs
 import sys
 
-from occystrap import docker_registry
+from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
 from occystrap import output_directory
 from occystrap import output_mounts
@@ -62,7 +62,7 @@ def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names,
                        expand):
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand)
-    img = docker_registry.Image(
+    img = input_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not ctx.obj['INSECURE']),
         username=ctx.obj['USERNAME'], password=ctx.obj['PASSWORD'])
@@ -83,7 +83,7 @@ cli.add_command(fetch_to_extracted)
 @click.pass_context
 def fetch_to_oci(ctx, registry, image, tag, path):
     d = output_ocibundle.OCIBundleWriter(image, tag, path)
-    img = docker_registry.Image(
+    img = input_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not ctx.obj['INSECURE']),
         username=ctx.obj['USERNAME'], password=ctx.obj['PASSWORD'])
@@ -108,7 +108,7 @@ def fetch_to_tarfile(ctx, registry, image, tag, tarfile,
         image, tag, tarfile,
         normalize_timestamps=normalize_timestamps,
         timestamp=timestamp)
-    img = docker_registry.Image(
+    img = input_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not ctx.obj['INSECURE']),
         username=ctx.obj['USERNAME'], password=ctx.obj['PASSWORD'])
@@ -133,7 +133,7 @@ def fetch_to_mounts(ctx, registry, image, tag, path):
         sys.exit(1)
 
     d = output_mounts.MountWriter(image, tag, path)
-    img = docker_registry.Image(
+    img = input_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not ctx.obj['INSECURE']),
         username=ctx.obj['USERNAME'], password=ctx.obj['PASSWORD'])
@@ -201,7 +201,7 @@ def search_layers(ctx, registry, image, tag, pattern, regex, script_friendly):
     searcher = search.LayerSearcher(
         pattern, use_regex=regex, image=image, tag=tag,
         script_friendly=script_friendly)
-    img = docker_registry.Image(
+    img = input_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not ctx.obj['INSECURE']),
         username=ctx.obj['USERNAME'], password=ctx.obj['PASSWORD'])

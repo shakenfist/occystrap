@@ -34,8 +34,8 @@ Occystrap is a Docker/OCI container image tool for:
 
 The codebase follows an input/output pipeline pattern:
 
-**Input sources** (image fetchers):
-- `docker_registry.py` - Fetches images from Docker/OCI registries via HTTP API
+**Input sources** (image fetchers in `inputs/`):
+- `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
 
 **Output writers** (all implement the same interface):

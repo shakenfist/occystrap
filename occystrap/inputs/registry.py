@@ -37,8 +37,8 @@ def always_fetch():
 
 
 class Image(object):
-    def __init__(self, registry, image, tag, os='linux', architecture='amd64', variant='',
-                 secure=True, username=None, password=None):
+    def __init__(self, registry, image, tag, os='linux', architecture='amd64',
+                 variant='', secure=True, username=None, password=None):
         self.registry = registry
         self.image = image
         self.tag = tag
@@ -96,10 +96,12 @@ class Image(object):
                 'image': self.image,
                 'tag': self.tag
             },
-            headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json,'
-                                'application/vnd.docker.distribution.manifest.list.v2+json,'
-                                'application/vnd.oci.image.manifest.v1+json,'
-                                'application/vnd.oci.image.index.v1+json')})
+            headers={
+                'Accept': ('application/vnd.docker.distribution.manifest.v2+json,'
+                           'application/vnd.docker.distribution.manifest.list.v2+json,'
+                           'application/vnd.oci.image.manifest.v1+json,'
+                           'application/vnd.oci.image.index.v1+json')
+            })
 
         config_digest = None
         if r.headers['Content-Type'] in [
@@ -113,11 +115,13 @@ class Image(object):
             for m in r.json()['manifests']:
                 if 'variant' in m['platform']:
                     LOG.info('Found manifest for %s on %s %s'
-                             % (m['platform']['os'], m['platform']['architecture'],
+                             % (m['platform']['os'],
+                                m['platform']['architecture'],
                                 m['platform']['variant']))
                 else:
                     LOG.info('Found manifest for %s on %s'
-                             % (m['platform']['os'], m['platform']['architecture']))
+                             % (m['platform']['os'],
+                                m['platform']['architecture']))
 
                 if (m['platform']['os'] == self.os and
                     m['platform']['architecture'] == self.architecture and
@@ -132,8 +136,11 @@ class Image(object):
                             'image': self.image,
                             'tag': m['digest']
                         },
-                        headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json, '
-                                            'application/vnd.oci.image.manifest.v1+json')})
+                        headers={
+                            'Accept': ('application/vnd.docker.distribution.'
+                                       'manifest.v2+json, '
+                                       'application/vnd.oci.image.manifest.v1+json')
+                        })
                     manifest = r.json()
                     config_digest = manifest['config']['digest']
 
