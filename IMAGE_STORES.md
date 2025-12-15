@@ -23,6 +23,17 @@ Abstract base class for all output writers. Defines the interface:
 - `process_image_element(element_type, name, data)` - Process a single element
 - `finalize()` - Complete the output operation
 
+### filters.base.ImageFilter
+
+Location: `occystrap/filters/base.py`
+
+Abstract base class for filters. Inherits from `ImageOutput` and wraps another
+output (decorator pattern). Defines the interface:
+- `__init__(wrapped_output)` - Wrap another output or filter
+- `fetch_callback(digest)` - Delegates to wrapped output by default
+- `process_image_element(element_type, name, data)` - Process/transform elements
+- `finalize()` - Delegates to wrapped output by default
+
 ## Input Image Stores
 
 All input image stores inherit from `ImageInput`.
@@ -68,6 +79,37 @@ Location: `occystrap/inputs/tarfile.py`
 Reads container images from docker-save format tarballs. Parses manifest.json
 and yields config files and layers.
 
+## Filters
+
+All filters inherit from `ImageFilter` and implement the decorator pattern,
+wrapping another output or filter.
+
+### filters.normalize_timestamps.TimestampNormalizer
+
+Location: `occystrap/filters/normalize_timestamps.py`
+
+Normalizes timestamps in image layers for reproducible builds. Rewrites layer
+tarballs to set all file modification times to a consistent value (default: 0,
+Unix epoch). Since this changes layer content, SHA256 hashes are recalculated
+and layer names are updated.
+
+Options:
+- `timestamp` - Unix timestamp to use (default: 0)
+
+### filters.search.SearchFilter
+
+Location: `occystrap/filters/search.py`
+
+Searches layers for files matching a pattern. Can operate in two modes:
+- **Search-only**: `wrapped_output=None`, just prints results
+- **Passthrough**: Searches AND passes elements to wrapped output
+
+Options:
+- `pattern` - Glob pattern or regex to match
+- `use_regex` - Treat pattern as regex instead of glob
+- `script_friendly` - Output in machine-parseable format
+- `image`, `tag` - For output formatting
+
 ## Output Image Stores
 
 All output image stores inherit from `ImageOutput`, which defines the interface:
@@ -79,8 +121,8 @@ All output image stores inherit from `ImageOutput`, which defines the interface:
 
 Location: `occystrap/outputs/tarfile.py`
 
-Creates docker-loadable tarballs in v1.2 format. Supports timestamp
-normalization for reproducible builds.
+Creates docker-loadable tarballs in v1.2 format. For timestamp normalization,
+use the `TimestampNormalizer` filter.
 
 ### outputs.directory.DirWriter / DirReader
 
@@ -101,20 +143,19 @@ Location: `occystrap/outputs/mounts.py`
 
 Creates overlay mount-based extraction using extended attributes.
 
-## Search Component
-
-### search.LayerSearcher
-
-Location: `occystrap/search.py`
-
-Implements the output interface but searches layers for matching file paths
-instead of writing them. Supports glob and regex patterns.
-
 ## CLI Commands
 
 Location: `occystrap/main.py`
 
-Click-based CLI providing commands:
+### New URI-style Commands (Recommended)
+
+- `process` - Unified pipeline command with URI-style arguments
+- `search` - Search for files in image layers
+
+### Legacy Commands (Deprecated)
+
+These commands still work but are deprecated in favor of the `process` command:
+
 - `fetch-to-tarfile` - Registry to tarball
 - `fetch-to-extracted` - Registry to directory
 - `fetch-to-oci` - Registry to OCI bundle
@@ -127,3 +168,18 @@ Click-based CLI providing commands:
 - `search-layers` - Search registry image layers
 - `search-layers-tarfile` - Search tarball image layers
 - `search-layers-docker` - Search local Docker image layers
+
+## Pipeline Infrastructure
+
+### uri.py
+
+Location: `occystrap/uri.py`
+
+Parses URI-style specifications for inputs, outputs, and filters.
+
+### pipeline.py
+
+Location: `occystrap/pipeline.py`
+
+`PipelineBuilder` class that constructs input -> filter chain -> output
+pipelines from URI specifications.

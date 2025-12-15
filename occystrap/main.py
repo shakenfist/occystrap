@@ -11,7 +11,9 @@ from occystrap.outputs import directory as output_directory
 from occystrap.outputs import mounts as output_mounts
 from occystrap.outputs import ocibundle as output_ocibundle
 from occystrap.outputs import tarfile as output_tarfile
-from occystrap import search
+from occystrap.filters import SearchFilter, TimestampNormalizer
+from occystrap.pipeline import PipelineBuilder, PipelineError
+from occystrap import uri
 
 
 LOG = logs.setup_console(__name__)
@@ -51,7 +53,114 @@ def _fetch(img, output):
     output.finalize()
 
 
-@click.command()
+# =============================================================================
+# New URI-style commands
+# =============================================================================
+
+@click.command('process')
+@click.argument('source')
+@click.argument('destination')
+@click.option('--filter', '-f', 'filters', multiple=True,
+              help='Apply filter (can be specified multiple times)')
+@click.pass_context
+def process_cmd(ctx, source, destination, filters):
+    """Process container images through a pipeline.
+
+    SOURCE and DESTINATION are URIs specifying where to read from
+    and write to.
+
+    \b
+    Input URI schemes:
+      registry://HOST/IMAGE:TAG    - Docker/OCI registry
+      docker://IMAGE:TAG           - Local Docker daemon
+      tar://PATH                   - Docker-save tarball
+
+    \b
+    Output URI schemes:
+      tar://PATH                   - Create tarball
+      dir://PATH                   - Extract to directory
+      oci://PATH                   - Create OCI bundle
+      mounts://PATH                - Create overlay mounts
+
+    \b
+    Filters (use -f, can chain multiple):
+      normalize-timestamps         - Normalize layer timestamps
+      normalize-timestamps:ts=N    - Use specific timestamp
+      search:pattern=GLOB          - Search for files
+      search:pattern=RE,regex=true - Search with regex
+
+    \b
+    Examples:
+      occystrap process registry://docker.io/library/busybox:latest tar://busybox.tar
+      occystrap process docker://myimage:v1 dir://./extracted -f normalize-timestamps
+      occystrap process tar://image.tar dir://out -f "search:pattern=*.conf"
+    """
+    try:
+        builder = PipelineBuilder(ctx)
+        input_source, output = builder.build_pipeline(
+            source, destination, list(filters))
+        _fetch(input_source, output)
+
+        # Handle post-processing for certain outputs
+        if hasattr(output, 'write_bundle'):
+            # Check if this is an OCI or mounts output that needs write_bundle
+            dest_spec = uri.parse_uri(destination)
+            if dest_spec.scheme in ('oci', 'mounts'):
+                output.write_bundle()
+            elif dest_spec.scheme == 'dir' and dest_spec.options.get('expand'):
+                output.write_bundle()
+
+    except (PipelineError, uri.URIParseError) as e:
+        click.echo('Error: %s' % e, err=True)
+        sys.exit(1)
+
+
+cli.add_command(process_cmd)
+
+
+@click.command('search')
+@click.argument('source')
+@click.argument('pattern')
+@click.option('--regex', is_flag=True, default=False,
+              help='Use regex pattern instead of glob pattern')
+@click.option('--script-friendly', is_flag=True, default=False,
+              help='Output in script-friendly format: image:tag:layer:path')
+@click.pass_context
+def search_cmd(ctx, source, pattern, regex, script_friendly):
+    """Search for files in container image layers.
+
+    SOURCE is a URI specifying where to read the image from:
+      registry://HOST/IMAGE:TAG    - Docker/OCI registry
+      docker://IMAGE:TAG           - Local Docker daemon
+      tar://PATH                   - Docker-save tarball
+
+    PATTERN is a glob pattern (or regex with --regex).
+
+    \b
+    Examples:
+      occystrap search registry://docker.io/library/busybox:latest "bin/*sh"
+      occystrap search docker://myimage:v1 "*.conf"
+      occystrap search --regex tar://image.tar ".*\\.py$"
+    """
+    try:
+        builder = PipelineBuilder(ctx)
+        input_source, searcher = builder.build_search_pipeline(
+            source, pattern, use_regex=regex, script_friendly=script_friendly)
+        _fetch(input_source, searcher)
+
+    except (PipelineError, uri.URIParseError) as e:
+        click.echo('Error: %s' % e, err=True)
+        sys.exit(1)
+
+
+cli.add_command(search_cmd)
+
+
+# =============================================================================
+# Legacy commands (kept for backwards compatibility)
+# =============================================================================
+
+@click.command(deprecated=True)
 @click.argument('registry')
 @click.argument('image')
 @click.argument('tag')
@@ -61,6 +170,7 @@ def _fetch(img, output):
 @click.pass_context
 def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names,
                        expand):
+    """[DEPRECATED] Use: occystrap process registry://... dir://..."""
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand)
     img = input_registry.Image(
@@ -76,13 +186,14 @@ def fetch_to_extracted(ctx, registry, image, tag, path, use_unique_names,
 cli.add_command(fetch_to_extracted)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('registry')
 @click.argument('image')
 @click.argument('tag')
 @click.argument('path')
 @click.pass_context
 def fetch_to_oci(ctx, registry, image, tag, path):
+    """[DEPRECATED] Use: occystrap process registry://... oci://..."""
     d = output_ocibundle.OCIBundleWriter(image, tag, path)
     img = input_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
@@ -95,7 +206,7 @@ def fetch_to_oci(ctx, registry, image, tag, path):
 cli.add_command(fetch_to_oci)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('registry')
 @click.argument('image')
 @click.argument('tag')
@@ -105,10 +216,10 @@ cli.add_command(fetch_to_oci)
 @click.pass_context
 def fetch_to_tarfile(ctx, registry, image, tag, tarfile,
                      normalize_timestamps, timestamp):
-    tar = output_tarfile.TarWriter(
-        image, tag, tarfile,
-        normalize_timestamps=normalize_timestamps,
-        timestamp=timestamp)
+    """[DEPRECATED] Use: occystrap process registry://... tar://..."""
+    tar = output_tarfile.TarWriter(image, tag, tarfile)
+    if normalize_timestamps:
+        tar = TimestampNormalizer(tar, timestamp=timestamp)
     img = input_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
         ctx.obj['VARIANT'], secure=(not ctx.obj['INSECURE']),
@@ -119,13 +230,14 @@ def fetch_to_tarfile(ctx, registry, image, tag, tarfile,
 cli.add_command(fetch_to_tarfile)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('registry')
 @click.argument('image')
 @click.argument('tag')
 @click.argument('path')
 @click.pass_context
 def fetch_to_mounts(ctx, registry, image, tag, path):
+    """[DEPRECATED] Use: occystrap process registry://... mounts://..."""
     if not hasattr(os, 'setxattr'):
         print('Sorry, your OS module implementation lacks setxattr')
         sys.exit(1)
@@ -145,7 +257,7 @@ def fetch_to_mounts(ctx, registry, image, tag, path):
 cli.add_command(fetch_to_mounts)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('path')
 @click.argument('image')
 @click.argument('tag')
@@ -155,11 +267,11 @@ cli.add_command(fetch_to_mounts)
 @click.pass_context
 def recreate_image(ctx, path, image, tag, tarfile, normalize_timestamps,
                    timestamp):
+    """[DEPRECATED] Recreate image from shared directory."""
     d = output_directory.DirReader(path, image, tag)
-    tar = output_tarfile.TarWriter(
-        image, tag, tarfile,
-        normalize_timestamps=normalize_timestamps,
-        timestamp=timestamp)
+    tar = output_tarfile.TarWriter(image, tag, tarfile)
+    if normalize_timestamps:
+        tar = TimestampNormalizer(tar, timestamp=timestamp)
     for image_element in d.fetch():
         tar.process_image_element(*image_element)
     tar.finalize()
@@ -168,13 +280,14 @@ def recreate_image(ctx, path, image, tag, tarfile, normalize_timestamps,
 cli.add_command(recreate_image)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('tarfile')
 @click.argument('path')
 @click.option('--use-unique-names', is_flag=True)
 @click.option('--expand', is_flag=True)
 @click.pass_context
 def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand):
+    """[DEPRECATED] Use: occystrap process tar://... dir://..."""
     img = input_tarfile.Image(tarfile)
     d = output_directory.DirWriter(
         img.image, img.tag, path, unique_names=use_unique_names, expand=expand)
@@ -187,7 +300,7 @@ def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand):
 cli.add_command(tarfile_to_extracted)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('image')
 @click.argument('tag')
 @click.argument('tarfile')
@@ -198,11 +311,10 @@ cli.add_command(tarfile_to_extracted)
 @click.pass_context
 def docker_to_tarfile(ctx, image, tag, tarfile, socket, normalize_timestamps,
                       timestamp):
-    """Export an image from local Docker daemon to a tarball."""
-    tar = output_tarfile.TarWriter(
-        image, tag, tarfile,
-        normalize_timestamps=normalize_timestamps,
-        timestamp=timestamp)
+    """[DEPRECATED] Use: occystrap process docker://... tar://..."""
+    tar = output_tarfile.TarWriter(image, tag, tarfile)
+    if normalize_timestamps:
+        tar = TimestampNormalizer(tar, timestamp=timestamp)
     img = input_docker.Image(image, tag, socket_path=socket)
     _fetch(img, tar)
 
@@ -210,7 +322,7 @@ def docker_to_tarfile(ctx, image, tag, tarfile, socket, normalize_timestamps,
 cli.add_command(docker_to_tarfile)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('image')
 @click.argument('tag')
 @click.argument('path')
@@ -221,7 +333,7 @@ cli.add_command(docker_to_tarfile)
 @click.pass_context
 def docker_to_extracted(ctx, image, tag, path, socket, use_unique_names,
                         expand):
-    """Export an image from local Docker daemon to a directory."""
+    """[DEPRECATED] Use: occystrap process docker://... dir://..."""
     d = output_directory.DirWriter(
         image, tag, path, unique_names=use_unique_names, expand=expand)
     img = input_docker.Image(image, tag, socket_path=socket)
@@ -234,7 +346,7 @@ def docker_to_extracted(ctx, image, tag, path, socket, use_unique_names,
 cli.add_command(docker_to_extracted)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('image')
 @click.argument('tag')
 @click.argument('path')
@@ -242,7 +354,7 @@ cli.add_command(docker_to_extracted)
               help='Path to Docker socket')
 @click.pass_context
 def docker_to_oci(ctx, image, tag, path, socket):
-    """Export an image from local Docker daemon to an OCI bundle."""
+    """[DEPRECATED] Use: occystrap process docker://... oci://..."""
     d = output_ocibundle.OCIBundleWriter(image, tag, path)
     img = input_docker.Image(image, tag, socket_path=socket)
     _fetch(img, d)
@@ -252,7 +364,7 @@ def docker_to_oci(ctx, image, tag, path, socket):
 cli.add_command(docker_to_oci)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('image')
 @click.argument('tag')
 @click.argument('pattern')
@@ -265,9 +377,9 @@ cli.add_command(docker_to_oci)
 @click.pass_context
 def search_layers_docker(ctx, image, tag, pattern, socket, regex,
                          script_friendly):
-    """Search for files matching PATTERN in image layers from Docker daemon."""
-    searcher = search.LayerSearcher(
-        pattern, use_regex=regex, image=image, tag=tag,
+    """[DEPRECATED] Use: occystrap search docker://IMAGE:TAG PATTERN"""
+    searcher = SearchFilter(
+        None, pattern, use_regex=regex, image=image, tag=tag,
         script_friendly=script_friendly)
     img = input_docker.Image(image, tag, socket_path=socket)
     _fetch(img, searcher)
@@ -276,7 +388,7 @@ def search_layers_docker(ctx, image, tag, pattern, socket, regex,
 cli.add_command(search_layers_docker)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('registry')
 @click.argument('image')
 @click.argument('tag')
@@ -287,9 +399,9 @@ cli.add_command(search_layers_docker)
               help='Output in script-friendly format: image:tag:layer:path')
 @click.pass_context
 def search_layers(ctx, registry, image, tag, pattern, regex, script_friendly):
-    """Search for files matching PATTERN in image layers from a registry."""
-    searcher = search.LayerSearcher(
-        pattern, use_regex=regex, image=image, tag=tag,
+    """[DEPRECATED] Use: occystrap search registry://HOST/IMAGE:TAG PATTERN"""
+    searcher = SearchFilter(
+        None, pattern, use_regex=regex, image=image, tag=tag,
         script_friendly=script_friendly)
     img = input_registry.Image(
         registry, image, tag, ctx.obj['OS'], ctx.obj['ARCHITECTURE'],
@@ -301,7 +413,7 @@ def search_layers(ctx, registry, image, tag, pattern, regex, script_friendly):
 cli.add_command(search_layers)
 
 
-@click.command()
+@click.command(deprecated=True)
 @click.argument('tarfile')
 @click.argument('pattern')
 @click.option('--regex', is_flag=True, default=False,
@@ -310,10 +422,10 @@ cli.add_command(search_layers)
               help='Output in script-friendly format: image:tag:layer:path')
 @click.pass_context
 def search_layers_tarfile(ctx, tarfile, pattern, regex, script_friendly):
-    """Search for files matching PATTERN in image layers from a tarball."""
+    """[DEPRECATED] Use: occystrap search tar://PATH PATTERN"""
     img = input_tarfile.Image(tarfile)
-    searcher = search.LayerSearcher(
-        pattern, use_regex=regex, image=img.image, tag=img.tag,
+    searcher = SearchFilter(
+        None, pattern, use_regex=regex, image=img.image, tag=img.tag,
         script_friendly=script_friendly)
     _fetch(img, searcher)
 

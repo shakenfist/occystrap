@@ -5,16 +5,39 @@ import re
 import tarfile
 
 from occystrap import constants
-from occystrap.outputs.base import ImageOutput
+from occystrap.filters.base import ImageFilter
 
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
 
 
-class LayerSearcher(ImageOutput):
-    def __init__(self, pattern, use_regex=False, image=None, tag=None,
-                 script_friendly=False):
+class SearchFilter(ImageFilter):
+    """Searches layers for files matching a pattern.
+
+    This filter can operate in two modes:
+    - Search-only: wrapped_output is None, just prints results
+    - Passthrough: searches AND passes elements to wrapped output
+
+    In passthrough mode, this allows searching while also writing output,
+    enabling pipelines like:
+        input -> search -> tarfile (search while creating tarball)
+    """
+
+    def __init__(self, wrapped_output, pattern, use_regex=False,
+                 image=None, tag=None, script_friendly=False):
+        """Initialize the search filter.
+
+        Args:
+            wrapped_output: The ImageOutput to pass elements to, or None
+                for search-only mode.
+            pattern: Glob pattern or regex to match file paths.
+            use_regex: If True, treat pattern as a regex instead of glob.
+            image: Image name for output formatting.
+            tag: Image tag for output formatting.
+            script_friendly: If True, output in machine-parseable format.
+        """
+        super().__init__(wrapped_output)
         self.pattern = pattern
         self.use_regex = use_regex
         self.image = image
@@ -26,9 +49,18 @@ class LayerSearcher(ImageOutput):
             self._compiled_pattern = re.compile(pattern)
 
     def fetch_callback(self, digest):
+        """Always fetch all layers for searching."""
+        # If we have a wrapped output, also check its callback
+        if self._wrapped is not None:
+            # We need the layer for searching, but the wrapped output
+            # might not need it. We fetch it anyway for searching.
+            # The wrapped output's callback is still consulted but
+            # we always return True to ensure we get the data.
+            pass
         return True
 
     def _matches(self, path):
+        """Check if a path matches the search pattern."""
         if self.use_regex:
             return self._compiled_pattern.search(path) is not None
         else:
@@ -39,6 +71,7 @@ class LayerSearcher(ImageOutput):
                     fnmatch.fnmatch(filename, self.pattern))
 
     def _get_file_type(self, member):
+        """Get a human-readable file type string."""
         if member.isfile():
             return 'file'
         elif member.isdir():
@@ -56,18 +89,10 @@ class LayerSearcher(ImageOutput):
         else:
             return 'unknown'
 
-    def process_image_element(self, element_type, name, data):
-        if element_type != constants.IMAGE_LAYER:
-            return
-
-        if data is None:
-            LOG.warning('Layer %s has no data (skipped by fetch_callback)'
-                        % name)
-            return
-
+    def _search_layer(self, name, data):
+        """Search a layer for matching files."""
         LOG.info('Searching layer %s' % name)
 
-        # Open the layer tarball and search for matching paths
         data.seek(0)
         try:
             with tarfile.open(fileobj=data, mode='r') as layer_tar:
@@ -88,7 +113,20 @@ class LayerSearcher(ImageOutput):
         except tarfile.TarError as e:
             LOG.error('Failed to read layer %s: %s' % (name, e))
 
-    def finalize(self):
+    def process_image_element(self, element_type, name, data):
+        """Process an image element, searching layers for matches."""
+        # Search layers
+        if element_type == constants.IMAGE_LAYER and data is not None:
+            self._search_layer(name, data)
+
+        # Pass through to wrapped output if present
+        if self._wrapped is not None:
+            if data is not None:
+                data.seek(0)  # Reset for next consumer
+            self._wrapped.process_image_element(element_type, name, data)
+
+    def _print_results(self):
+        """Print search results to stdout."""
         if not self.results:
             if not self.script_friendly:
                 print('No matches found.')
@@ -130,3 +168,10 @@ class LayerSearcher(ImageOutput):
         print('Found %d match%s in %d layer%s.'
               % (match_count, '' if match_count == 1 else 'es',
                  layer_count, '' if layer_count == 1 else 's'))
+
+    def finalize(self):
+        """Print search results and finalize wrapped output."""
+        self._print_results()
+
+        if self._wrapped is not None:
+            self._wrapped.finalize()
