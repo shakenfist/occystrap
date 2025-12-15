@@ -172,6 +172,68 @@ library/busybox:latest:e59838ecfec5e79eb4371e9995ef86c8000fe1c67d7b9fa7b57e996d9
 
 When using `--script-friendly`, no output is produced for images with no matches, making it easy to pipe results to other tools.
 
+## Working with local Docker or Podman daemon
+
+If you have Docker or Podman running locally and want to export images from it without going through a registry, you can use the `docker-to-*` commands. These communicate with the container daemon via a Unix socket.
+
+To export an image from your local Docker daemon to a tarball:
+
+```
+occystrap docker-to-tarfile library/busybox latest busybox.tar
+```
+
+To extract to a directory:
+
+```
+occystrap docker-to-extracted library/busybox latest busybox-dir
+```
+
+To create an OCI bundle:
+
+```
+occystrap docker-to-oci library/busybox latest busybox-oci
+```
+
+To search for files in a local Docker image:
+
+```
+occystrap search-layers-docker library/busybox latest "bin/*sh"
+```
+
+If your Docker socket is in a non-standard location, use the `--socket` option:
+
+```
+occystrap docker-to-tarfile --socket /run/user/1000/docker.sock myimage latest output.tar
+```
+
+Note: You'll need appropriate permissions to access the Docker socket (typically being in the `docker` group or running as root).
+
+### Podman compatibility
+
+These commands also work with Podman, which provides a Docker-compatible API. You just need to point to the Podman socket instead:
+
+For rootful Podman:
+
+```
+occystrap docker-to-tarfile --socket /run/podman/podman.sock myimage latest output.tar
+```
+
+For rootless Podman (where `1000` is your user ID):
+
+```
+occystrap docker-to-tarfile --socket /run/user/1000/podman/podman.sock myimage latest output.tar
+```
+
+Note: Podman doesn't run a daemon by default. You need to start the socket service first:
+
+```
+# For rootless Podman
+systemctl --user start podman.socket
+
+# For rootful Podman
+sudo systemctl start podman.socket
+```
+
 ## Authenticating with private registries
 
 To fetch images from private registries (such as GitLab Container Registry, AWS ECR, or private Docker Hub repositories), use the `--username` and `--password` global options:

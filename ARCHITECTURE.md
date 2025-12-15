@@ -16,6 +16,7 @@ occystrap/
     search.py            # Layer file search functionality
     inputs/              # Input source modules
         __init__.py
+        docker.py        # Fetches images from local Docker daemon
         registry.py      # Fetches images from Docker/OCI registries
         tarfile.py       # Reads from docker-save tarballs
     output_tarfile.py    # Creates docker-loadable tarballs
@@ -31,6 +32,7 @@ occystrap/
 Input sources are responsible for yielding image elements (config files and
 layers) from various sources:
 
+- `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket
 - `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
 

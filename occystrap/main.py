@@ -4,6 +4,7 @@ import os
 from shakenfist_utilities import logs
 import sys
 
+from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
 from occystrap import output_directory
@@ -184,6 +185,95 @@ def tarfile_to_extracted(ctx, tarfile, path, use_unique_names, expand):
 
 
 cli.add_command(tarfile_to_extracted)
+
+
+@click.command()
+@click.argument('image')
+@click.argument('tag')
+@click.argument('tarfile')
+@click.option('--socket', default='/var/run/docker.sock',
+              help='Path to Docker socket')
+@click.option('--normalize-timestamps', is_flag=True, default=False)
+@click.option('--timestamp', default=0, type=int)
+@click.pass_context
+def docker_to_tarfile(ctx, image, tag, tarfile, socket, normalize_timestamps,
+                      timestamp):
+    """Export an image from local Docker daemon to a tarball."""
+    tar = output_tarfile.TarWriter(
+        image, tag, tarfile,
+        normalize_timestamps=normalize_timestamps,
+        timestamp=timestamp)
+    img = input_docker.Image(image, tag, socket_path=socket)
+    _fetch(img, tar)
+
+
+cli.add_command(docker_to_tarfile)
+
+
+@click.command()
+@click.argument('image')
+@click.argument('tag')
+@click.argument('path')
+@click.option('--socket', default='/var/run/docker.sock',
+              help='Path to Docker socket')
+@click.option('--use-unique-names', is_flag=True)
+@click.option('--expand', is_flag=True)
+@click.pass_context
+def docker_to_extracted(ctx, image, tag, path, socket, use_unique_names,
+                        expand):
+    """Export an image from local Docker daemon to a directory."""
+    d = output_directory.DirWriter(
+        image, tag, path, unique_names=use_unique_names, expand=expand)
+    img = input_docker.Image(image, tag, socket_path=socket)
+    _fetch(img, d)
+
+    if expand:
+        d.write_bundle()
+
+
+cli.add_command(docker_to_extracted)
+
+
+@click.command()
+@click.argument('image')
+@click.argument('tag')
+@click.argument('path')
+@click.option('--socket', default='/var/run/docker.sock',
+              help='Path to Docker socket')
+@click.pass_context
+def docker_to_oci(ctx, image, tag, path, socket):
+    """Export an image from local Docker daemon to an OCI bundle."""
+    d = output_ocibundle.OCIBundleWriter(image, tag, path)
+    img = input_docker.Image(image, tag, socket_path=socket)
+    _fetch(img, d)
+    d.write_bundle()
+
+
+cli.add_command(docker_to_oci)
+
+
+@click.command()
+@click.argument('image')
+@click.argument('tag')
+@click.argument('pattern')
+@click.option('--socket', default='/var/run/docker.sock',
+              help='Path to Docker socket')
+@click.option('--regex', is_flag=True, default=False,
+              help='Use regex pattern instead of glob pattern')
+@click.option('--script-friendly', is_flag=True, default=False,
+              help='Output in script-friendly format: image:tag:layer:path')
+@click.pass_context
+def search_layers_docker(ctx, image, tag, pattern, socket, regex,
+                         script_friendly):
+    """Search for files matching PATTERN in image layers from Docker daemon."""
+    searcher = search.LayerSearcher(
+        pattern, use_regex=regex, image=image, tag=tag,
+        script_friendly=script_friendly)
+    img = input_docker.Image(image, tag, socket_path=socket)
+    _fetch(img, searcher)
+
+
+cli.add_command(search_layers_docker)
 
 
 @click.command()

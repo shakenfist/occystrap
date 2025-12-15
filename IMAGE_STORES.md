@@ -5,6 +5,30 @@ Occystrap codebase.
 
 ## Input Image Stores
 
+### inputs.docker.Image
+
+Location: `occystrap/inputs/docker.py`
+
+Fetches container images from the local Docker or Podman daemon via the
+Docker Engine API over a Unix domain socket (default: `/var/run/docker.sock`).
+Handles:
+- Streaming image export (equivalent to `docker save`)
+- Parsing docker-save format on the fly
+- Custom socket path configuration
+
+**Podman Compatibility**: This input source also works with Podman, which
+provides a Docker-compatible API. Use the `--socket` option to point to the
+Podman socket (`/run/podman/podman.sock` for rootful, or
+`/run/user/<uid>/podman/podman.sock` for rootless).
+
+**API Limitation**: Unlike the registry API which allows fetching individual
+layer blobs via `GET /v2/<name>/blobs/<digest>`, the Docker Engine API only
+provides the `/images/{name}/get` endpoint which returns a complete tarball.
+There is no way to fetch individual image components (config, layers)
+separately. This is a fundamental limitation of the Docker Engine API design.
+The tarball streaming approach used here is the official supported method and
+matches what `docker save` does internally.
+
 ### inputs.registry.Image
 
 Location: `occystrap/inputs/registry.py`
@@ -75,5 +99,9 @@ Click-based CLI providing commands:
 - `fetch-to-mounts` - Registry to overlay mounts
 - `recreate-image` - Shared directory to tarball
 - `tarfile-to-extracted` - Tarball to directory
+- `docker-to-tarfile` - Local Docker daemon to tarball
+- `docker-to-extracted` - Local Docker daemon to directory
+- `docker-to-oci` - Local Docker daemon to OCI bundle
 - `search-layers` - Search registry image layers
 - `search-layers-tarfile` - Search tarball image layers
+- `search-layers-docker` - Search local Docker image layers

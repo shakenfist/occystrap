@@ -37,6 +37,7 @@ The codebase follows an input/output pipeline pattern:
 **Input sources** (image fetchers in `inputs/`):
 - `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
+- `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket
 
 **Output writers** (all implement the same interface):
 - `output_tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
@@ -60,8 +61,12 @@ The codebase follows an input/output pipeline pattern:
 - `fetch-to-mounts` - Registry → overlay mounts
 - `recreate-image` - Shared directory → tarball
 - `tarfile-to-extracted` - Tarball → directory
+- `docker-to-tarfile` - Local Docker daemon → tarball
+- `docker-to-extracted` - Local Docker daemon → directory
+- `docker-to-oci` - Local Docker daemon → OCI bundle
 - `search-layers` - Search file paths in registry image layers
 - `search-layers-tarfile` - Search file paths in tarball image layers
+- `search-layers-docker` - Search file paths in local Docker image layers
 
 **Search module** (`search.py`): Implements `LayerSearcher` which follows the output interface pattern but searches layers for matching paths instead of writing them.
 
