@@ -5,7 +5,7 @@ import testtools
 
 
 from occystrap.inputs import registry as input_registry
-from occystrap import output_directory
+from occystrap.outputs import directory as output_directory
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')

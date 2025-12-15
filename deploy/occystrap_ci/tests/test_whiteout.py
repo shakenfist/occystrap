@@ -7,8 +7,8 @@ import testtools
 
 
 from occystrap.inputs import registry as input_registry
-from occystrap import output_ocibundle
-from occystrap import output_mounts
+from occystrap.outputs import ocibundle as output_ocibundle
+from occystrap.outputs import mounts as output_mounts
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')

@@ -6,7 +6,7 @@ import testtools
 
 
 from occystrap.inputs import registry as input_registry
-from occystrap import output_ocibundle
+from occystrap.outputs import ocibundle as output_ocibundle
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')

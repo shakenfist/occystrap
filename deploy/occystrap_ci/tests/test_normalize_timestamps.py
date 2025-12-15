@@ -6,7 +6,8 @@ import tempfile
 import unittest
 
 from occystrap import constants
-from occystrap import output_tarfile
+from occystrap.outputs import tarfile as output_tarfile
+from occystrap.filters import TimestampNormalizer
 
 
 class NormalizeTimestampsTestCase(unittest.TestCase):
@@ -31,18 +32,17 @@ class NormalizeTimestampsTestCase(unittest.TestCase):
                 original_hash.update(data)
                 original_sha = original_hash.hexdigest()
 
-                # Create TarWriter with timestamp normalization
+                # Create TarWriter wrapped with TimestampNormalizer
                 with tempfile.NamedTemporaryFile(delete=False) as output_tf:
                     try:
                         tw = output_tarfile.TarWriter(
-                            'test/image', 'latest', output_tf.name,
-                            normalize_timestamps=True, timestamp=0)
+                            'test/image', 'latest', output_tf.name)
+                        normalizer = TimestampNormalizer(tw, timestamp=0)
 
-                        # Normalize the layer
+                        # Normalize the layer using the filter's internal method
                         layer_tf.seek(0)
-                        normalized_data, new_sha = \
-                            tw._normalize_layer_timestamps(
-                                open(layer_tf.name, 'rb'))
+                        normalized_data, new_sha = normalizer._normalize_layer(
+                            open(layer_tf.name, 'rb'))
 
                         # Verify the hash changed
                         self.assertNotEqual(original_sha, new_sha)
@@ -87,13 +87,13 @@ class NormalizeTimestampsTestCase(unittest.TestCase):
             with tempfile.NamedTemporaryFile(delete=False) as output_tf:
                 try:
                     tw = output_tarfile.TarWriter(
-                        'test/image', 'latest', output_tf.name,
-                        normalize_timestamps=True, timestamp=0)
+                        'test/image', 'latest', output_tf.name)
+                    normalizer = TimestampNormalizer(tw, timestamp=0)
 
                     # Normalize both layers
-                    data1, sha1 = tw._normalize_layer_timestamps(
+                    data1, sha1 = normalizer._normalize_layer(
                         open(layer1_path, 'rb'))
-                    data2, sha2 = tw._normalize_layer_timestamps(
+                    data2, sha2 = normalizer._normalize_layer(
                         open(layer2_path, 'rb'))
 
                     # Verify same content with different original timestamps
@@ -114,14 +114,14 @@ class NormalizeTimestampsTestCase(unittest.TestCase):
             os.unlink(layer1_path)
             os.unlink(layer2_path)
 
-    def test_tarwriter_with_normalization(self):
-        """Test that TarWriter properly integrates timestamp normalization."""
+    def test_filter_integration_with_tarwriter(self):
+        """Test that TimestampNormalizer properly integrates with TarWriter."""
         with tempfile.NamedTemporaryFile(delete=False, suffix='.tar') as \
                 output_tf:
             try:
                 tw = output_tarfile.TarWriter(
-                    'test/image', 'latest', output_tf.name,
-                    normalize_timestamps=True, timestamp=42)
+                    'test/image', 'latest', output_tf.name)
+                normalizer = TimestampNormalizer(tw, timestamp=42)
 
                 # Create a test layer
                 with tempfile.NamedTemporaryFile(delete=False) as layer_tf:
@@ -136,13 +136,13 @@ class NormalizeTimestampsTestCase(unittest.TestCase):
                         layer_tf.flush()
                         layer_tf.seek(0)
 
-                        # Process the layer
-                        tw.process_image_element(
+                        # Process the layer through the filter
+                        normalizer.process_image_element(
                             constants.IMAGE_LAYER, 'originalhash',
                             open(layer_tf.name, 'rb'))
 
                         # Finalize
-                        tw.finalize()
+                        normalizer.finalize()
 
                         # Verify the manifest contains a layer path
                         self.assertEqual(1, len(tw.tar_manifest[0]['Layers']))

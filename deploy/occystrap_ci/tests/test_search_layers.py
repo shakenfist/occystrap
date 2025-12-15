@@ -6,8 +6,8 @@ import testtools
 
 from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
-from occystrap import output_tarfile
-from occystrap import search
+from occystrap.outputs import tarfile as output_tarfile
+from occystrap.filters import SearchFilter
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -20,7 +20,7 @@ class SearchLayersTestCase(testtools.TestCase):
         image = 'library/busybox'
         tag = 'latest'
 
-        searcher = search.LayerSearcher('*sh')
+        searcher = SearchFilter(None, '*sh')
         img = input_registry.Image(
             'registry-1.docker.io', image, tag, 'linux', 'amd64', '')
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
@@ -39,7 +39,7 @@ class SearchLayersTestCase(testtools.TestCase):
         image = 'library/busybox'
         tag = 'latest'
 
-        searcher = search.LayerSearcher('nonexistent_file_pattern_xyz123')
+        searcher = SearchFilter(None, 'nonexistent_file_pattern_xyz123')
         img = input_registry.Image(
             'registry-1.docker.io', image, tag, 'linux', 'amd64', '')
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
@@ -54,7 +54,7 @@ class SearchLayersTestCase(testtools.TestCase):
         tag = 'latest'
 
         # Search for files ending in 'sh' in bin directory
-        searcher = search.LayerSearcher(r'bin/.*sh$', use_regex=True)
+        searcher = SearchFilter(None, r'bin/.*sh$', use_regex=True)
         img = input_registry.Image(
             'registry-1.docker.io', image, tag, 'linux', 'amd64', '')
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
@@ -73,8 +73,8 @@ class SearchLayersScriptFriendlyTestCase(testtools.TestCase):
         image = 'library/busybox'
         tag = 'latest'
 
-        searcher = search.LayerSearcher(
-            '*ash', image=image, tag=tag, script_friendly=True)
+        searcher = SearchFilter(
+            None, '*ash', image=image, tag=tag, script_friendly=True)
         img = input_registry.Image(
             'registry-1.docker.io', image, tag, 'linux', 'amd64', '')
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
@@ -110,8 +110,9 @@ class SearchLayersScriptFriendlyTestCase(testtools.TestCase):
         image = 'library/busybox'
         tag = 'latest'
 
-        searcher = search.LayerSearcher(
-            'nonexistent_xyz123', image=image, tag=tag, script_friendly=True)
+        searcher = SearchFilter(
+            None, 'nonexistent_xyz123', image=image, tag=tag,
+            script_friendly=True)
         img = input_registry.Image(
             'registry-1.docker.io', image, tag, 'linux', 'amd64', '')
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
@@ -148,7 +149,7 @@ class SearchLayersTarfileTestCase(testtools.TestCase):
 
             # Now search the tarball
             tarball_img = input_tarfile.Image(tarball_path)
-            searcher = search.LayerSearcher('*sh')
+            searcher = SearchFilter(None, '*sh')
             for image_element in tarball_img.fetch(
                     fetch_callback=searcher.fetch_callback):
                 searcher.process_image_element(*image_element)
@@ -183,8 +184,8 @@ class SearchLayersTarfileTestCase(testtools.TestCase):
 
             # Now search the tarball with script-friendly output
             tarball_img = input_tarfile.Image(tarball_path)
-            searcher = search.LayerSearcher(
-                '*ash', image=tarball_img.image, tag=tarball_img.tag,
+            searcher = SearchFilter(
+                None, '*ash', image=tarball_img.image, tag=tarball_img.tag,
                 script_friendly=True)
             for image_element in tarball_img.fetch(
                     fetch_callback=searcher.fetch_callback):
