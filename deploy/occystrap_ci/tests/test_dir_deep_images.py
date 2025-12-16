@@ -4,8 +4,8 @@ import tempfile
 import testtools
 
 
-from occystrap import docker_registry
-from occystrap import output_directory
+from occystrap.inputs import registry as input_registry
+from occystrap.outputs import directory as output_directory
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -20,7 +20,7 @@ class DirDeepImageTestCase(testtools.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             oci = output_directory.DirWriter(
                 image, tag, tempdir, expand=True)
-            img = docker_registry.Image(
+            img = input_registry.Image(
                 'registry-1.docker.io', image, tag, 'linux', 'amd64', '')
             for image_element in img.fetch(fetch_callback=oci.fetch_callback):
                 oci.process_image_element(*image_element)

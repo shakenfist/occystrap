@@ -13,12 +13,19 @@ import io
 import logging
 import os
 import re
+from requests.exceptions import ChunkedEncodingError, ConnectionError
 import sys
 import tempfile
+import time
 import zlib
 
 from occystrap import constants
 from occystrap import util
+from occystrap.inputs.base import ImageInput
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 2  # Exponential backoff: 2^attempt seconds
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
@@ -30,18 +37,30 @@ def always_fetch():
     return True
 
 
-class Image(object):
-    def __init__(self, registry, image, tag, os='linux', architecture='amd64', variant='',
-                 secure=True):
+class Image(ImageInput):
+    def __init__(self, registry, image, tag, os='linux', architecture='amd64',
+                 variant='', secure=True, username=None, password=None):
         self.registry = registry
-        self.image = image
-        self.tag = tag
+        self._image = image
+        self._tag = tag
         self.os = os
         self.architecture = architecture
         self.variant = variant
         self.secure = secure
+        self.username = username
+        self.password = password
 
         self._cached_auth = None
+
+    @property
+    def image(self):
+        """Return the image name."""
+        return self._image
+
+    @property
+    def tag(self):
+        """Return the image tag."""
+        return self._tag
 
     def request_url(self, method, url, headers=None, data=None, stream=False):
         if not headers:
@@ -55,11 +74,17 @@ class Image(object):
                                     stream=stream)
         except util.UnauthorizedException as e:
             auth_re = re.compile('Bearer realm="([^"]*)",service="([^"]*)"')
-            m = auth_re.match(e.args[5].get('Www-Authenticate'))
+            m = auth_re.match(e.args[5].get('Www-Authenticate', ''))
             if m:
                 auth_url = ('%s?service=%s&scope=repository:%s:pull'
                             % (m.group(1), m.group(2), self.image))
-                r = util.request_url('GET', auth_url)
+                # If credentials are provided, use Basic auth for token request
+                if self.username and self.password:
+                    r = util.request_url(
+                        'GET', auth_url,
+                        auth=(self.username, self.password))
+                else:
+                    r = util.request_url('GET', auth_url)
                 token = r.json().get('token')
                 headers.update({'Authorization': 'Bearer %s' % token})
                 self._cached_auth = token
@@ -82,11 +107,17 @@ class Image(object):
                 'image': self.image,
                 'tag': self.tag
             },
-            headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json,'
-                                'application/vnd.docker.distribution.manifest.list.v2+json')})
+            headers={
+                'Accept': ('application/vnd.docker.distribution.manifest.v2+json,'
+                           'application/vnd.docker.distribution.manifest.list.v2+json,'
+                           'application/vnd.oci.image.manifest.v1+json,'
+                           'application/vnd.oci.image.index.v1+json')
+            })
 
         config_digest = None
-        if r.headers['Content-Type'] == 'application/vnd.docker.distribution.manifest.v2+json':
+        if r.headers['Content-Type'] in [
+                'application/vnd.docker.distribution.manifest.v2+json',
+                'application/vnd.oci.image.manifest.v1+json']:
             manifest = r.json()
             config_digest = manifest['config']['digest']
         elif r.headers['Content-Type'] in [
@@ -95,11 +126,13 @@ class Image(object):
             for m in r.json()['manifests']:
                 if 'variant' in m['platform']:
                     LOG.info('Found manifest for %s on %s %s'
-                             % (m['platform']['os'], m['platform']['architecture'],
+                             % (m['platform']['os'],
+                                m['platform']['architecture'],
                                 m['platform']['variant']))
                 else:
                     LOG.info('Found manifest for %s on %s'
-                             % (m['platform']['os'], m['platform']['architecture']))
+                             % (m['platform']['os'],
+                                m['platform']['architecture']))
 
                 if (m['platform']['os'] == self.os and
                     m['platform']['architecture'] == self.architecture and
@@ -114,8 +147,11 @@ class Image(object):
                             'image': self.image,
                             'tag': m['digest']
                         },
-                        headers={'Accept': ('application/vnd.docker.distribution.manifest.v2+json, '
-                                            'application/vnd.oci.image.manifest.v1+json')})
+                        headers={
+                            'Accept': ('application/vnd.docker.distribution.'
+                                       'manifest.v2+json, '
+                                       'application/vnd.oci.image.manifest.v1+json')
+                        })
                     manifest = r.json()
                     config_digest = manifest['config']['digest']
 
@@ -158,41 +194,67 @@ class Image(object):
 
             LOG.info('Fetching layer %s (%d bytes)'
                      % (layer['digest'], layer['size']))
-            r = self.request_url(
-                'GET',
-                '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
-                % {
-                    'moniker': moniker,
-                    'registry': self.registry,
-                    'image': self.image,
-                    'layer': layer['digest']
-                },
-                stream=True)
 
-            # We can use zlib for streaming decompression, but we need to tell it
-            # to ignore the gzip header which it doesn't understand. Unfortunately
-            # tarfile doesn't do streaming writes (and we need to know the
-            # decompressed size before we can write to the tarfile), so we stream
-            # to a temporary file on disk.
-            try:
-                h = hashlib.sha256()
-                d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            # Retry logic for streaming downloads which can fail mid-transfer
+            last_exception = None
+            for attempt in range(MAX_RETRIES + 1):
+                try:
+                    r = self.request_url(
+                        'GET',
+                        '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
+                        % {
+                            'moniker': moniker,
+                            'registry': self.registry,
+                            'image': self.image,
+                            'layer': layer['digest']
+                        },
+                        stream=True)
 
-                with tempfile.NamedTemporaryFile(delete=False) as tf:
-                    LOG.info('Temporary file for layer is %s' % tf.name)
-                    for chunk in r.iter_content(8192):
-                        tf.write(d.decompress(chunk))
-                        h.update(chunk)
+                    # We can use zlib for streaming decompression, but we need
+                    # to tell it to ignore the gzip header which it doesn't
+                    # understand. Unfortunately tarfile doesn't do streaming
+                    # writes (and we need to know the decompressed size before
+                    # we can write to the tarfile), so we stream to a temporary
+                    # file on disk.
+                    h = hashlib.sha256()
+                    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
 
-                if h.hexdigest() != layer_filename:
-                    LOG.error('Hash verification failed for layer (%s vs %s)'
-                              % (layer_filename, h.hexdigest()))
-                    sys.exit(1)
+                    with tempfile.NamedTemporaryFile(delete=False) as tf:
+                        LOG.info('Temporary file for layer is %s' % tf.name)
+                        for chunk in r.iter_content(8192):
+                            tf.write(d.decompress(chunk))
+                            h.update(chunk)
 
-                with open(tf.name, 'rb') as f:
-                    yield (constants.IMAGE_LAYER, layer_filename, f)
+                    if h.hexdigest() != layer_filename:
+                        LOG.error('Hash verification failed for layer (%s vs %s)'
+                                  % (layer_filename, h.hexdigest()))
+                        sys.exit(1)
 
-            finally:
-                os.unlink(tf.name)
+                    try:
+                        with open(tf.name, 'rb') as f:
+                            yield (constants.IMAGE_LAYER, layer_filename, f)
+                    finally:
+                        os.unlink(tf.name)
+
+                    # Success - break out of retry loop
+                    break
+
+                except (ChunkedEncodingError, ConnectionError) as e:
+                    last_exception = e
+                    # Clean up temp file if it exists
+                    if 'tf' in dir() and tf.name and os.path.exists(tf.name):
+                        os.unlink(tf.name)
+
+                    if attempt < MAX_RETRIES:
+                        wait_time = RETRY_BACKOFF_BASE ** attempt
+                        LOG.warning(
+                            'Layer download failed (attempt %d/%d): %s. '
+                            'Retrying in %d seconds...'
+                            % (attempt + 1, MAX_RETRIES + 1, str(e), wait_time))
+                        time.sleep(wait_time)
+                    else:
+                        LOG.error('Layer download failed after %d attempts: %s'
+                                  % (MAX_RETRIES + 1, str(e)))
+                        raise last_exception
 
         LOG.info('Done')

@@ -6,9 +6,9 @@ import tempfile
 import testtools
 
 
-from occystrap import docker_registry
-from occystrap import output_ocibundle
-from occystrap import output_mounts
+from occystrap.inputs import registry as input_registry
+from occystrap.outputs import ocibundle as output_ocibundle
+from occystrap.outputs import mounts as output_mounts
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -22,7 +22,7 @@ class WhiteoutsTestCase(testtools.TestCase):
 
         with tempfile.TemporaryDirectory() as tempdir:
             oci = output_ocibundle.OCIBundleWriter(image, tag, tempdir)
-            img = docker_registry.Image(
+            img = input_registry.Image(
                 'localhost:5000', image, tag, 'linux', 'amd64', '',
                 secure=False)
             for image_element in img.fetch(fetch_callback=oci.fetch_callback):
@@ -52,7 +52,7 @@ class WhiteoutsTestCase(testtools.TestCase):
 
         with tempfile.TemporaryDirectory() as tempdir:
             oci = output_mounts.MountWriter(image, tag, tempdir)
-            img = docker_registry.Image(
+            img = input_registry.Image(
                 'localhost:5000', image, tag, 'linux', 'amd64', '',
                 secure=False)
             for image_element in img.fetch(fetch_callback=oci.fetch_callback):

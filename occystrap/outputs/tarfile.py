@@ -5,6 +5,7 @@ import os
 import tarfile
 
 from occystrap import constants
+from occystrap.outputs.base import ImageOutput
 
 
 LOG = logging.getLogger(__name__)
@@ -15,7 +16,13 @@ LOG.setLevel(logging.INFO)
 # v1.2 is documented at https://github.com/moby/docker-image-spec/blob/v1.2.0/v1.2.md
 # v2 is documented at https://github.com/opencontainers/image-spec/blob/main/
 
-class TarWriter(object):
+class TarWriter(ImageOutput):
+    """Creates docker-loadable tarballs in v1.2 format.
+
+    To normalize timestamps for reproducible builds, use the
+    TimestampNormalizer filter before this output.
+    """
+
     def __init__(self, image, tag, image_path):
         self.image = image
         self.tag = tag
@@ -57,3 +64,4 @@ class TarWriter(object):
         ti = tarfile.TarInfo('manifest.json')
         ti.size = len(encoded_manifest)
         self.image_tar.addfile(ti, io.BytesIO(encoded_manifest))
+        self.image_tar.close()

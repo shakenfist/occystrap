@@ -7,13 +7,14 @@ import tarfile
 from occystrap import common
 from occystrap import constants
 from occystrap import util
+from occystrap.outputs.base import ImageOutput
 
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
 
 
-class MountWriter(object):
+class MountWriter(ImageOutput):
     def __init__(self, image, tag, image_path):
         self.image = image
         self.tag = tag

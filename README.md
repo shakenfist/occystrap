@@ -1,114 +1,318 @@
 # Occy Strap
 
-Occy Strap is a simple set of Docker and OCI container tools, which can be used either for container forensics or for implementing an OCI orchestrator, depending on your needs. This is a very early implementation, so be braced for impact.
+Occy Strap is a simple set of Docker and OCI container tools, which can be used
+either for container forensics or for implementing an OCI orchestrator,
+depending on your needs. This is a very early implementation, so be braced for
+impact.
 
-## Downloading an image from a repository and storing as a tarball
+## Quick Start with URI-Style Commands
 
-Let's say we want to download an image from a repository and store it as a local tarball. This is a common thing to want to do in airgapped environments for example. You could do this with docker with a `docker pull; docker save`. The Occy Strap equivalent is:
+The recommended way to use Occy Strap is with the new URI-style `process` and
+`search` commands:
+
+```
+# Download from registry to tarball
+occystrap process registry://docker.io/library/busybox:latest tar://busybox.tar
+
+# Download from registry to directory
+occystrap process registry://docker.io/library/centos:7 dir://centos7
+
+# Export from local Docker to tarball with timestamp normalization
+occystrap process docker://myimage:v1 tar://output.tar -f normalize-timestamps
+
+# Search for files in an image
+occystrap search registry://docker.io/library/busybox:latest "bin/*sh"
+```
+
+## The `process` Command
+
+The `process` command takes a source URI, a destination URI, and optional
+filters:
+
+```
+occystrap process SOURCE DESTINATION [-f FILTER]...
+```
+
+### Input URI Schemes
+
+- `registry://HOST/IMAGE:TAG` - Docker/OCI registry
+- `docker://IMAGE:TAG` - Local Docker daemon
+- `tar:///path/to/file.tar` - Docker-save format tarball
+
+### Output URI Schemes
+
+- `tar:///path/to/output.tar` - Create tarball
+- `dir:///path/to/directory` - Extract to directory
+- `oci:///path/to/bundle` - Create OCI runtime bundle
+- `mounts:///path/to/directory` - Create overlay mounts
+
+### URI Options
+
+Options can be passed as query parameters:
+
+```
+# Extract with unique names and expansion
+occystrap process registry://docker.io/library/busybox:latest \
+    "dir://merged?unique_names=true&expand=true"
+
+# Use custom Docker socket
+occystrap process "docker://myimage:v1?socket=/run/podman/podman.sock" \
+    tar://output.tar
+```
+
+### Filters
+
+Filters transform or inspect image elements as they pass through the pipeline:
+
+```
+# Normalize timestamps for reproducible builds
+occystrap process registry://docker.io/library/busybox:latest \
+    tar://busybox.tar -f normalize-timestamps
+
+# Normalize with custom timestamp
+occystrap process registry://docker.io/library/busybox:latest \
+    tar://busybox.tar -f "normalize-timestamps:ts=1609459200"
+
+# Search while creating output (prints matches AND creates tarball)
+occystrap process registry://docker.io/library/busybox:latest \
+    tar://busybox.tar -f "search:pattern=*.conf"
+
+# Chain multiple filters
+occystrap process registry://docker.io/library/busybox:latest \
+    tar://busybox.tar -f normalize-timestamps -f "search:pattern=bin/*"
+```
+
+## The `search` Command
+
+Search for files in container image layers:
+
+```
+occystrap search SOURCE PATTERN [--regex] [--script-friendly]
+```
+
+Examples:
+
+```
+# Search registry image
+occystrap search registry://docker.io/library/busybox:latest "bin/*sh"
+
+# Search local Docker image
+occystrap search docker://myimage:v1 "*.conf"
+
+# Search tarball with regex
+occystrap search --regex tar://image.tar ".*\.py$"
+
+# Machine-parseable output
+occystrap search --script-friendly registry://docker.io/library/busybox:latest "*sh"
+```
+
+## Legacy Commands (Deprecated)
+
+The following commands are deprecated but still work for backwards
+compatibility. They will be removed in a future version.
+
+### Downloading an image from a repository and storing as a tarball
+
+Let's say we want to download an image from a repository and store it as a
+local tarball. This is a common thing to want to do in airgapped environments
+for example. You could do this with docker with a `docker pull; docker save`.
+The Occy Strap equivalent is:
 
 ```
 occystrap fetch-to-tarfile registry-1.docker.io library/busybox latest busybox.tar
 ```
 
-In this example we're pulling from the Docker Hub (registry-1.docker.io), and are downloading busybox's latest version into a tarball named `busybox-occy.tar`. This tarball can be loaded with `docker load -i busybox.tar` on an airgapped Docker environment.
+**New equivalent:**
+```
+occystrap process registry://registry-1.docker.io/library/busybox:latest tar://busybox.tar
+```
 
-## Downloading an image from a repository and storing as an extracted tarball
+In this example we're pulling from the Docker Hub (registry-1.docker.io), and
+are downloading busybox's latest version into a tarball named `busybox.tar`.
+This tarball can be loaded with `docker load -i busybox.tar` on an airgapped
+Docker environment.
 
-The format of the tarball in the previous example is two JSON configuration files and a series of image layers as tarballs inside the main tarball. You can write these elements to a directory instead of to a tarball if you'd like to inspect them. For example:
+### Repeatable builds with normalized timestamps
+
+To make builds more repeatable, you can normalize file access and modification
+times in the image layers. This is useful when you want to ensure that the
+same image content produces the same tarball hash, regardless of when the
+files were originally created:
+
+```
+occystrap fetch-to-tarfile --normalize-timestamps registry-1.docker.io library/busybox latest busybox.tar
+```
+
+**New equivalent:**
+```
+occystrap process registry://registry-1.docker.io/library/busybox:latest tar://busybox.tar -f normalize-timestamps
+```
+
+This will set all timestamps in the layer tarballs to 0 (Unix epoch: January
+1, 1970). You can also specify a custom timestamp:
+
+```
+occystrap fetch-to-tarfile --normalize-timestamps --timestamp 1609459200 registry-1.docker.io library/busybox latest busybox.tar
+```
+
+**New equivalent:**
+```
+occystrap process registry://registry-1.docker.io/library/busybox:latest tar://busybox.tar -f "normalize-timestamps:ts=1609459200"
+```
+
+When timestamps are normalized, the layer SHAs are recalculated and the
+manifest is updated to reflect the new hashes. This ensures the tarball
+structure remains consistent and valid.
+
+### Downloading an image from a repository and storing as an extracted tarball
+
+The format of the tarball in the previous example is two JSON configuration
+files and a series of image layers as tarballs inside the main tarball. You
+can write these elements to a directory instead of to a tarball if you'd like
+to inspect them:
 
 ```
 occystrap fetch-to-extracted registry-1.docker.io library/centos 7 centos7
 ```
 
-This example will pull from the Docker Hub the Centos image with the label "7", and write the content to a directory in the current working directory called "centos7". If you tarred centos7 like this, you'd end up with a tarball equivalent to what `fetch-to-tarfile` produces, which could therefore be loaded with `docker load`:
-
+**New equivalent:**
 ```
-cd centos7; tar -cf ../centos7.tar *
+occystrap process registry://registry-1.docker.io/library/centos:7 dir://centos7
 ```
 
-## Downloading an image from a repository and storing it in a merged directory
+### Downloading an image to a merged directory
 
-In scenarios where image layers are likely to be reused between images (for example many images which share a common base layer), you can save disk space by downloading images to a directory which contains more than one image. To make this work, you need to instruct Occy Strap to use unique names for the JSON elements within the image file:
+In scenarios where image layers are likely to be reused between images, you
+can save disk space by downloading images to a directory which contains more
+than one image:
 
 ```
 occystrap fetch-to-extracted --use-unique-names registry-1.docker.io \
     homeassistant/home-assistant latest merged_images
-occystrap fetch-to-extracted --use-unique-names registry-1.docker.io \
-    homeassistant/home-assistant stable merged_images
-occystrap fetch-to-extracted --use-unique-names registry-1.docker.io \
-    homeassistant/home-assistant 2021.3.0.dev20210219 merged_images
 ```
 
-Each of these images include 21 layers, but the merged_images directory at the time of writing this there are 25 unique layers in the directory. You end up with a layout like this:
-
+**New equivalent:**
 ```
-0465ae924726adc52c0216e78eda5ce2a68c42bf688da3f540b16f541fd3018c
-10556f40181a651a72148d6c643ac9b176501d4947190a8732ec48f2bf1ac4fb
-...
-catalog.json
-cd8d37c8075e8a0195ae12f1b5c96fe4e8fe378664fc8943f2748336a7d2f2f3
-d1862a2c28ec9e23d88c8703096d106e0fe89bc01eae4c461acde9519d97b062
-d1ac3982d662e038e06cc7e1136c6a84c295465c9f5fd382112a6d199c364d20.json
-...
-d81f69adf6d8aeddbaa1421cff10ba47869b19cdc721a2ebe16ede57679850f0.json
-...
-manifest-homeassistant_home-assistant-2021.3.0.dev20210219.json
-manifest-homeassistant_home-assistant-latest.json
-manifest-homeassistant_home-assistant-stable.json
+occystrap process registry://registry-1.docker.io/homeassistant/home-assistant:latest \
+    "dir://merged_images?unique_names=true"
 ```
 
-`catalog.json` is an Occy Strap specific artefact which maps which layers are used by which image. Each of the manifest files for the various images have been converted to have a unique name instead of `manifest.json` as well.
+### Storing an image tarfile in a merged directory
 
-To extract a single image from such a shared directory, use the `recreate-image` command:
-
-```
-occystrap recreate-image merged_images homeassistant/home-assistant latest ha-latest.tar
-```
-
-## Storing an image tarfile in a merged directory
-
-Sometimes you have image tarfiles instead of images in a registry -- for example
-the output of `docker save`. These can be converted to a merged directory to
-save storage space as well:
+Sometimes you have image tarfiles instead of images in a registry:
 
 ```
 occystrap tarfile-to-extracted --use-unique-names file.tar merged_images
 ```
 
-## Exploring the contents of layers and overwritten files
+**New equivalent:**
+```
+occystrap process tar://file.tar "dir://merged_images?unique_names=true"
+```
 
-Similarly, if you'd like the layers to be expanded from their tarballs to the filesystem, you can pass the `--expand` argument to `fetch-to-extracted` to have them extracted. This will also create a filesystem at the name of the manifest which is the final state of the image (the layers applied sequential). For example:
+### Exploring the contents of layers and overwritten files
+
+If you'd like the layers to be expanded from their tarballs to the filesystem:
 
 ```
 occystrap fetch-to-extracted --expand quay.io \
     ukhomeofficedigital/centos-base latest ukhomeoffice-centos
 ```
 
-Note that layers delete files from previous layers with files named ".wh.$previousfilename". These files are _not_ processed in the expanded layers, so that they are visible to the user. They are however processed in the merged layer named for the manifest file.
+**New equivalent:**
+```
+occystrap process registry://quay.io/ukhomeofficedigital/centos-base:latest \
+    "dir://ukhomeoffice-centos?expand=true"
+```
 
-## Generating an OCI runtime bundle
-
-This isn't fully supported yet, but you can extract an image to an OCI image bundle
-with the following command:
+### Generating an OCI runtime bundle
 
 ```
 occystrap fetch-to-oci registry-1.docker.io library/hello-world latest bar
 ```
 
-You should then be able to run that container by doing something like:
+**New equivalent:**
+```
+occystrap process registry://registry-1.docker.io/library/hello-world:latest oci://bar
+```
+
+### Searching image layers for files
 
 ```
-cd bar
-sudo apt-get install runc
-sudo runc run id-0001
+occystrap search-layers registry-1.docker.io library/busybox latest "bin/*sh"
 ```
+
+**New equivalent:**
+```
+occystrap search registry://registry-1.docker.io/library/busybox:latest "bin/*sh"
+```
+
+### Working with local Docker or Podman daemon
+
+```
+occystrap docker-to-tarfile library/busybox latest busybox.tar
+```
+
+**New equivalent:**
+```
+occystrap process docker://library/busybox:latest tar://busybox.tar
+```
+
+For Podman:
+```
+occystrap process "docker://myimage:latest?socket=/run/podman/podman.sock" tar://output.tar
+```
+
+Note: Podman doesn't run a daemon by default. You need to start the socket
+service first:
+
+```
+# For rootless Podman
+systemctl --user start podman.socket
+
+# For rootful Podman
+sudo systemctl start podman.socket
+```
+
+## Authenticating with private registries
+
+To fetch images from private registries (such as GitLab Container Registry,
+AWS ECR, or private Docker Hub repositories), use the `--username` and
+`--password` global options:
+
+```
+occystrap --username myuser --password mytoken \
+    process registry://registry.gitlab.com/mygroup/myimage:latest tar://output.tar
+```
+
+You can also use environment variables to avoid putting credentials on the
+command line:
+
+```
+export OCCYSTRAP_USERNAME=myuser
+export OCCYSTRAP_PASSWORD=mytoken
+occystrap process registry://registry.gitlab.com/mygroup/myimage:latest tar://output.tar
+```
+
+For GitLab Container Registry, the username is typically your GitLab username
+and the password is a personal access token with `read_registry` scope.
 
 ## Supporting non-default architectures
 
-Docker image repositories can store multiple versions of a single image, with each image corresponding to a different (operating system, cpu architecture, cpu variant) tuple. Occy Strap supports letting you specify which to use with global command line flags. Occy Strap defaults to linux amd64 if you don't specify something different. For example, to fetch the linux arm64 v8 image for busybox, you would run:
+Docker image repositories can store multiple versions of a single image, with
+each image corresponding to a different (operating system, cpu architecture,
+cpu variant) tuple. Occy Strap supports letting you specify which to use with
+global command line flags. Occy Strap defaults to linux amd64 if you don't
+specify something different:
 
 ```
 occystrap --os linux --architecture arm64 --variant v8 \
-    fetch-to-extracted registry-1.docker.io library/busybox \
-    latest busybox
+    process registry://registry-1.docker.io/library/busybox:latest dir://busybox
+```
+
+Or via URI query parameters:
+
+```
+occystrap process "registry://registry-1.docker.io/library/busybox:latest?os=linux&arch=arm64&variant=v8" \
+    dir://busybox
 ```

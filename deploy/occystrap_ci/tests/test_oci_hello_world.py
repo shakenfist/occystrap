@@ -5,8 +5,8 @@ import tempfile
 import testtools
 
 
-from occystrap import docker_registry
-from occystrap import output_ocibundle
+from occystrap.inputs import registry as input_registry
+from occystrap.outputs import ocibundle as output_ocibundle
 
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -40,7 +40,7 @@ class OCIHelloWorldTestCase(testtools.TestCase):
 
         with tempfile.TemporaryDirectory() as tempdir:
             oci = output_ocibundle.OCIBundleWriter(image, tag, tempdir)
-            img = docker_registry.Image(
+            img = input_registry.Image(
                 'registry-1.docker.io', image, tag, 'linux', 'amd64', '')
             for image_element in img.fetch(fetch_callback=oci.fetch_callback):
                 oci.process_image_element(*image_element)
