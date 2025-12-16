@@ -64,3 +64,4 @@ class TarWriter(ImageOutput):
         ti = tarfile.TarInfo('manifest.json')
         ti.size = len(encoded_manifest)
         self.image_tar.addfile(ti, io.BytesIO(encoded_manifest))
+        self.image_tar.close()
