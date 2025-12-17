@@ -13,7 +13,7 @@ from occystrap.outputs import directory as output_directory
 from occystrap.outputs import mounts as output_mounts
 from occystrap.outputs import ocibundle as output_ocibundle
 from occystrap.outputs import tarfile as output_tarfile
-from occystrap.filters import TimestampNormalizer, SearchFilter
+from occystrap.filters import ExcludeFilter, TimestampNormalizer, SearchFilter
 from occystrap import uri
 
 
@@ -185,6 +185,14 @@ class PipelineBuilder:
                 image=image,
                 tag=tag,
                 script_friendly=script_friendly)
+
+        elif name == 'exclude':
+            pattern_str = filter_spec.options.get('pattern')
+            if not pattern_str:
+                raise PipelineError(
+                    'exclude filter requires pattern option')
+            patterns = [p.strip() for p in pattern_str.split(',')]
+            return ExcludeFilter(wrapped_output, patterns=patterns)
 
         else:
             raise PipelineError('Unknown filter: %s' % filter_spec.name)

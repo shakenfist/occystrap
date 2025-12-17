@@ -80,6 +80,14 @@ occystrap process registry://docker.io/library/busybox:latest \
 # Chain multiple filters
 occystrap process registry://docker.io/library/busybox:latest \
     tar://busybox.tar -f normalize-timestamps -f "search:pattern=bin/*"
+
+# Exclude files matching glob patterns from layers
+occystrap process registry://docker.io/library/python:3.11 \
+    tar://python.tar -f "exclude:pattern=**/.git/**"
+
+# Exclude multiple patterns (comma-separated)
+occystrap process registry://docker.io/library/python:3.11 \
+    tar://python.tar -f "exclude:pattern=**/.git/**,**/__pycache__/**,**/*.pyc"
 ```
 
 ## The `search` Command

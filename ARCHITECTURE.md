@@ -24,6 +24,7 @@ occystrap/
     filters/             # Filter modules (transform/inspect pipeline)
         __init__.py
         base.py          # ImageFilter abstract base class
+        exclude.py       # Exclude files matching glob patterns from layers
         normalize_timestamps.py  # Timestamp normalization for reproducible builds
         search.py        # Search for files matching patterns
     outputs/             # Output writer modules
@@ -72,6 +73,8 @@ decorator pattern. Each filter wraps another output (or filter) and can:
 - Accumulate state across elements
 
 Filter implementations:
+- `filters/exclude.py` - Excludes files matching glob patterns from layers,
+  recalculating layer SHAs. Supports multiple comma-separated patterns.
 - `filters/normalize_timestamps.py` - Normalizes layer timestamps for
   reproducible builds, recalculating layer SHAs
 - `filters/search.py` - Searches layers for files matching glob or regex
@@ -133,6 +136,8 @@ filter-name:opt1=val1,opt2=val2
 ```
 
 Available filters:
+- `exclude` - Exclude files from layers (option: `pattern=GLOB` or
+  `pattern=GLOB1,GLOB2,...` for multiple patterns)
 - `normalize-timestamps` - Normalize layer timestamps (option: `ts=TIMESTAMP`)
 - `search` - Search for files (options: `pattern=GLOB`, `regex=true`,
   `script_friendly=true`)
