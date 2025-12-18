@@ -34,7 +34,7 @@ FilterSpec = namedtuple('FilterSpec', ['name', 'options'])
 
 # Scheme classifications
 INPUT_SCHEMES = {'registry', 'docker', 'tar', 'file'}
-OUTPUT_SCHEMES = {'tar', 'dir', 'directory', 'oci', 'mounts'}
+OUTPUT_SCHEMES = {'tar', 'dir', 'directory', 'oci', 'mounts', 'docker'}
 
 # Scheme aliases
 SCHEME_ALIASES = {

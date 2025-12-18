@@ -30,6 +30,7 @@ occystrap/
     outputs/             # Output writer modules
         __init__.py
         base.py          # ImageOutput abstract base class
+        docker.py        # Loads images into local Docker daemon
         tarfile.py       # Creates docker-loadable tarballs
         directory.py     # Extracts to directory with deduplication
         ocibundle.py     # Creates OCI runtime bundles
@@ -90,6 +91,7 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
 - `finalize()` - Writes manifest and completes output
 
 Output writer implementations:
+- `outputs/docker.py` - Loads images into local Docker/Podman daemon via API
 - `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
 - `outputs/directory.py` - Extracts to directory with optional layer deduplication
 - `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from
@@ -125,6 +127,7 @@ tar:///path/to/output.tar
 dir:///path/to/directory[?unique_names=true&expand=true]
 oci:///path/to/bundle
 mounts:///path/to/directory
+docker://image:tag[?socket=/path/to/socket]
 ```
 
 ### Filter Specifications

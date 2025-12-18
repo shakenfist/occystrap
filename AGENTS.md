@@ -57,6 +57,7 @@ class MyFilter(ImageFilter):
 2. Subclass `ImageOutput` from `occystrap.outputs.base`
 3. Implement `fetch_callback()`, `process_image_element()`, `finalize()`
 4. Register in `PipelineBuilder.build_output()` in `occystrap/pipeline.py`
+5. Add the scheme to `OUTPUT_SCHEMES` in `occystrap/uri.py`
 
 ## Testing
 
@@ -69,3 +70,5 @@ Tests are located in `deploy/occystrap_ci/tests/`. Run with pytest.
   reference (they rewrite tarballs)
 - **Passthrough filter**: Check element type, process if needed, always call
   `self._wrapped.process_image_element()` to pass data through
+- **Write to Docker daemon**: Use `DockerWriter` as reference (builds tarball
+  in memory and posts via API)

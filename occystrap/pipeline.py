@@ -10,6 +10,7 @@ from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
 from occystrap.outputs import directory as output_directory
+from occystrap.outputs import docker as output_docker
 from occystrap.outputs import mounts as output_mounts
 from occystrap.outputs import ocibundle as output_ocibundle
 from occystrap.outputs import tarfile as output_tarfile
@@ -142,6 +143,10 @@ class PipelineBuilder:
                     'mounts:// output requires mknod support')
 
             return output_mounts.MountWriter(image, tag, path)
+
+        elif uri_spec.scheme == 'docker':
+            _, _, socket = uri.parse_docker_uri(uri_spec)
+            return output_docker.DockerWriter(image, tag, socket_path=socket)
 
         else:
             raise PipelineError('Unknown output scheme: %s' % uri_spec.scheme)
