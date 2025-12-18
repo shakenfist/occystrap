@@ -45,6 +45,8 @@ occystrap process SOURCE DESTINATION [-f FILTER]...
 - `dir:///path/to/directory` - Extract to directory
 - `oci:///path/to/bundle` - Create OCI runtime bundle
 - `mounts:///path/to/directory` - Create overlay mounts
+- `docker://IMAGE:TAG` - Load into local Docker daemon
+- `registry://HOST/IMAGE:TAG` - Push to Docker/OCI registry
 
 ### URI Options
 
@@ -80,6 +82,30 @@ occystrap process registry://docker.io/library/busybox:latest \
 # Chain multiple filters
 occystrap process registry://docker.io/library/busybox:latest \
     tar://busybox.tar -f normalize-timestamps -f "search:pattern=bin/*"
+
+# Exclude files matching glob patterns from layers
+occystrap process registry://docker.io/library/python:3.11 \
+    tar://python.tar -f "exclude:pattern=**/.git/**"
+
+# Exclude multiple patterns (comma-separated)
+occystrap process registry://docker.io/library/python:3.11 \
+    tar://python.tar -f "exclude:pattern=**/.git/**,**/__pycache__/**,**/*.pyc"
+
+# Load image directly into local Docker daemon
+occystrap process registry://docker.io/library/busybox:latest \
+    docker://busybox:latest
+
+# Load into Podman
+occystrap process registry://docker.io/library/busybox:latest \
+    "docker://busybox:latest?socket=/run/podman/podman.sock"
+
+# Push image to a registry
+occystrap process docker://myimage:v1 \
+    registry://myregistry.example.com/myuser/myimage:v1
+
+# Push to registry with authentication
+occystrap --username myuser --password mytoken \
+    process tar://image.tar registry://ghcr.io/myorg/myimage:latest
 ```
 
 ## The `search` Command

@@ -24,11 +24,14 @@ occystrap/
     filters/             # Filter modules (transform/inspect pipeline)
         __init__.py
         base.py          # ImageFilter abstract base class
+        exclude.py       # Exclude files matching glob patterns from layers
         normalize_timestamps.py  # Timestamp normalization for reproducible builds
         search.py        # Search for files matching patterns
     outputs/             # Output writer modules
         __init__.py
         base.py          # ImageOutput abstract base class
+        docker.py        # Loads images into local Docker daemon
+        registry.py      # Pushes images to Docker/OCI registries
         tarfile.py       # Creates docker-loadable tarballs
         directory.py     # Extracts to directory with deduplication
         ocibundle.py     # Creates OCI runtime bundles
@@ -72,6 +75,8 @@ decorator pattern. Each filter wraps another output (or filter) and can:
 - Accumulate state across elements
 
 Filter implementations:
+- `filters/exclude.py` - Excludes files matching glob patterns from layers,
+  recalculating layer SHAs. Supports multiple comma-separated patterns.
 - `filters/normalize_timestamps.py` - Normalizes layer timestamps for
   reproducible builds, recalculating layer SHAs
 - `filters/search.py` - Searches layers for files matching glob or regex
@@ -87,6 +92,8 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
 - `finalize()` - Writes manifest and completes output
 
 Output writer implementations:
+- `outputs/docker.py` - Loads images into local Docker/Podman daemon via API
+- `outputs/registry.py` - Pushes images to Docker/OCI registries via HTTP API
 - `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
 - `outputs/directory.py` - Extracts to directory with optional layer deduplication
 - `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from
@@ -122,6 +129,8 @@ tar:///path/to/output.tar
 dir:///path/to/directory[?unique_names=true&expand=true]
 oci:///path/to/bundle
 mounts:///path/to/directory
+docker://image:tag[?socket=/path/to/socket]
+registry://host/image:tag[?insecure=true]
 ```
 
 ### Filter Specifications
@@ -133,6 +142,8 @@ filter-name:opt1=val1,opt2=val2
 ```
 
 Available filters:
+- `exclude` - Exclude files from layers (option: `pattern=GLOB` or
+  `pattern=GLOB1,GLOB2,...` for multiple patterns)
 - `normalize-timestamps` - Normalize layer timestamps (option: `ts=TIMESTAMP`)
 - `search` - Search for files (options: `pattern=GLOB`, `regex=true`,
   `script_friendly=true`)
