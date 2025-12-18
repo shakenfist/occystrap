@@ -13,6 +13,7 @@ from occystrap.outputs import directory as output_directory
 from occystrap.outputs import docker as output_docker
 from occystrap.outputs import mounts as output_mounts
 from occystrap.outputs import ocibundle as output_ocibundle
+from occystrap.outputs import registry as output_registry
 from occystrap.outputs import tarfile as output_tarfile
 from occystrap.filters import ExcludeFilter, TimestampNormalizer, SearchFilter
 from occystrap import uri
@@ -147,6 +148,20 @@ class PipelineBuilder:
         elif uri_spec.scheme == 'docker':
             _, _, socket = uri.parse_docker_uri(uri_spec)
             return output_docker.DockerWriter(image, tag, socket_path=socket)
+
+        elif uri_spec.scheme == 'registry':
+            host, dest_image, dest_tag = uri.parse_registry_uri(uri_spec)
+            username = uri_spec.options.get(
+                'username', self._get_ctx('USERNAME'))
+            password = uri_spec.options.get(
+                'password', self._get_ctx('PASSWORD'))
+            insecure = uri_spec.options.get(
+                'insecure', self._get_ctx('INSECURE', False))
+            return output_registry.RegistryWriter(
+                host, dest_image, dest_tag,
+                secure=(not insecure),
+                username=username,
+                password=password)
 
         else:
             raise PipelineError('Unknown output scheme: %s' % uri_spec.scheme)

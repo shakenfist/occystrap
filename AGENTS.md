@@ -72,3 +72,5 @@ Tests are located in `deploy/occystrap_ci/tests/`. Run with pytest.
   `self._wrapped.process_image_element()` to pass data through
 - **Write to Docker daemon**: Use `DockerWriter` as reference (builds tarball
   in memory and posts via API)
+- **Push to registry**: Use `RegistryWriter` as reference (uploads blobs and
+  manifest via Docker Registry HTTP API V2)

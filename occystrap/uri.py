@@ -16,6 +16,8 @@ URI formats:
         directory:///path/...  (alias for dir)
         oci:///path/to/bundle
         mounts:///path/to/directory
+        docker://image:tag[?socket=/path/to/socket]
+        registry://host/image:tag[?insecure=true]
 
     Filter specs:
         filter-name
@@ -34,7 +36,7 @@ FilterSpec = namedtuple('FilterSpec', ['name', 'options'])
 
 # Scheme classifications
 INPUT_SCHEMES = {'registry', 'docker', 'tar', 'file'}
-OUTPUT_SCHEMES = {'tar', 'dir', 'directory', 'oci', 'mounts', 'docker'}
+OUTPUT_SCHEMES = {'tar', 'dir', 'directory', 'oci', 'mounts', 'docker', 'registry'}
 
 # Scheme aliases
 SCHEME_ALIASES = {
