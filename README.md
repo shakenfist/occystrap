@@ -342,3 +342,12 @@ Or via URI query parameters:
 occystrap process "registry://registry-1.docker.io/library/busybox:latest?os=linux&arch=arm64&variant=v8" \
     dir://busybox
 ```
+
+## Documentation
+
+For more detailed documentation, see the [docs/](docs/) directory:
+
+- [Installation](docs/installation.md) - Getting started guide
+- [Command Reference](docs/command-reference.md) - Complete CLI reference
+- [Pipeline Architecture](docs/pipeline.md) - How the pipeline works
+- [Use Cases](docs/use-cases.md) - Common scenarios and examples
