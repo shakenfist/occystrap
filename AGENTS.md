@@ -61,7 +61,13 @@ class MyFilter(ImageFilter):
 
 ## Testing
 
-Tests are located in `deploy/occystrap_ci/tests/`. Run with pytest.
+- **Unit tests**: Located in `occystrap/tests/`. Run with `tox -epy3`.
+- **Functional tests**: Located in `deploy/occystrap_ci/tests/`. Run in CI.
+
+### Pre-commit Hooks
+
+The project uses pre-commit hooks for `tox -eflake8` (linting) and `tox -epy3`
+(unit tests). Install with `pre-commit install`.
 
 ## Common Tasks
 

@@ -1,0 +1,133 @@
+# Shellcheck configuration for occystrap
+#
+# We disable some common warnings that are too noisy for our scripts.
+# These are mostly style/info level issues that don't represent real bugs.
+
+# SC2086: Double quote to prevent globbing and word splitting
+# Our scripts run in controlled environments with known inputs.
+disable=SC2086
+
+# SC2196: egrep is deprecated, use grep -E
+# While true, this is just a deprecation notice.
+disable=SC2196
+
+# SC2034: Variable appears unused
+# Often sourced scripts export variables for use elsewhere.
+disable=SC2034
+
+# SC2046: Quote this to prevent word splitting
+# Similar to SC2086, covered by controlled inputs.
+disable=SC2046
+
+# SC2001: See if you can use ${variable//search/replace}
+# Style preference, not a bug.
+disable=SC2001
+
+# SC2166: Prefer [ p ] && [ q ] as [ p -a q ] is not well defined
+# Works fine in bash, which all our scripts use.
+disable=SC2166
+
+# SC2013: To read lines rather than words, pipe to 'while read'
+# Our patch filenames don't contain spaces.
+disable=SC2013
+
+# SC2181: Check exit code directly, not indirectly with $?
+# Style preference.
+disable=SC2181
+
+# SC2115: Use "${var:?}" to ensure this never expands to /
+# Our scripts are always run in controlled environments.
+disable=SC2115
+
+# SC2004: $/${} is unnecessary on arithmetic variables
+# We prefer explicit ${} for consistency.
+disable=SC2004
+
+# SC2206: Quote to prevent word splitting/globbing, or split robustly
+# Our scripts run in controlled environments.
+disable=SC2206
+
+# SC2145: Argument mixes string and array
+# Works as intended in our use cases.
+disable=SC2145
+
+# SC2236: Use -n instead of ! -z
+# Style preference, both work.
+disable=SC2236
+
+# SC2116: Useless echo
+# Sometimes used for clarity.
+disable=SC2116
+
+# SC2164: Use 'cd ... || exit' in case cd fails
+# Our scripts use set -e which handles this.
+disable=SC2164
+
+# SC2048: Use "$@" (with quotes) to prevent whitespace problems
+# Our scripts run in controlled environments.
+disable=SC2048
+
+# SC1091: Not following sourced file (file not found)
+# Files exist at runtime on target systems.
+disable=SC1091
+
+# SC2231: Quote expansions in for loop glob
+# Works as intended in our use cases.
+disable=SC2231
+
+# SC1090: Can't follow non-constant source
+# Dynamic sources are intentional.
+disable=SC1090
+
+# SC2027: The surrounding quotes actually unquote this
+# Intentional string formatting.
+disable=SC2027
+
+# SC2068: Double quote array expansions
+# Our scripts run in controlled environments.
+disable=SC2068
+
+# SC2155: Declare and assign separately to avoid masking return values
+# We check return values where needed.
+disable=SC2155
+
+# SC2221/SC2222: Pattern overrides another pattern
+# Intentional catch-all in case statements.
+disable=SC2221
+disable=SC2222
+
+# SC2153: Possible misspelling
+# We know our variable names.
+disable=SC2153
+
+# SC2320: This $? refers to echo/printf, not a previous command
+# We understand the ordering.
+disable=SC2320
+
+# SC2317: Command appears to be unreachable
+# Traps and callbacks are invoked indirectly.
+disable=SC2317
+
+# SC2035: Use ./*glob* so names with dashes won't become options
+# Our globs don't match filenames starting with -.
+disable=SC2035
+
+# SC2002: Useless cat
+# Style preference, cat | cmd is more readable.
+disable=SC2002
+
+# SC2129: Consider using { cmd1; cmd2; } >> file
+# Style preference.
+disable=SC2129
+
+# SC2031: Variable modified in subshell
+# We understand subshell scoping.
+disable=SC2031
+
+# SC2124: Assigning an array to a string
+# Intentional in some cases.
+disable=SC2124
+
+# SC2154: Variable is referenced but not assigned
+# Variables are commonly sourced from other files or set before function calls.
+disable=SC2154

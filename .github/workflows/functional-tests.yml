@@ -10,7 +10,7 @@ on:
 
 jobs:
   functional:
-    runs-on: [self-hosted, vm, debian-11]
+    runs-on: [self-hosted, vm, debian-12]
     timeout-minutes: 120
 
     # NOTE(mikal): git repos are checked out to /srv/github/_work/{repo}/{repo}
@@ -44,7 +44,7 @@ jobs:
           sudo ls -l /var/run/docker.sock
 
       - name: Checkout occystrap
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 

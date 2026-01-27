@@ -343,6 +343,40 @@ occystrap process "registry://registry-1.docker.io/library/busybox:latest?os=lin
     dir://busybox
 ```
 
+## Development
+
+### Pre-commit Hooks
+
+This project uses pre-commit hooks to validate code before commits. Install them
+with:
+
+```
+pip install pre-commit
+pre-commit install
+```
+
+The hooks run:
+- `actionlint` - GitHub Actions workflow validation
+- `shellcheck` - Shell script linting
+- `tox -eflake8` - Python code style checks
+- `tox -epy3` - Unit tests
+
+To run the hooks manually:
+
+```
+pre-commit run --all-files
+```
+
+### Running Tests
+
+Unit tests are in `occystrap/tests/` and can be run with:
+
+```
+tox -epy3
+```
+
+Functional tests are in `deploy/occystrap_ci/tests/` and are run in CI.
+
 ## Documentation
 
 For more detailed documentation, see the [docs/](docs/) directory:

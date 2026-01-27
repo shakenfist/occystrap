@@ -36,6 +36,13 @@ occystrap/
         directory.py     # Extracts to directory with deduplication
         ocibundle.py     # Creates OCI runtime bundles
         mounts.py        # Creates overlay mount-based extraction
+    tests/               # Unit tests (run with tox -epy3)
+        __init__.py
+        test_tarformat.py
+
+deploy/
+    occystrap_ci/
+        tests/           # Functional tests (run in CI)
 ```
 
 ## Pipeline Pattern

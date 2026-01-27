@@ -7,9 +7,6 @@ import unittest
 from occystrap.tarformat import (
     needs_pax_format,
     select_tar_format_for_layer,
-    USTAR_MAX_PATH,
-    USTAR_MAX_NAME,
-    USTAR_MAX_LINKNAME,
     USTAR_MAX_ID,
 )
 
