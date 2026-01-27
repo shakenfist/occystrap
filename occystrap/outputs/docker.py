@@ -39,6 +39,9 @@ class DockerWriter(ImageOutput):
     This output writer builds a v1.2 format tarball and loads it into
     the Docker daemon using the POST /images/load API endpoint. This is
     equivalent to running 'docker load'.
+
+    Uses USTAR format for the outer tarball which contains only short paths
+    (SHA256 hashes and small filenames), avoiding PAX extended headers.
     """
 
     def __init__(self, image, tag, socket_path=DEFAULT_SOCKET_PATH):
@@ -55,7 +58,8 @@ class DockerWriter(ImageOutput):
         self._session = None
 
         self._temp_file = tempfile.NamedTemporaryFile(delete=False)
-        self._image_tar = tarfile.open(fileobj=self._temp_file, mode='w')
+        self._image_tar = tarfile.open(fileobj=self._temp_file, mode='w',
+                                       format=tarfile.USTAR_FORMAT)
 
         self._tar_manifest = [{
             'Layers': [],

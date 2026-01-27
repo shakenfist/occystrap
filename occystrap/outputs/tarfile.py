@@ -21,13 +21,17 @@ class TarWriter(ImageOutput):
 
     To normalize timestamps for reproducible builds, use the
     TimestampNormalizer filter before this output.
+
+    Uses USTAR format for the outer tarball which contains only short paths
+    (SHA256 hashes and small filenames), avoiding PAX extended headers.
     """
 
     def __init__(self, image, tag, image_path):
         self.image = image
         self.tag = tag
         self.image_path = image_path
-        self.image_tar = tarfile.open(image_path, 'w')
+        self.image_tar = tarfile.open(image_path, 'w',
+                                      format=tarfile.USTAR_FORMAT)
 
         self.tar_manifest = [{
             'Layers': [],
