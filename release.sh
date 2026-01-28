@@ -3,11 +3,11 @@
 # Release a specified version of Occy Strap
 
 echo "--- Determine verison number ---"
-PREVIOUS=`git tag | egrep "^v" | sort -n | tail -1 | sed 's/^v//'`
+PREVIOUS=$(git tag | egrep "^v" | sort -n | tail -1 | sed 's/^v//')
 
 echo
 echo -n "What is the version number (previous was $PREVIOUS)? "
-read VERSION
+read -r VERSION
 
 echo
 echo "--- Setup ---"
@@ -21,7 +21,7 @@ set +x
 echo
 echo "--- Setup ---"
 echo "Do you want to apply a git tag for this release (yes to tag)?"
-read TAG
+read -r TAG
 set -x
 
 if [ "%$TAG%" == "%yes%" ]
@@ -37,7 +37,7 @@ set +x
 echo
 echo "--- Uploading ---"
 echo "This is the point where we push files to pypi. Hit ctrl-c to abort."
-read DUMMY
+read -r DUMMY
 
 set -x
 twine upload dist/*

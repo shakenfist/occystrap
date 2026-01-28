@@ -1,7 +1,4 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
-
-name: Python application
+name: Sanity checks
 
 on:
   push:
@@ -13,21 +10,24 @@ on:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, vm, debian-12]
 
     steps:
       - name: Checkout code with two commits
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           sudo apt-get update
           sudo apt-get dist-upgrade -y
-          sudo apt-get install -y -q tox
+          sudo apt-get install -y -q tox python3 python3-venv python3-wheel
 
       - name: Lint with flake8
         run: |
           tox -eflake8
+
+      - name: Run unit tests
+        run: |
+          tox -epy3

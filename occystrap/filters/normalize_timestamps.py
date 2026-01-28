@@ -6,6 +6,7 @@ import tempfile
 
 from occystrap import constants
 from occystrap.filters.base import ImageFilter
+from occystrap.tarformat import select_tar_format_for_layer
 
 
 LOG = logging.getLogger(__name__)
@@ -41,17 +42,27 @@ class TimestampNormalizer(ImageFilter):
         Creates a new tarball with all timestamps set to self.timestamp,
         calculates the new SHA256 hash, and returns both.
 
+        Uses USTAR format when possible (smaller output), falls back to
+        PAX format when layer contents require it. See tarformat.py.
+
         Args:
             layer_data: File-like object containing the original layer.
 
         Returns:
             Tuple of (normalized_file_handle, new_sha256_hex)
         """
+        # Determine optimal tar format based on transformed members
+        def transform(member):
+            member.mtime = self.timestamp
+            return member
+
+        tar_format = select_tar_format_for_layer(layer_data, transform)
+
         with tempfile.NamedTemporaryFile(delete=False) as normalized_tf:
             try:
                 # Create a new tarball with normalized timestamps
-                with tarfile.open(fileobj=normalized_tf, mode='w') as \
-                        normalized_tar:
+                with tarfile.open(fileobj=normalized_tf, mode='w',
+                                  format=tar_format) as normalized_tar:
                     layer_data.seek(0)
                     with tarfile.open(fileobj=layer_data, mode='r') as \
                             layer_tar:

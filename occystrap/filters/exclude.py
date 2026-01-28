@@ -7,6 +7,7 @@ import tempfile
 
 from occystrap import constants
 from occystrap.filters.base import ImageFilter
+from occystrap.tarformat import select_tar_format_for_layer
 
 
 LOG = logging.getLogger(__name__)
@@ -56,17 +57,27 @@ class ExcludeFilter(ImageFilter):
         Creates a new tarball with entries that don't match exclusion
         patterns, calculates the new SHA256 hash, and returns both.
 
+        Uses USTAR format when possible (smaller output), falls back to
+        PAX format when layer contents require it. See tarformat.py.
+
         Args:
             layer_data: File-like object containing the original layer.
 
         Returns:
             Tuple of (filtered_file_handle, new_sha256_hex)
         """
+        # Determine optimal tar format, skipping excluded members
+        tar_format = select_tar_format_for_layer(
+            layer_data,
+            skip_fn=lambda m: self._matches_exclusion(m.name)
+        )
+
         excluded_count = 0
 
         with tempfile.NamedTemporaryFile(delete=False) as filtered_tf:
             try:
-                with tarfile.open(fileobj=filtered_tf, mode='w') as filtered_tar:
+                with tarfile.open(fileobj=filtered_tf, mode='w',
+                                  format=tar_format) as filtered_tar:
                     layer_data.seek(0)
                     with tarfile.open(fileobj=layer_data, mode='r') as layer_tar:
                         for member in layer_tar:

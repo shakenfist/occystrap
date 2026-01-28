@@ -1,0 +1,30 @@
+repos:
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint
+        args: ['-config-file', '.github/actionlint.yaml']
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        files: ^(tools/|release\.sh)
+        types_or: [sh, bash, shell]
+        args: ['-x']
+
+  - repo: local
+    hooks:
+      - id: tox-flake8
+        name: tox flake8
+        entry: tox -eflake8
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: tox-py3
+        name: tox py3
+        entry: tox -epy3
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -12,7 +12,7 @@
 
 FLAKE_COMMAND="flake8 --max-line-length=120"
 
-if test "x$1" = "x-HEAD" ; then
+if test "$1" = "-HEAD" ; then
     shift
     files=$(git diff --name-only HEAD~1 | tr '\n' ' ')
     echo "Running flake8 on ${files}"
