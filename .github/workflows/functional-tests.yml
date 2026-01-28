@@ -48,10 +48,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build occystrap wheel and install it
+      - name: Build occystrap wheel and install it in a venv
         run: |
+          python3 -mvenv ~/occystrap-venv
           python3 setup.py sdist bdist_wheel
-          sudo pip3 install dist/occystrap*.whl
+          ~/occystrap-venv/bin/pip3 install dist/occystrap*.whl
 
       - name: Run a local docker registry to talk to, and populate it with test data
         run: |
@@ -69,8 +70,9 @@ jobs:
       - name: Run functional tests
         run: |
           cd deploy
-          sudo pip3 install -r requirements.txt
-          sudo pip3 install -r test-requirements.txt
+          . ~/occystrap-venv/bin/activate
+          pip3 install -r requirements.txt
+          pip3 install -r test-requirements.txt
 
           # This needs to run as root because some of the tests require
           # escalated permissions.
