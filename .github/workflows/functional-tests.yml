@@ -76,4 +76,4 @@ jobs:
 
           # This needs to run as root because some of the tests require
           # escalated permissions.
-          sudo stestr run --concurrency=5
+          sudo /home/debian/occystrap-venv/bin/stestr run --concurrency=5
