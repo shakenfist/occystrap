@@ -45,6 +45,14 @@ occystrap/
 deploy/
     occystrap_ci/
         tests/           # Functional tests (run in CI)
+
+.github/
+    workflows/
+        codeql-analysis.yml    # CodeQL security scanning
+        functional-tests.yml   # CI functional tests
+        python-unit-tests.yml  # CI unit tests
+        release.yml            # Automated PyPI release pipeline
+    actionlint.yaml            # actionlint configuration
 ```
 
 ## Pipeline Pattern

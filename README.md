@@ -383,6 +383,20 @@ tox -epy3
 
 Functional tests are in `deploy/occystrap_ci/tests/` and are run in CI.
 
+### Releasing
+
+Releases are automated via GitHub Actions. Push a version tag to trigger the
+pipeline:
+
+```
+git tag -s v0.5.0 -m "Release v0.5.0"
+git push origin v0.5.0
+```
+
+The workflow builds the package, signs the tag with Sigstore, publishes to
+PyPI, and creates a GitHub Release. See [RELEASE-SETUP.md](RELEASE-SETUP.md)
+for one-time configuration steps.
+
 ## Documentation
 
 For more detailed documentation, see the [docs/](docs/) directory:
