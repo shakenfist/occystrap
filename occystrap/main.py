@@ -88,12 +88,15 @@ def process_cmd(ctx, source, destination, filters):
       normalize-timestamps:ts=N    - Use specific timestamp
       search:pattern=GLOB          - Search for files
       search:pattern=RE,regex=true - Search with regex
+      inspect:file=PATH            - Append layer metadata (JSONL)
+      exclude:pattern=GLOB         - Exclude files from layers
 
     \b
     Examples:
       occystrap process registry://docker.io/library/busybox:latest tar://busybox.tar
       occystrap process docker://myimage:v1 dir://./extracted -f normalize-timestamps
       occystrap process tar://image.tar dir://out -f "search:pattern=*.conf"
+      occystrap process docker://img:v1 registry://host/img:v1 -f "inspect:file=layers.jsonl"
     """
     try:
         builder = PipelineBuilder(ctx)

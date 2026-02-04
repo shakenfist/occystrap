@@ -74,6 +74,8 @@ The project uses pre-commit hooks for `tox -eflake8` (linting) and `tox -epy3`
 - **Search for files in layers**: Use `SearchFilter` as reference
 - **Modify layer contents**: Use `TimestampNormalizer` or `ExcludeFilter` as
   reference (they rewrite tarballs)
+- **Record layer metadata**: Use `InspectFilter` as reference (accumulates
+  state across elements and writes output in `finalize()`)
 - **Passthrough filter**: Check element type, process if needed, always call
   `self._wrapped.process_image_element()` to pass data through
 - **Write to Docker daemon**: Use `DockerWriter` as reference (builds tarball

@@ -83,6 +83,12 @@ occystrap process registry://docker.io/library/busybox:latest \
 occystrap process registry://docker.io/library/busybox:latest \
     tar://busybox.tar -f normalize-timestamps -f "search:pattern=bin/*"
 
+# Record layer metadata to a JSONL file (inspect filter)
+occystrap process docker://myimage:v1 registry://myregistry/myimage:v1 \
+    -f "inspect:file=layers-before.jsonl" \
+    -f normalize-timestamps \
+    -f "inspect:file=layers-after.jsonl"
+
 # Exclude files matching glob patterns from layers
 occystrap process registry://docker.io/library/python:3.11 \
     tar://python.tar -f "exclude:pattern=**/.git/**"
