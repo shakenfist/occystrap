@@ -15,7 +15,7 @@ dynamic = ["version"]
 description = "occystrap: docker and OCI container tools"
 readme = "README.md"
 requires-python = ">=3.7"
-license = "Apache-2.0"
+license = {text = "Apache-2.0"}
 authors = [
     {name = "Michael Still", email = "mikal@stillhq.com"},
 ]
