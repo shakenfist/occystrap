@@ -1,5 +1,0 @@
-coverage            # apache2
-testtools           # mit
-mock                # bsd
-stestr              # apache2
-flake8              # mit

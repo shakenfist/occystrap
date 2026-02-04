@@ -351,6 +351,12 @@ occystrap process "registry://registry-1.docker.io/library/busybox:latest?os=lin
 
 ## Development
 
+### Install for Development
+
+```
+pip install -e ".[test]"
+```
+
 ### Pre-commit Hooks
 
 This project uses pre-commit hooks to validate code before commits. Install them

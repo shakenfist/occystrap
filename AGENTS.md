@@ -59,6 +59,13 @@ class MyFilter(ImageFilter):
 4. Register in `PipelineBuilder.build_output()` in `occystrap/pipeline.py`
 5. Add the scheme to `OUTPUT_SCHEMES` in `occystrap/uri.py`
 
+## Build System
+
+The project uses `pyproject.toml` with `setuptools` and `setuptools_scm`
+for building and versioning. Versions are derived from git tags. There is
+no `setup.py` or `setup.cfg`. Dependencies are declared in `pyproject.toml`
+under `[project.dependencies]` and `[project.optional-dependencies.test]`.
+
 ## Testing
 
 - **Unit tests**: Located in `occystrap/tests/`. Run with `tox -epy3`.

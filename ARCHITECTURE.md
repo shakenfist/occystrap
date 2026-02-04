@@ -46,6 +46,9 @@ deploy/
     occystrap_ci/
         tests/           # Functional tests (run in CI)
 
+pyproject.toml               # Build config (setuptools + setuptools_scm)
+tox.ini                      # Test runner configuration
+
 .github/
     workflows/
         codeql-analysis.yml    # CodeQL security scanning

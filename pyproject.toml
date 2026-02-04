@@ -1,0 +1,65 @@
+[build-system]
+requires = [
+    "setuptools>=61.0",
+    "setuptools_scm[simple]>=6.2",
+    "wheel",
+    "build",
+    "twine"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "occystrap"
+dynamic = ["version"]
+
+description = "occystrap: docker and OCI container tools"
+readme = "README.md"
+requires-python = ">=3.7"
+license = "Apache-2.0"
+authors = [
+    {name = "Michael Still", email = "mikal@stillhq.com"},
+]
+classifiers = [
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "click>=7.1.1",          # bsd
+    "requests",              # apache2
+    "requests-unixsocket",   # apache2
+    "prettytable",           # bsd
+    "oslo.concurrency",      # apache2
+    "shakenfist-utilities",  # apache2
+]
+
+[project.urls]
+"Homepage" = "https://github.com/shakenfist/occystrap"
+"Bug Tracker" = "https://github.com/shakenfist/occystrap/issues"
+
+[project.scripts]
+occystrap = "occystrap.main:cli"
+
+[project.optional-dependencies]
+test = [
+    "coverage",     # apache2
+    "testtools",    # mit
+    "mock",         # bsd
+    "stestr",       # apache2
+    "flake8",       # mit
+]
+
+[tool.setuptools]
+packages = [
+    "occystrap",
+    "occystrap.inputs",
+    "occystrap.outputs",
+    "occystrap.filters",
+    "occystrap.tests",
+]
+
+[tool.setuptools_scm]
+git_describe_command = "git describe --dirty --tags --match v* --first-parent"
+write_to = "occystrap/_version.py"
