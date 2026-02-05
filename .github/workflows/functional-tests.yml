@@ -77,3 +77,23 @@ jobs:
           # This needs to run as root because some of the tests require
           # escalated permissions.
           sudo /home/debian/occystrap-venv/bin/stestr run --concurrency=5
+
+  automated_reviewer:
+    name: "Automated reviewer"
+    runs-on: [self-hosted, claude-code]
+    needs: [functional]
+    if: github.event_name == 'pull_request'
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-reviewer
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run automated reviewer
+        uses: shakenfist/actions/review-pr-with-claude@main
+        with:
+          pr-number: ${{ github.event.pull_request.number }}

@@ -1,0 +1,11 @@
+name: Export repository configuration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 00 * * *'
+
+jobs:
+  export-config:
+    uses: shakenfist/actions/.github/workflows/export-repo-config.yml@main
+    secrets: inherit
