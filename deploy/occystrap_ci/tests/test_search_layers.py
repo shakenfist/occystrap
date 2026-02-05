@@ -22,7 +22,7 @@ class SearchLayersTestCase(testtools.TestCase):
 
         searcher = SearchFilter(None, '*sh')
         img = input_registry.Image(
-            'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
+            'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
             searcher.process_image_element(*image_element)
         searcher.finalize()
@@ -41,7 +41,7 @@ class SearchLayersTestCase(testtools.TestCase):
 
         searcher = SearchFilter(None, 'nonexistent_file_pattern_xyz123')
         img = input_registry.Image(
-            'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
+            'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
             searcher.process_image_element(*image_element)
         searcher.finalize()
@@ -56,7 +56,7 @@ class SearchLayersTestCase(testtools.TestCase):
         # Search for files ending in 'sh' in bin directory
         searcher = SearchFilter(None, r'bin/.*sh$', use_regex=True)
         img = input_registry.Image(
-            'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
+            'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
             searcher.process_image_element(*image_element)
         searcher.finalize()
@@ -76,7 +76,7 @@ class SearchLayersScriptFriendlyTestCase(testtools.TestCase):
         searcher = SearchFilter(
             None, '*ash', image=image, tag=tag, script_friendly=True)
         img = input_registry.Image(
-            'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
+            'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
             searcher.process_image_element(*image_element)
 
@@ -114,7 +114,7 @@ class SearchLayersScriptFriendlyTestCase(testtools.TestCase):
             None, 'nonexistent_xyz123', image=image, tag=tag,
             script_friendly=True)
         img = input_registry.Image(
-            'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
+            'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
             searcher.process_image_element(*image_element)
 
@@ -142,7 +142,7 @@ class SearchLayersTarfileTestCase(testtools.TestCase):
         try:
             tar = output_tarfile.TarWriter(image, tag, tarball_path)
             img = input_registry.Image(
-                'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
+                'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
             for image_element in img.fetch(fetch_callback=tar.fetch_callback):
                 tar.process_image_element(*image_element)
             tar.finalize()
@@ -177,7 +177,7 @@ class SearchLayersTarfileTestCase(testtools.TestCase):
         try:
             tar = output_tarfile.TarWriter(image, tag, tarball_path)
             img = input_registry.Image(
-                'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
+                'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
             for image_element in img.fetch(fetch_callback=tar.fetch_callback):
                 tar.process_image_element(*image_element)
             tar.finalize()

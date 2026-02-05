@@ -71,6 +71,14 @@ jobs:
             cd ${start_dir}
           done
 
+          # Pull standard images from mirror.gcr.io and push to local registry
+          # for use in tests (avoids proxy issues with direct registry access)
+          for img in busybox hello-world ubuntu; do
+            docker pull mirror.gcr.io/library/$img:latest
+            docker tag mirror.gcr.io/library/$img:latest localhost:5000/library/$img:latest
+            docker push localhost:5000/library/$img:latest
+          done
+
       - name: Run functional tests
         run: |
           cd deploy

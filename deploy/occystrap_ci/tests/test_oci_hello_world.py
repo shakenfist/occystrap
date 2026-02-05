@@ -41,7 +41,7 @@ class OCIHelloWorldTestCase(testtools.TestCase):
         with tempfile.TemporaryDirectory() as tempdir:
             oci = output_ocibundle.OCIBundleWriter(image, tag, tempdir)
             img = input_registry.Image(
-                'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
+                'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
             for image_element in img.fetch(fetch_callback=oci.fetch_callback):
                 oci.process_image_element(*image_element)
             oci.finalize()
