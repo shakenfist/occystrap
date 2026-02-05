@@ -6,6 +6,8 @@ on:
 
 jobs:
   renovate:
+    permissions:
+      contents: read
     runs-on: [self-hosted, static]
     steps:
       - name: Checkout
