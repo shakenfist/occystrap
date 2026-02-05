@@ -26,6 +26,23 @@ class Image(ImageInput):
 
     def _load_manifest(self):
         with tarfile.open(self.tarfile_path, 'r') as tf:
+            names = tf.getnames()
+
+            if 'manifest.json' not in names:
+                # Check if this is a legacy format tarball (pre-Docker 1.10)
+                if 'repositories' in names:
+                    raise ValueError(
+                        'This tarball appears to be in legacy Docker format '
+                        '(pre-1.10, circa 2016). occystrap only supports '
+                        'Docker 1.10+ tarballs which contain manifest.json. '
+                        'To convert: docker load < old.tar && '
+                        'docker save image:tag > new.tar'
+                    )
+                raise ValueError(
+                    'Invalid tarball: no manifest.json found. '
+                    'This does not appear to be a valid docker save tarball.'
+                )
+
             manifest_member = tf.getmember('manifest.json')
             manifest_file = tf.extractfile(manifest_member)
             self._manifest = json.loads(manifest_file.read().decode('utf-8'))
