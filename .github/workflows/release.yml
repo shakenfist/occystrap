@@ -21,6 +21,9 @@ jobs:
     name: Build distribution packages
     runs-on: [self-hosted, static]
 
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
