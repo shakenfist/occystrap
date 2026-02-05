@@ -54,7 +54,8 @@ jobs:
       - name: Build occystrap wheel and install it in a venv
         run: |
           python3 -mvenv ~/occystrap-venv
-          python3 setup.py sdist bdist_wheel
+          ~/occystrap-venv/bin/pip3 install build
+          ~/occystrap-venv/bin/python3 -m build
           ~/occystrap-venv/bin/pip3 install dist/occystrap*.whl
 
       - name: Run a local docker registry to talk to, and populate it with test data
