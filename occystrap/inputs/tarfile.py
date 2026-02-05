@@ -26,6 +26,23 @@ class Image(ImageInput):
 
     def _load_manifest(self):
         with tarfile.open(self.tarfile_path, 'r') as tf:
+            names = tf.getnames()
+
+            if 'manifest.json' not in names:
+                # Check if this is a legacy format tarball (pre-Docker 1.10)
+                if 'repositories' in names:
+                    raise ValueError(
+                        'This tarball appears to be in legacy Docker format '
+                        '(pre-1.10, circa 2016). occystrap only supports '
+                        'Docker 1.10+ tarballs which contain manifest.json. '
+                        'To convert: docker load < old.tar && '
+                        'docker save image:tag > new.tar'
+                    )
+                raise ValueError(
+                    'Invalid tarball: no manifest.json found. '
+                    'This does not appear to be a valid docker save tarball.'
+                )
+
             manifest_member = tf.getmember('manifest.json')
             manifest_file = tf.extractfile(manifest_member)
             self._manifest = json.loads(manifest_file.read().decode('utf-8'))
@@ -71,8 +88,15 @@ class Image(ImageInput):
             LOG.info('There are %d image layers' % len(layers))
 
             for layer_path in layers:
-                # Layer path is like "abc123/layer.tar"
-                layer_digest = os.path.dirname(layer_path)
+                # Layer path format varies by Docker version:
+                # - Traditional (v1.10-v24): "<digest>/layer.tar"
+                # - OCI format (v25+): "blobs/sha256/<digest>"
+                if layer_path.startswith('blobs/'):
+                    # OCI format: extract digest from end of path
+                    layer_digest = os.path.basename(layer_path)
+                else:
+                    # Traditional format: extract digest from directory name
+                    layer_digest = os.path.dirname(layer_path)
                 if not fetch_callback(layer_digest):
                     LOG.info('Fetch callback says skip layer %s' % layer_digest)
                     yield (constants.IMAGE_LAYER, layer_digest, None)
