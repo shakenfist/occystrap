@@ -83,6 +83,12 @@ occystrap process registry://docker.io/library/busybox:latest \
 occystrap process registry://docker.io/library/busybox:latest \
     tar://busybox.tar -f normalize-timestamps -f "search:pattern=bin/*"
 
+# Record layer metadata to a JSONL file (inspect filter)
+occystrap process docker://myimage:v1 registry://myregistry/myimage:v1 \
+    -f "inspect:file=layers-before.jsonl" \
+    -f normalize-timestamps \
+    -f "inspect:file=layers-after.jsonl"
+
 # Exclude files matching glob patterns from layers
 occystrap process registry://docker.io/library/python:3.11 \
     tar://python.tar -f "exclude:pattern=**/.git/**"
@@ -345,6 +351,12 @@ occystrap process "registry://registry-1.docker.io/library/busybox:latest?os=lin
 
 ## Development
 
+### Install for Development
+
+```
+pip install -e ".[test]"
+```
+
 ### Pre-commit Hooks
 
 This project uses pre-commit hooks to validate code before commits. Install them
@@ -376,6 +388,20 @@ tox -epy3
 ```
 
 Functional tests are in `deploy/occystrap_ci/tests/` and are run in CI.
+
+### Releasing
+
+Releases are automated via GitHub Actions. Push a version tag to trigger the
+pipeline:
+
+```
+git tag -s v0.5.0 -m "Release v0.5.0"
+git push origin v0.5.0
+```
+
+The workflow builds the package, signs the tag with Sigstore, publishes to
+PyPI, and creates a GitHub Release. See [RELEASE-SETUP.md](RELEASE-SETUP.md)
+for one-time configuration steps.
 
 ## Documentation
 

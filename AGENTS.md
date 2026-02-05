@@ -59,6 +59,13 @@ class MyFilter(ImageFilter):
 4. Register in `PipelineBuilder.build_output()` in `occystrap/pipeline.py`
 5. Add the scheme to `OUTPUT_SCHEMES` in `occystrap/uri.py`
 
+## Build System
+
+The project uses `pyproject.toml` with `setuptools` and `setuptools_scm`
+for building and versioning. Versions are derived from git tags. There is
+no `setup.py` or `setup.cfg`. Dependencies are declared in `pyproject.toml`
+under `[project.dependencies]` and `[project.optional-dependencies.test]`.
+
 ## Testing
 
 - **Unit tests**: Located in `occystrap/tests/`. Run with `tox -epy3`.
@@ -74,6 +81,8 @@ The project uses pre-commit hooks for `tox -eflake8` (linting) and `tox -epy3`
 - **Search for files in layers**: Use `SearchFilter` as reference
 - **Modify layer contents**: Use `TimestampNormalizer` or `ExcludeFilter` as
   reference (they rewrite tarballs)
+- **Record layer metadata**: Use `InspectFilter` as reference (accumulates
+  state across elements and writes output in `finalize()`)
 - **Passthrough filter**: Check element type, process if needed, always call
   `self._wrapped.process_image_element()` to pass data through
 - **Write to Docker daemon**: Use `DockerWriter` as reference (builds tarball

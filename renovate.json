@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "gitAuthor": "shakenfist-bot <bot@shakenfist.com>",
+  "dependencyDashboard": "true",
+  "assignees": [
+    "mikalstill"
+  ],
+  "schedule": [
+    "after 9pm"
+  ],
+  "packageRules": [
+    {
+      "description": "Automatically merge minor and patch-level updates",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "digest"
+      ],
+      "automerge": false
+    }
+  ],
+  "minimumReleaseAge": "3 days",
+  "rollbackPrs": "true"
+}

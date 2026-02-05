@@ -44,3 +44,6 @@ htmlcov/
 # Temporary files
 *.tmp
 *.bak
+
+# setuptools_scm generated version file
+occystrap/_version.py
