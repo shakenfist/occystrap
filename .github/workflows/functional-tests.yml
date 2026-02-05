@@ -60,7 +60,7 @@ jobs:
 
       - name: Run a local docker registry to talk to, and populate it with test data
         run: |
-          docker run -d -p 5000:5000 --restart=always --name registry registry:2
+          docker run -d -p 5000:5000 --restart=always --name registry mirror.gcr.io/registry:2
           cd deploy/occystrap_ci/testdata
           start_dir=$(pwd)
 
@@ -69,6 +69,14 @@ jobs:
             docker build -t localhost:5000/occystrap_$img:latest .
             docker push localhost:5000/occystrap_$img:latest
             cd ${start_dir}
+          done
+
+          # Pull standard images from mirror.gcr.io and push to local registry
+          # for use in tests (avoids proxy issues with direct registry access)
+          for img in busybox hello-world ubuntu; do
+            docker pull mirror.gcr.io/library/$img:latest
+            docker tag mirror.gcr.io/library/$img:latest localhost:5000/library/$img:latest
+            docker push localhost:5000/library/$img:latest
           done
 
       - name: Run functional tests
