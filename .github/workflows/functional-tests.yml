@@ -84,6 +84,9 @@ jobs:
 
   automated_reviewer:
     name: "Automated reviewer"
+    permissions:
+      contents: read
+      pull-requests: write
     runs-on: [self-hosted, claude-code]
     needs: [functional]
     if: github.event_name == 'pull_request'
