@@ -8,6 +8,9 @@ on:
     branches:
       - master
 
+permissions:
+  contents: read
+
 jobs:
   functional:
     runs-on: [self-hosted, vm, debian-12]
