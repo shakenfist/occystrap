@@ -8,6 +8,8 @@
 
 name: Release
 
+permissions: {}
+
 on:
   push:
     tags:

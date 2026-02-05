@@ -1,4 +1,8 @@
 name: Renovate dependency updater
+
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   schedule:
@@ -6,8 +10,6 @@ on:
 
 jobs:
   renovate:
-    permissions:
-      contents: read
     runs-on: [self-hosted, static]
     steps:
       - name: Checkout
