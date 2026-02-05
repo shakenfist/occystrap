@@ -3,6 +3,11 @@ name: PR Re-review
 # Triggers a re-review of a PR when an authorized user comments
 # "@shakenfist-bot please re-review"
 
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
 on:
   issue_comment:
     types: [created]
