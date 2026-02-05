@@ -1,5 +1,8 @@
 name: Export repository configuration
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
   schedule:
