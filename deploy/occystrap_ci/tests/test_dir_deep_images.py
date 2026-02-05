@@ -21,7 +21,7 @@ class DirDeepImageTestCase(testtools.TestCase):
             oci = output_directory.DirWriter(
                 image, tag, tempdir, expand=True)
             img = input_registry.Image(
-                'registry-1.docker.io', image, tag, 'linux', 'amd64', '')
+                'mirror.gcr.io', image, tag, 'linux', 'amd64', '')
             for image_element in img.fetch(fetch_callback=oci.fetch_callback):
                 oci.process_image_element(*image_element)
             oci.finalize()

@@ -60,7 +60,7 @@ jobs:
 
       - name: Run a local docker registry to talk to, and populate it with test data
         run: |
-          docker run -d -p 5000:5000 --restart=always --name registry registry:2
+          docker run -d -p 5000:5000 --restart=always --name registry mirror.gcr.io/registry:2
           cd deploy/occystrap_ci/testdata
           start_dir=$(pwd)
 
