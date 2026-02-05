@@ -71,8 +71,15 @@ class Image(ImageInput):
             LOG.info('There are %d image layers' % len(layers))
 
             for layer_path in layers:
-                # Layer path is like "abc123/layer.tar"
-                layer_digest = os.path.dirname(layer_path)
+                # Layer path format varies by Docker version:
+                # - Traditional (v1.10-v24): "<digest>/layer.tar"
+                # - OCI format (v25+): "blobs/sha256/<digest>"
+                if layer_path.startswith('blobs/'):
+                    # OCI format: extract digest from end of path
+                    layer_digest = os.path.basename(layer_path)
+                else:
+                    # Traditional format: extract digest from directory name
+                    layer_digest = os.path.dirname(layer_path)
                 if not fetch_callback(layer_digest):
                     LOG.info('Fetch callback says skip layer %s' % layer_digest)
                     yield (constants.IMAGE_LAYER, layer_digest, None)
