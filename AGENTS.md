@@ -89,3 +89,7 @@ The project uses pre-commit hooks for `tox -eflake8` (linting) and `tox -epy3`
   in memory and posts via API)
 - **Push to registry**: Use `RegistryWriter` as reference (uploads blobs and
   manifest via Docker Registry HTTP API V2)
+- **Handle layer compression**: Use `compression.py` module for detecting and
+  handling gzip/zstd compressed layers. Media type constants are in `constants.py`.
+- **Add new compression format**: Extend `compression.py` with detection magic,
+  `StreamingDecompressor`/`StreamingCompressor` classes, and media type mapping

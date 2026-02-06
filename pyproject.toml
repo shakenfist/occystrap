@@ -33,6 +33,7 @@ dependencies = [
     "prettytable",           # bsd
     "oslo.concurrency",      # apache2
     "shakenfist-utilities",  # apache2
+    "zstandard>=0.21.0",     # bsd
 ]
 
 [project.urls]

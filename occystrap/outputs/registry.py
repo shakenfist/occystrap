@@ -14,7 +14,6 @@
 # 2. Upload config blob (same as layer)
 # 3. Push manifest: PUT /v2/<name>/manifests/<tag>
 
-import gzip
 import hashlib
 import io
 import json
@@ -23,6 +22,7 @@ import re
 
 import requests
 
+from occystrap import compression
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
 from occystrap import util
@@ -41,7 +41,7 @@ class RegistryWriter(ImageOutput):
     """
 
     def __init__(self, registry, image, tag, secure=True,
-                 username=None, password=None):
+                 username=None, password=None, compression_type=None):
         """Initialize the registry writer.
 
         Args:
@@ -51,6 +51,8 @@ class RegistryWriter(ImageOutput):
             secure: If True, use HTTPS (default). If False, use HTTP.
             username: Username for authentication (optional).
             password: Password/token for authentication (optional).
+            compression_type: Compression for layers ('gzip' or 'zstd').
+                Defaults to 'gzip' for maximum compatibility.
         """
         self.registry = registry
         self.image = image
@@ -58,6 +60,7 @@ class RegistryWriter(ImageOutput):
         self.secure = secure
         self.username = username
         self.password = password
+        self.compression_type = compression_type or constants.COMPRESSION_GZIP
 
         self._cached_auth = None
         self._moniker = 'https' if secure else 'http'
@@ -182,11 +185,9 @@ class RegistryWriter(ImageOutput):
             data.seek(0)
             layer_data = data.read()
 
-            compressed = io.BytesIO()
-            with gzip.GzipFile(fileobj=compressed, mode='wb') as gz:
-                gz.write(layer_data)
-            compressed.seek(0)
-            compressed_data = compressed.read()
+            # Compress layer with configured compression type
+            compressed_data = compression.compress_data(
+                layer_data, self.compression_type)
 
             h = hashlib.sha256()
             h.update(compressed_data)
@@ -196,8 +197,12 @@ class RegistryWriter(ImageOutput):
             self._upload_blob(layer_digest, io.BytesIO(compressed_data),
                               layer_size)
 
+            # Use appropriate media type for compression format
+            layer_media_type = compression.get_media_type_for_compression(
+                self.compression_type)
+
             self._layers.append({
-                'mediaType': 'application/vnd.docker.image.rootfs.diff.tar.gzip',
+                'mediaType': layer_media_type,
                 'size': layer_size,
                 'digest': layer_digest
             })
@@ -211,9 +216,9 @@ class RegistryWriter(ImageOutput):
 
         manifest = {
             'schemaVersion': 2,
-            'mediaType': 'application/vnd.docker.distribution.manifest.v2+json',
+            'mediaType': constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
             'config': {
-                'mediaType': 'application/vnd.docker.container.image.v1+json',
+                'mediaType': constants.MEDIA_TYPE_DOCKER_CONFIG,
                 'size': self._config_size,
                 'digest': self._config_digest
             },
@@ -227,8 +232,7 @@ class RegistryWriter(ImageOutput):
         r = self._request(
             'PUT', url,
             headers={
-                'Content-Type':
-                    'application/vnd.docker.distribution.manifest.v2+json'
+                'Content-Type': constants.MEDIA_TYPE_DOCKER_MANIFEST_V2
             },
             data=manifest_json.encode('utf-8'))
 

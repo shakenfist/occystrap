@@ -30,9 +30,12 @@ LOG = logs.setup_console(__name__)
               help='Password for registry authentication')
 @click.option('--insecure', is_flag=True, default=False,
               help='Use HTTP instead of HTTPS for registry connections')
+@click.option('--compression', default=None, envvar='OCCYSTRAP_COMPRESSION',
+              type=click.Choice(['gzip', 'zstd']),
+              help='Compression for registry output (default: gzip)')
 @click.pass_context
 def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
-        username=None, password=None, insecure=None):
+        username=None, password=None, insecure=None, compression=None):
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         LOG.setLevel(logging.DEBUG)
@@ -45,6 +48,7 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
     ctx.obj['USERNAME'] = username
     ctx.obj['PASSWORD'] = password
     ctx.obj['INSECURE'] = insecure
+    ctx.obj['COMPRESSION'] = compression
 
 
 def _fetch(img, output):

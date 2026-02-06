@@ -17,8 +17,8 @@ from requests.exceptions import ChunkedEncodingError, ConnectionError
 import sys
 import tempfile
 import time
-import zlib
 
+from occystrap import compression
 from occystrap import constants
 from occystrap import util
 from occystrap.inputs.base import ImageInput
@@ -108,21 +108,22 @@ class Image(ImageInput):
                 'tag': self.tag
             },
             headers={
-                'Accept': ('application/vnd.docker.distribution.manifest.v2+json,'
-                           'application/vnd.docker.distribution.manifest.list.v2+json,'
-                           'application/vnd.oci.image.manifest.v1+json,'
-                           'application/vnd.oci.image.index.v1+json')
+                'Accept': ('%s,%s,%s,%s' % (
+                    constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                    constants.MEDIA_TYPE_DOCKER_MANIFEST_LIST_V2,
+                    constants.MEDIA_TYPE_OCI_MANIFEST,
+                    constants.MEDIA_TYPE_OCI_INDEX))
             })
 
         config_digest = None
         if r.headers['Content-Type'] in [
-                'application/vnd.docker.distribution.manifest.v2+json',
-                'application/vnd.oci.image.manifest.v1+json']:
+                constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                constants.MEDIA_TYPE_OCI_MANIFEST]:
             manifest = r.json()
             config_digest = manifest['config']['digest']
         elif r.headers['Content-Type'] in [
-                'application/vnd.docker.distribution.manifest.list.v2+json',
-                'application/vnd.oci.image.index.v1+json']:
+                constants.MEDIA_TYPE_DOCKER_MANIFEST_LIST_V2,
+                constants.MEDIA_TYPE_OCI_INDEX]:
             for m in r.json()['manifests']:
                 if 'variant' in m['platform']:
                     LOG.info('Found manifest for %s on %s %s'
@@ -148,9 +149,9 @@ class Image(ImageInput):
                             'tag': m['digest']
                         },
                         headers={
-                            'Accept': ('application/vnd.docker.distribution.'
-                                       'manifest.v2+json, '
-                                       'application/vnd.oci.image.manifest.v1+json')
+                            'Accept': ('%s, %s' % (
+                                constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                                constants.MEDIA_TYPE_OCI_MANIFEST))
                         })
                     manifest = r.json()
                     config_digest = manifest['config']['digest']
@@ -195,6 +196,15 @@ class Image(ImageInput):
             LOG.info('Fetching layer %s (%d bytes)'
                      % (layer['digest'], layer['size']))
 
+            # Detect compression from media type (fallback to gzip for compat)
+            layer_media_type = layer.get('mediaType')
+            compression_type = compression.detect_compression_from_media_type(
+                layer_media_type)
+            if compression_type == constants.COMPRESSION_UNKNOWN:
+                # Default to gzip for backwards compatibility
+                compression_type = constants.COMPRESSION_GZIP
+            LOG.info('Layer compression: %s' % compression_type)
+
             # Retry logic for streaming downloads which can fail mid-transfer
             last_exception = None
             for attempt in range(MAX_RETRIES + 1):
@@ -210,20 +220,22 @@ class Image(ImageInput):
                         },
                         stream=True)
 
-                    # We can use zlib for streaming decompression, but we need
-                    # to tell it to ignore the gzip header which it doesn't
-                    # understand. Unfortunately tarfile doesn't do streaming
-                    # writes (and we need to know the decompressed size before
-                    # we can write to the tarfile), so we stream to a temporary
-                    # file on disk.
+                    # Use streaming decompressor based on detected compression.
+                    # Unfortunately tarfile doesn't do streaming writes (and we
+                    # need to know the decompressed size before we can write to
+                    # the tarfile), so we stream to a temporary file on disk.
                     h = hashlib.sha256()
-                    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                    d = compression.StreamingDecompressor(compression_type)
 
                     with tempfile.NamedTemporaryFile(delete=False) as tf:
                         LOG.info('Temporary file for layer is %s' % tf.name)
                         for chunk in r.iter_content(8192):
                             tf.write(d.decompress(chunk))
                             h.update(chunk)
+                        # Flush any remaining data
+                        remaining = d.flush()
+                        if remaining:
+                            tf.write(remaining)
 
                     if h.hexdigest() != layer_filename:
                         LOG.error('Hash verification failed for layer (%s vs %s)'

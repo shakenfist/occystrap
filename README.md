@@ -112,6 +112,10 @@ occystrap process docker://myimage:v1 \
 # Push to registry with authentication
 occystrap --username myuser --password mytoken \
     process tar://image.tar registry://ghcr.io/myorg/myimage:latest
+
+# Push with zstd compression (better ratio, requires Docker 20.10+/containerd 1.5+)
+occystrap --compression=zstd \
+    process docker://myimage:v1 registry://myregistry.example.com/myimage:v1
 ```
 
 ## The `search` Command
@@ -328,6 +332,40 @@ occystrap process registry://registry.gitlab.com/mygroup/myimage:latest tar://ou
 
 For GitLab Container Registry, the username is typically your GitLab username
 and the password is a personal access token with `read_registry` scope.
+
+## Layer Compression
+
+When pushing images to registries, occystrap supports both gzip (default) and
+zstd compression for image layers:
+
+```
+# Use gzip (default, maximum compatibility)
+occystrap process docker://myimage:v1 registry://myregistry/myimage:v1
+
+# Use zstd for better compression ratio and speed
+occystrap --compression=zstd process docker://myimage:v1 registry://myregistry/myimage:v1
+```
+
+You can also set the compression via environment variable:
+
+```
+export OCCYSTRAP_COMPRESSION=zstd
+occystrap process docker://myimage:v1 registry://myregistry/myimage:v1
+```
+
+Or via URI query parameter:
+
+```
+occystrap process docker://myimage:v1 "registry://myregistry/myimage:v1?compression=zstd"
+```
+
+**Compatibility notes:**
+- **gzip** (default): Works with all Docker/container runtimes
+- **zstd**: Requires Docker 20.10+ or containerd 1.5+ on the pulling client;
+  offers ~30% better compression ratio and faster compression
+
+When pulling images, occystrap automatically detects and handles both gzip and
+zstd compressed layers from registries or OCI tarballs.
 
 ## Supporting non-default architectures
 
