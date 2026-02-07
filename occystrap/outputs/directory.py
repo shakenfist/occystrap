@@ -97,6 +97,8 @@ TARFILE_TYPE_MAP = {
 
 class DirWriter(ImageOutput):
     def __init__(self, image, tag, image_path, unique_names=False, expand=False):
+        super().__init__()
+
         self.image = image
         self.tag = tag
         self.image_path = image_path
@@ -139,10 +141,12 @@ class DirWriter(ImageOutput):
             config_dir = os.path.dirname(config_file)
             os.makedirs(config_dir, exist_ok=True)
 
+            config_data = data.read()
             with open(config_file, 'wb') as f:
-                d = json.loads(data.read())
+                d = json.loads(config_data)
                 f.write(json.dumps(d, indent=4, sort_keys=True).encode('ascii'))
             self.tar_manifest[0]['Config'] = name
+            self._track_element(element_type, len(config_data))
 
         elif element_type == constants.IMAGE_LAYER:
             layer_dir = os.path.join(self.image_path, name)
@@ -152,14 +156,18 @@ class DirWriter(ImageOutput):
             self.tar_manifest[0]['Layers'].append(layer_file)
 
             layer_file_in_dir = os.path.join(self.image_path, layer_file)
+            layer_size = 0
             if os.path.exists(layer_file_in_dir):
                 LOG.info('Skipping layer already in output directory')
+                layer_size = os.path.getsize(layer_file_in_dir)
             else:
                 with open(layer_file_in_dir, 'wb') as f:
                     d = data.read(102400)
                     while d:
+                        layer_size += len(d)
                         f.write(d)
                         d = data.read(102400)
+            self._track_element(element_type, layer_size)
 
             if self.expand:
                 # Build a in-memory map of the layout of the final image bundle
@@ -237,6 +245,8 @@ class DirWriter(ImageOutput):
         c[self.image][self.tag] = manifest_filename
         with open(catalog_path, 'w') as f:
             f.write(json.dumps(c, indent=4, sort_keys=True))
+
+        self._log_summary()
 
     def _extract_rootfs(self, rootfs_path):
         # Reading tarfiles is expensive, as tarfile needs to scan the

@@ -59,6 +59,8 @@ class RegistryWriter(ImageOutput):
                 Defaults to 'gzip' for maximum compatibility.
             max_workers: Number of parallel upload threads (default: 4).
         """
+        super().__init__()
+
         self.registry = registry
         self.image = image
         self.tag = tag
@@ -216,6 +218,11 @@ class RegistryWriter(ImageOutput):
         parallel execution. This allows multiple layers to compress and
         upload simultaneously.
         """
+        # Track start time (can't use _track_element because we track
+        # compressed sizes which are only known after compression)
+        if self._start_time is None:
+            self._start_time = time.time()
+
         if element_type == constants.CONFIG_FILE and data is not None:
             LOG.info('Processing config file')
 
@@ -328,3 +335,10 @@ class RegistryWriter(ImageOutput):
 
         LOG.info(f'Image pushed successfully: {self.registry}/{self.image}'
                  f':{self.tag}')
+
+        # Summary line
+        elapsed = time.time() - self._start_time
+        total_bytes = self._config_size + sum(
+            layer['size'] for layer in layers)
+        LOG.info(f'Processed {total_bytes} bytes in {len(layers)} layers '
+                 f'in {elapsed:.1f} seconds')

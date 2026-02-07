@@ -116,6 +116,14 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
 - `process_image_element(type, name, data)` - Handles CONFIG_FILE or IMAGE_LAYER
 - `finalize()` - Writes manifest and completes output
 
+The base class also provides summary statistics tracking. All output writers log
+a summary line at the end of processing showing total bytes processed, layer
+count, and elapsed time:
+
+```
+Processed 12345678 bytes in 5 layers in 3.2 seconds
+```
+
 Output writer implementations:
 - `outputs/docker.py` - Loads images into local Docker/Podman daemon via API
 - `outputs/registry.py` - Pushes images to Docker/OCI registries via HTTP API,

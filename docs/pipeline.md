@@ -145,6 +145,14 @@ Each filter wraps the next, forming a chain that processes elements in order.
 Output writers implement the `ImageOutput` interface and handle the final
 destination of processed elements.
 
+All output writers log a summary line at the end of processing:
+
+```
+Processed 12345678 bytes in 5 layers in 3.2 seconds
+```
+
+This shows the total bytes processed, layer count, and elapsed time.
+
 ### Tarball Output
 
 Creates docker-loadable tarballs in v1.2 format.

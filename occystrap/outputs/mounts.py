@@ -16,6 +16,8 @@ LOG.setLevel(logging.INFO)
 
 class MountWriter(ImageOutput):
     def __init__(self, image, tag, image_path):
+        super().__init__()
+
         self.image = image
         self.tag = tag
         self.image_path = image_path
@@ -40,10 +42,12 @@ class MountWriter(ImageOutput):
 
     def process_image_element(self, element_type, name, data):
         if element_type == constants.CONFIG_FILE:
+            config_data = data.read()
             with open(os.path.join(self.image_path, name), 'wb') as f:
-                d = json.loads(data.read())
+                d = json.loads(config_data)
                 f.write(json.dumps(d, indent=4, sort_keys=True).encode('ascii'))
             self.tar_manifest[0]['Config'] = name
+            self._track_element(element_type, len(config_data))
 
         elif element_type == constants.IMAGE_LAYER:
             layer_dir = os.path.join(self.image_path, name)
@@ -54,12 +58,15 @@ class MountWriter(ImageOutput):
             self.tar_manifest[0]['Layers'].append(layer_file)
 
             layer_file_in_dir = os.path.join(self.image_path, layer_file)
+            layer_size = 0
             if os.path.exists(layer_file_in_dir):
                 LOG.info('Skipping layer already in output directory')
+                layer_size = os.path.getsize(layer_file_in_dir)
             else:
                 with open(layer_file_in_dir, 'wb') as f:
                     d = data.read(102400)
                     while d:
+                        layer_size += len(d)
                         f.write(d)
                         d = data.read(102400)
 
@@ -89,6 +96,8 @@ class MountWriter(ImageOutput):
                             path = mem.name
                             layer.extract(path, path=layer_dir_in_dir)
 
+            self._track_element(element_type, layer_size)
+
     def finalize(self):
         manifest_filename = self._manifest_filename() + '.json'
         manifest_path = os.path.join(self.image_path, manifest_filename)
@@ -106,6 +115,8 @@ class MountWriter(ImageOutput):
         c[self.image][self.tag] = manifest_filename
         with open(catalog_path, 'w') as f:
             f.write(json.dumps(c, indent=4, sort_keys=True))
+
+        self._log_summary()
 
     def write_bundle(self, container_template=constants.RUNC_SPEC_TEMPLATE,
                      container_values=None):

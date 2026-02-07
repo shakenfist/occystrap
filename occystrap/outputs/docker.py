@@ -52,6 +52,8 @@ class DockerWriter(ImageOutput):
             tag: The image tag.
             socket_path: Path to the Docker socket (default: /var/run/docker.sock).
         """
+        super().__init__()
+
         self.image = image
         self.tag = tag
         self.socket_path = socket_path
@@ -89,6 +91,7 @@ class DockerWriter(ImageOutput):
             data.seek(0)
             self._image_tar.addfile(ti, data)
             self._tar_manifest[0]['Config'] = name
+            self._track_element(element_type, ti.size)
 
         elif element_type == constants.IMAGE_LAYER:
             LOG.info('Adding layer to tarball')
@@ -100,6 +103,7 @@ class DockerWriter(ImageOutput):
             data.seek(0)
             self._image_tar.addfile(ti, data)
             self._tar_manifest[0]['Layers'].append(name)
+            self._track_element(element_type, ti.size)
 
     def finalize(self):
         """Write manifest and load the image into Docker."""
@@ -131,6 +135,7 @@ class DockerWriter(ImageOutput):
 
             LOG.info('Image loaded successfully: %s:%s'
                      % (self.image, self.tag))
+            self._log_summary()
 
         finally:
             if os.path.exists(temp_path):

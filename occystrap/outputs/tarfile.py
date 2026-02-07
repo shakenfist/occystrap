@@ -27,6 +27,8 @@ class TarWriter(ImageOutput):
     """
 
     def __init__(self, image, tag, image_path):
+        super().__init__()
+
         self.image = image
         self.tag = tag
         self.image_path = image_path
@@ -50,6 +52,7 @@ class TarWriter(ImageOutput):
             data.seek(0)
             self.image_tar.addfile(ti, data)
             self.tar_manifest[0]['Config'] = name
+            self._track_element(element_type, ti.size)
 
         elif element_type == constants.IMAGE_LAYER:
             LOG.info('Writing layer to tarball')
@@ -61,6 +64,7 @@ class TarWriter(ImageOutput):
             data.seek(0)
             self.image_tar.addfile(ti, data)
             self.tar_manifest[0]['Layers'].append(name)
+            self._track_element(element_type, ti.size)
 
     def finalize(self):
         LOG.info('Writing manifest file to tarball')
@@ -69,3 +73,4 @@ class TarWriter(ImageOutput):
         ti.size = len(encoded_manifest)
         self.image_tar.addfile(ti, io.BytesIO(encoded_manifest))
         self.image_tar.close()
+        self._log_summary()
