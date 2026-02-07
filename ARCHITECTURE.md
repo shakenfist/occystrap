@@ -196,28 +196,29 @@ layers belong to which images.
 The `normalize-timestamps` filter rewrites layer tar mtimes for reproducible
 builds, recalculating layer SHAs.
 
-### Parallel Layer Uploads
+### Parallel Compression and Uploads
 
-The registry output (`outputs/registry.py`) uses `ThreadPoolExecutor` to upload
-layers in parallel:
+The registry output (`outputs/registry.py`) uses `ThreadPoolExecutor` for both
+layer compression and uploads in parallel:
 
 ```
 process_image_element() called for each layer
-    └── Compress layer (synchronous - CPU bound)
-    └── Submit upload task to ThreadPoolExecutor (non-blocking)
-    └── Store Future in list, record layer metadata immediately
+    └── Read layer data
+    └── Submit (compress + upload) task to ThreadPoolExecutor (non-blocking)
+    └── Main thread continues to next layer immediately
 
 finalize()
-    └── Wait for all upload futures to complete
-    └── Check for any upload failures
+    └── Wait for all compression/upload futures to complete
+    └── Collect layer metadata from futures (in submission order)
+    └── Check for any failures
     └── Push manifest only after all blobs uploaded
 ```
 
 Key design considerations:
-- Compression happens synchronously before submitting the upload, as it's
-  CPU-bound and benefits from predictable memory usage
-- Layer metadata is recorded immediately upon processing to preserve ordering
-  in the final manifest
+- Both compression and upload run in the thread pool, allowing multiple layers
+  to compress simultaneously on multi-core systems
+- Layer order is preserved by collecting futures in submission order at finalize
+- Progress is reported every 10 seconds during the wait phase
 - Authentication token updates are protected by a threading lock for
   thread-safety
 - The `max_workers` parameter controls parallelism (default: 4)

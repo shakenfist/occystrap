@@ -157,21 +157,44 @@ class RegistryWriterTestCase(unittest.TestCase):
     def test_process_image_layer(self, mock_request):
         """Test processing an image layer element."""
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
 
-        head_response = mock.MagicMock()
-        head_response.status_code = 200
-        mock_request.return_value = head_response
+        # Use side_effect to handle different request types
+        def mock_request_handler(method, url, **kwargs):
+            response = mock.MagicMock()
+            if method == 'HEAD':
+                response.status_code = 200  # Blob exists
+            elif method == 'PUT' and '/manifests/' in url:
+                response.status_code = 201
+            else:
+                response.status_code = 200
+            return response
+
+        mock_request.side_effect = mock_request_handler
+
+        # Add config (required for finalize)
+        config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
+        writer.process_image_element(
+            constants.CONFIG_FILE,
+            'config.json',
+            io.BytesIO(config_data))
 
         layer_data = b'test layer content'
-
         writer.process_image_element(
             constants.IMAGE_LAYER,
             'sha256_original',
             io.BytesIO(layer_data))
 
-        self.assertEqual(1, len(writer._layers))
-        layer = writer._layers[0]
+        # Finalize to collect layer metadata from futures
+        writer.finalize()
+
+        # Check manifest was pushed with correct layer info
+        last_call = mock_request.call_args
+        manifest_data = last_call[1]['data']
+        manifest = json.loads(manifest_data.decode('utf-8'))
+
+        self.assertEqual(1, len(manifest['layers']))
+        layer = manifest['layers'][0]
         self.assertEqual(
             'application/vnd.docker.image.rootfs.diff.tar.gzip',
             layer['mediaType'])
@@ -184,25 +207,41 @@ class RegistryWriterTestCase(unittest.TestCase):
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
 
-        head_response = mock.MagicMock()
-        head_response.status_code = 404
+        # Use side_effect to handle different request types
+        def mock_request_handler(method, url, **kwargs):
+            response = mock.MagicMock()
+            if method == 'HEAD':
+                response.status_code = 404  # Blob doesn't exist
+            elif method == 'POST':
+                response.status_code = 202
+                response.headers = {
+                    'Location': '/v2/myuser/myimage/blobs/uploads/uuid123'
+                }
+            elif method == 'PUT' and '/manifests/' in url:
+                response.status_code = 201
+            elif method == 'PUT':
+                response.status_code = 201
+            else:
+                response.status_code = 200
+            return response
 
-        post_response = mock.MagicMock()
-        post_response.status_code = 202
-        post_response.headers = {
-            'Location': '/v2/myuser/myimage/blobs/uploads/uuid123'
-        }
+        mock_request.side_effect = mock_request_handler
 
-        put_response = mock.MagicMock()
-        put_response.status_code = 201
-
-        mock_request.side_effect = [head_response, post_response, put_response]
+        # Add config (required for finalize)
+        config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
+        writer.process_image_element(
+            constants.CONFIG_FILE,
+            'config.json',
+            io.BytesIO(config_data))
 
         layer_data = b'test layer content'
         writer.process_image_element(
             constants.IMAGE_LAYER,
             'sha256_original',
             io.BytesIO(layer_data))
+
+        # Finalize to collect layer metadata
+        writer.finalize()
 
         # Verify the digest matches gzipped content
         compressed = io.BytesIO()
@@ -212,7 +251,12 @@ class RegistryWriterTestCase(unittest.TestCase):
         expected_digest = 'sha256:' + hashlib.sha256(
             compressed.read()).hexdigest()
 
-        self.assertEqual(expected_digest, writer._layers[0]['digest'])
+        # Check manifest was pushed with correct layer digest
+        last_call = mock_request.call_args
+        manifest_data = last_call[1]['data']
+        manifest = json.loads(manifest_data.decode('utf-8'))
+
+        self.assertEqual(expected_digest, manifest['layers'][0]['digest'])
 
     @mock.patch('occystrap.outputs.registry.requests.request')
     def test_finalize_pushes_manifest(self, mock_request):

@@ -197,26 +197,28 @@ registry://HOST/IMAGE:TAG
 
 Uploads layers as blobs in parallel and creates the manifest.
 
-**Parallel Uploads:**
+**Parallel Compression and Uploads:**
 
-Layer uploads use a thread pool for improved performance:
+Both layer compression and uploads run in a thread pool for improved performance:
 
 ```
 process_image_element() called for each layer
-    └── Compress layer (synchronous - CPU bound)
-    └── Submit upload task to thread pool (non-blocking)
-    └── Record layer metadata immediately (preserves order)
+    └── Read layer data
+    └── Submit (compress + upload) to thread pool (non-blocking)
+    └── Main thread continues to next layer
 
 finalize()
-    └── Wait for all uploads to complete
+    └── Wait for all compression/upload tasks to complete
+    └── Collect layer metadata from futures (in order)
     └── Push manifest only after all blobs uploaded
 ```
 
 Key design aspects:
-- Compression happens synchronously before submitting uploads (CPU-bound work
-  benefits from predictable memory usage)
-- Layer metadata is recorded immediately to preserve ordering in the manifest
+- Multiple layers can compress simultaneously, utilizing multiple CPU cores
+- While one layer is compressing, others can be uploading
+- Layer order is preserved by collecting futures in submission order
 - Authentication token updates are thread-safe
+- Progress is reported every 10 seconds during finalize
 - Default parallelism is 4 threads, configurable via `--parallel-uploads` or
   `max_workers` URI option
 
