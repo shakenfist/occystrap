@@ -161,12 +161,15 @@ class PipelineBuilder:
                 'insecure', self._get_ctx('INSECURE', False))
             compression_type = uri_spec.options.get(
                 'compression', self._get_ctx('COMPRESSION'))
+            max_workers = uri_spec.options.get(
+                'max_workers', self._get_ctx('MAX_WORKERS', 4))
             return output_registry.RegistryWriter(
                 host, dest_image, dest_tag,
                 secure=(not insecure),
                 username=username,
                 password=password,
-                compression_type=compression_type)
+                compression_type=compression_type,
+                max_workers=max_workers)
 
         else:
             raise PipelineError('Unknown output scheme: %s' % uri_spec.scheme)

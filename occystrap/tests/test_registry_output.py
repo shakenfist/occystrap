@@ -20,6 +20,13 @@ class RegistryWriterTestCase(unittest.TestCase):
         self.assertTrue(writer.secure)
         self.assertIsNone(writer.username)
         self.assertIsNone(writer.password)
+        self.assertEqual(4, writer.max_workers)
+
+    def test_initialization_with_max_workers(self):
+        """Test RegistryWriter accepts max_workers parameter."""
+        writer = output_registry.RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=8)
+        self.assertEqual(8, writer.max_workers)
 
     def test_initialization_with_auth(self):
         """Test RegistryWriter accepts authentication credentials."""
@@ -97,7 +104,7 @@ class RegistryWriterTestCase(unittest.TestCase):
     def test_upload_blob_new(self, mock_request):
         """Test uploading a new blob."""
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
 
         head_response = mock.MagicMock()
         head_response.status_code = 404
@@ -175,7 +182,7 @@ class RegistryWriterTestCase(unittest.TestCase):
     def test_layer_is_gzip_compressed(self, mock_request):
         """Test that layers are gzip compressed before upload."""
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
 
         head_response = mock.MagicMock()
         head_response.status_code = 404
@@ -210,13 +217,24 @@ class RegistryWriterTestCase(unittest.TestCase):
     @mock.patch('occystrap.outputs.registry.requests.request')
     def test_finalize_pushes_manifest(self, mock_request):
         """Test that finalize pushes the manifest."""
+        # Use max_workers=1 for predictable call ordering with mocks
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
 
-        # Mock blob uploads
-        head_response = mock.MagicMock()
-        head_response.status_code = 200
-        mock_request.return_value = head_response
+        # Use side_effect to handle different request types
+        def mock_request_handler(method, url, **kwargs):
+            response = mock.MagicMock()
+            if method == 'HEAD':
+                # Blob exists - skip upload
+                response.status_code = 200
+            elif method == 'PUT' and '/manifests/' in url:
+                # Manifest push
+                response.status_code = 201
+            else:
+                response.status_code = 200
+            return response
+
+        mock_request.side_effect = mock_request_handler
 
         # Add config
         config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
@@ -231,11 +249,6 @@ class RegistryWriterTestCase(unittest.TestCase):
             constants.IMAGE_LAYER,
             'sha256_layer',
             io.BytesIO(layer_data))
-
-        # Mock manifest push
-        manifest_response = mock.MagicMock()
-        manifest_response.status_code = 201
-        mock_request.return_value = manifest_response
 
         writer.finalize()
 
@@ -296,12 +309,24 @@ class RegistryWriterTestCase(unittest.TestCase):
     @mock.patch('occystrap.outputs.registry.requests.request')
     def test_manifest_format(self, mock_request):
         """Test that manifest has correct format."""
+        # Use max_workers=1 for predictable call ordering with mocks
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
 
-        head_response = mock.MagicMock()
-        head_response.status_code = 200
-        mock_request.return_value = head_response
+        # Use side_effect to handle different request types
+        def mock_request_handler(method, url, **kwargs):
+            response = mock.MagicMock()
+            if method == 'HEAD':
+                # Blob exists - skip upload
+                response.status_code = 200
+            elif method == 'PUT' and '/manifests/' in url:
+                # Manifest push
+                response.status_code = 201
+            else:
+                response.status_code = 200
+            return response
+
+        mock_request.side_effect = mock_request_handler
 
         # Process config and layer
         config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
@@ -315,10 +340,6 @@ class RegistryWriterTestCase(unittest.TestCase):
             constants.IMAGE_LAYER,
             'sha256_layer',
             io.BytesIO(layer_data))
-
-        manifest_response = mock.MagicMock()
-        manifest_response.status_code = 201
-        mock_request.return_value = manifest_response
 
         writer.finalize()
 

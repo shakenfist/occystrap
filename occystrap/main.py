@@ -33,9 +33,13 @@ LOG = logs.setup_console(__name__)
 @click.option('--compression', default=None, envvar='OCCYSTRAP_COMPRESSION',
               type=click.Choice(['gzip', 'zstd']),
               help='Compression for registry output (default: gzip)')
+@click.option('--parallel-uploads', '-j', default=4, type=int,
+              envvar='OCCYSTRAP_PARALLEL_UPLOADS',
+              help='Number of parallel upload threads (default: 4)')
 @click.pass_context
 def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
-        username=None, password=None, insecure=None, compression=None):
+        username=None, password=None, insecure=None, compression=None,
+        parallel_uploads=None):
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         LOG.setLevel(logging.DEBUG)
@@ -49,6 +53,7 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
     ctx.obj['PASSWORD'] = password
     ctx.obj['INSECURE'] = insecure
     ctx.obj['COMPRESSION'] = compression
+    ctx.obj['MAX_WORKERS'] = parallel_uploads
 
 
 def _fetch(img, output):

@@ -14,11 +14,13 @@
 # 2. Upload config blob (same as layer)
 # 3. Push manifest: PUT /v2/<name>/manifests/<tag>
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import io
 import json
 import logging
 import re
+import threading
 
 import requests
 
@@ -41,7 +43,8 @@ class RegistryWriter(ImageOutput):
     """
 
     def __init__(self, registry, image, tag, secure=True,
-                 username=None, password=None, compression_type=None):
+                 username=None, password=None, compression_type=None,
+                 max_workers=4):
         """Initialize the registry writer.
 
         Args:
@@ -53,6 +56,7 @@ class RegistryWriter(ImageOutput):
             password: Password/token for authentication (optional).
             compression_type: Compression for layers ('gzip' or 'zstd').
                 Defaults to 'gzip' for maximum compatibility.
+            max_workers: Number of parallel upload threads (default: 4).
         """
         self.registry = registry
         self.image = image
@@ -61,23 +65,32 @@ class RegistryWriter(ImageOutput):
         self.username = username
         self.password = password
         self.compression_type = compression_type or constants.COMPRESSION_GZIP
+        self.max_workers = max_workers
 
         self._cached_auth = None
         self._moniker = 'https' if secure else 'http'
+        self._auth_lock = threading.Lock()
+
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._upload_futures = []
 
         self._config_digest = None
         self._config_size = None
         self._layers = []
 
     def _request(self, method, url, headers=None, data=None, stream=False):
-        """Make an authenticated request to the registry."""
+        """Make an authenticated request to the registry.
+
+        Thread-safe: uses _auth_lock to protect _cached_auth updates.
+        """
         if not headers:
             headers = {}
 
         headers['User-Agent'] = util.get_user_agent()
 
-        if self._cached_auth:
-            headers['Authorization'] = 'Bearer %s' % self._cached_auth
+        with self._auth_lock:
+            if self._cached_auth:
+                headers['Authorization'] = f'Bearer {self._cached_auth}'
 
         r = requests.request(method, url, headers=headers, data=data,
                              stream=stream)
@@ -87,9 +100,8 @@ class RegistryWriter(ImageOutput):
             auth_re = re.compile(r'Bearer realm="([^"]*)",service="([^"]*)"')
             m = auth_re.match(auth_header)
             if m:
-                scope = 'repository:%s:pull,push' % self.image
-                auth_url = '%s?service=%s&scope=%s' % (m.group(1), m.group(2),
-                                                       scope)
+                scope = f'repository:{self.image}:pull,push'
+                auth_url = f'{m.group(1)}?service={m.group(2)}&scope={scope}'
                 if self.username and self.password:
                     auth_r = requests.get(auth_url,
                                           auth=(self.username, self.password))
@@ -98,8 +110,9 @@ class RegistryWriter(ImageOutput):
 
                 if auth_r.status_code == 200:
                     token = auth_r.json().get('token')
-                    self._cached_auth = token
-                    headers['Authorization'] = 'Bearer %s' % token
+                    with self._auth_lock:
+                        self._cached_auth = token
+                    headers['Authorization'] = f'Bearer {token}'
 
                     r = requests.request(method, url, headers=headers,
                                          data=data, stream=stream)
@@ -108,8 +121,7 @@ class RegistryWriter(ImageOutput):
 
     def _blob_exists(self, digest):
         """Check if a blob already exists in the registry."""
-        url = '%s://%s/v2/%s/blobs/%s' % (self._moniker, self.registry,
-                                          self.image, digest)
+        url = f'{self._moniker}://{self.registry}/v2/{self.image}/blobs/{digest}'
         r = self._request('HEAD', url)
         return r.status_code == 200
 
@@ -122,30 +134,29 @@ class RegistryWriter(ImageOutput):
             size: Size of the blob in bytes.
         """
         if self._blob_exists(digest):
-            LOG.info('Blob %s already exists, skipping upload' % digest[:19])
+            LOG.info(f'Blob {digest[:19]} already exists, skipping upload')
             return
 
-        LOG.info('Uploading blob %s (%d bytes)' % (digest[:19], size))
+        LOG.info(f'Uploading blob {digest[:19]} ({size} bytes)')
 
-        url = '%s://%s/v2/%s/blobs/uploads/' % (self._moniker, self.registry,
-                                                self.image)
+        url = f'{self._moniker}://{self.registry}/v2/{self.image}/blobs/uploads/'
         r = self._request('POST', url)
 
         if r.status_code not in (200, 202):
-            raise Exception('Failed to initiate blob upload: %d %s'
-                            % (r.status_code, r.text))
+            raise Exception(f'Failed to initiate blob upload: {r.status_code} '
+                            f'{r.text}')
 
         location = r.headers.get('Location')
         if not location:
             raise Exception('No Location header in upload response')
 
         if not location.startswith('http'):
-            location = '%s://%s%s' % (self._moniker, self.registry, location)
+            location = f'{self._moniker}://{self.registry}{location}'
 
         if '?' in location:
-            upload_url = '%s&digest=%s' % (location, digest)
+            upload_url = f'{location}&digest={digest}'
         else:
-            upload_url = '%s?digest=%s' % (location, digest)
+            upload_url = f'{location}?digest={digest}'
 
         data.seek(0)
         r = self._request('PUT', upload_url,
@@ -154,8 +165,7 @@ class RegistryWriter(ImageOutput):
                           data=data)
 
         if r.status_code not in (200, 201, 202):
-            raise Exception('Failed to upload blob: %d %s'
-                            % (r.status_code, r.text))
+            raise Exception(f'Failed to upload blob: {r.status_code} {r.text}')
 
         LOG.info('Blob uploaded successfully')
 
@@ -164,7 +174,12 @@ class RegistryWriter(ImageOutput):
         return True
 
     def process_image_element(self, element_type, name, data):
-        """Process an image element, uploading it to the registry."""
+        """Process an image element, uploading it to the registry.
+
+        Uploads are submitted to a thread pool for parallel execution.
+        Layer metadata is recorded immediately to preserve order in the
+        manifest.
+        """
         if element_type == constants.CONFIG_FILE and data is not None:
             LOG.info('Processing config file')
 
@@ -173,46 +188,72 @@ class RegistryWriter(ImageOutput):
 
             h = hashlib.sha256()
             h.update(config_data)
-            self._config_digest = 'sha256:%s' % h.hexdigest()
+            self._config_digest = f'sha256:{h.hexdigest()}'
             self._config_size = len(config_data)
 
-            self._upload_blob(self._config_digest, io.BytesIO(config_data),
-                              self._config_size)
+            # Submit upload to thread pool
+            future = self._executor.submit(
+                self._upload_blob, self._config_digest,
+                io.BytesIO(config_data), self._config_size)
+            self._upload_futures.append(future)
 
         elif element_type == constants.IMAGE_LAYER and data is not None:
-            LOG.info('Processing layer %s' % name)
+            LOG.info(f'Processing layer {name}')
 
             data.seek(0)
             layer_data = data.read()
 
-            # Compress layer with configured compression type
+            # Compress layer with configured compression type (synchronous)
             compressed_data = compression.compress_data(
                 layer_data, self.compression_type)
 
             h = hashlib.sha256()
             h.update(compressed_data)
-            layer_digest = 'sha256:%s' % h.hexdigest()
+            layer_digest = f'sha256:{h.hexdigest()}'
             layer_size = len(compressed_data)
-
-            self._upload_blob(layer_digest, io.BytesIO(compressed_data),
-                              layer_size)
 
             # Use appropriate media type for compression format
             layer_media_type = compression.get_media_type_for_compression(
                 self.compression_type)
 
+            # Record layer metadata immediately to preserve order
             self._layers.append({
                 'mediaType': layer_media_type,
                 'size': layer_size,
                 'digest': layer_digest
             })
 
+            # Submit upload to thread pool
+            future = self._executor.submit(
+                self._upload_blob, layer_digest,
+                io.BytesIO(compressed_data), layer_size)
+            self._upload_futures.append(future)
+
     def finalize(self):
-        """Push the image manifest to the registry."""
+        """Push the image manifest to the registry.
+
+        Waits for all parallel uploads to complete before pushing the
+        manifest. If any upload fails, an exception is raised.
+        """
+        # Wait for all uploads to complete
+        LOG.info(f'Waiting for {len(self._upload_futures)} uploads to '
+                 'complete...')
+        errors = []
+        for future in as_completed(self._upload_futures):
+            try:
+                future.result()
+            except Exception as e:
+                errors.append(str(e))
+
+        self._executor.shutdown(wait=True)
+
+        if errors:
+            raise Exception(f'Upload failed: {"; ".join(errors)}')
+
         if not self._config_digest:
             raise Exception('No config file was processed')
 
-        LOG.info('Pushing manifest for %s:%s' % (self.image, self.tag))
+        LOG.info(f'Pushing manifest for {self.image}:{self.tag}')
 
         manifest = {
             'schemaVersion': 2,
@@ -227,8 +268,8 @@ class RegistryWriter(ImageOutput):
 
         manifest_json = json.dumps(manifest, separators=(',', ':'))
 
-        url = '%s://%s/v2/%s/manifests/%s' % (self._moniker, self.registry,
-                                              self.image, self.tag)
+        url = (f'{self._moniker}://{self.registry}/v2/{self.image}'
+               f'/manifests/{self.tag}')
         r = self._request(
             'PUT', url,
             headers={
@@ -237,8 +278,8 @@ class RegistryWriter(ImageOutput):
             data=manifest_json.encode('utf-8'))
 
         if r.status_code not in (200, 201, 202):
-            raise Exception('Failed to push manifest: %d %s'
-                            % (r.status_code, r.text))
+            raise Exception(f'Failed to push manifest: {r.status_code} '
+                            f'{r.text}')
 
-        LOG.info('Image pushed successfully: %s/%s:%s'
-                 % (self.registry, self.image, self.tag))
+        LOG.info(f'Image pushed successfully: {self.registry}/{self.image}'
+                 f':{self.tag}')

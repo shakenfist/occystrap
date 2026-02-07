@@ -333,6 +333,35 @@ occystrap process registry://registry.gitlab.com/mygroup/myimage:latest tar://ou
 For GitLab Container Registry, the username is typically your GitLab username
 and the password is a personal access token with `read_registry` scope.
 
+## Parallel Uploads
+
+When pushing images to registries, occystrap uploads layers in parallel for
+improved performance. By default, 4 upload threads are used:
+
+```
+# Default: 4 parallel uploads
+occystrap process docker://myimage:v1 registry://myregistry/myimage:v1
+
+# Use 8 parallel upload threads
+occystrap -j 8 process docker://myimage:v1 registry://myregistry/myimage:v1
+
+# Sequential uploads (1 thread)
+occystrap --parallel-uploads 1 process docker://myimage:v1 registry://myregistry/myimage:v1
+```
+
+You can also set the parallelism via environment variable:
+
+```
+export OCCYSTRAP_PARALLEL_UPLOADS=8
+occystrap process docker://myimage:v1 registry://myregistry/myimage:v1
+```
+
+Or via URI query parameter:
+
+```
+occystrap process docker://myimage:v1 "registry://myregistry/myimage:v1?max_workers=8"
+```
+
 ## Layer Compression
 
 When pushing images to registries, occystrap supports both gzip (default) and
