@@ -2,6 +2,10 @@ name: PR Address Review Comments
 
 # Triggers Claude Code to address automated review comments when an authorized
 # user comments "@shakenfist-bot please address comments"
+#
+# SECURITY: This workflow runs on issue_comment which has write permissions.
+# We checkout tools from the base branch (main) to prevent execution of
+# potentially malicious code from the PR branch.
 
 on:
   issue_comment:
@@ -51,28 +55,51 @@ jobs:
       PR_REF: ${{ needs.trigger-address.outputs.pr_ref }}
 
     steps:
-      - name: Checkout repository
+      # SECURITY: First checkout the base branch to get trusted tools
+      - name: Checkout trusted tools from base branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted-tools
+          sparse-checkout: |
+            tools
+          sparse-checkout-cone-mode: false
+
+      # Now checkout the PR branch for the actual code
+      # SECURITY: We use persist-credentials: false to prevent the token from
+      # being available in the checked-out repository's git config
+      - name: Checkout PR branch
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.trigger-address.outputs.pr_ref }}
           fetch-depth: 0
+          path: pr-code
+          persist-credentials: false
 
       - name: Configure git
         run: |
           git config --global user.name "Michael Still"
           git config --global user.email "mikal@stillhq.com"
+          # SECURITY: Disable git hooks to prevent execution of malicious hooks
+          # from the PR code
+          git config --global core.hooksPath /dev/null
 
       - name: Run address comments script
         id: address
+        working-directory: pr-code
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          # Use trusted tools from base branch, but operate on PR code
+          TOOLS_DIR: ${{ github.workspace }}/trusted-tools/tools
+          WORK_DIR: ${{ github.workspace }}/pr-code
         run: |
           # The script will extract the review JSON from the PR comment
           # (embedded in a <details> section by the automated reviewer)
           mkdir -p ${{ github.workspace }}/address-output
 
-          ./tools/address-comments-with-claude.sh \
+          # Run the trusted tools, not the PR's potentially modified version
+          "${TOOLS_DIR}/address-comments-with-claude.sh" \
             --ci \
             --pr ${{ env.PR_NUMBER }} \
             --output-dir ${{ github.workspace }}/address-output \
@@ -91,34 +118,16 @@ jobs:
           echo "addressed=${addressed}" >> $GITHUB_OUTPUT
           echo "skipped=${skipped}" >> $GITHUB_OUTPUT
 
-      - name: Run pre-commit checks
-        id: precommit
-        continue-on-error: true
-        run: |
-          # Run pre-commit on all files to catch any issues
-          if command -v pre-commit &> /dev/null; then
-            pre-commit run --all-files 2>&1 | tee ${{ github.workspace }}/precommit-output.txt
-            echo "precommit_passed=$?" >> $GITHUB_OUTPUT
-          else
-            echo "pre-commit not available, skipping"
-            echo "precommit_passed=0" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Fix pre-commit issues if any
-        if: steps.precommit.outputs.precommit_passed != '0'
-        run: |
-          # Stage any auto-fixed files and amend the last commit if there was one
-          if [ -n "$(git status --porcelain)" ]; then
-            git add -A
-            # Only amend if we have commits to push
-            # Use quoted variable to prevent word splitting
-            if [ "$(git rev-list --count "origin/${{ env.PR_REF }}"..HEAD)" -gt 0 ]; then
-              git commit --amend --no-edit
-            fi
-          fi
+      # NOTE: We intentionally do NOT run pre-commit here because:
+      # 1. This is a privileged workflow (issue_comment trigger with write permissions)
+      # 2. Pre-commit hooks execute code from the repository (e.g., flake8 runs on
+      #    Python files which could have malicious imports)
+      # 3. The normal CI pipeline (pull_request trigger) will catch any issues
+      # See: https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
 
       - name: Push commits
         id: push
+        working-directory: pr-code
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Pass branch name through environment to avoid direct interpolation
@@ -130,7 +139,10 @@ jobs:
 
           if [ "${commit_count}" -gt 0 ]; then
             echo "Pushing ${commit_count} commits..."
-            # Use explicit refs/heads/ prefix and quoted variable for safety
+            # SECURITY: Use gh CLI for push since persist-credentials: false
+            # prevents git from having stored credentials
+            # Configure git to use gh for authentication
+            gh auth setup-git
             git push origin "HEAD:refs/heads/${BRANCH_NAME}"
           else
             echo "No commits to push"
@@ -188,5 +200,4 @@ jobs:
             ${{ github.workspace }}/address-output/
             ${{ github.workspace }}/address-log.txt
             ${{ github.workspace }}/summary.md
-            ${{ github.workspace }}/precommit-output.txt
           retention-days: 14

@@ -45,8 +45,21 @@
 
 set -e
 
-topdir=$(cd "$(dirname "$0")/.." && pwd)
-cd "${topdir}"
+# Support running from a different directory than where the tools are located.
+# This is used in CI where we checkout trusted tools from the base branch
+# separately from the PR code.
+#
+# Environment:
+#   TOOLS_DIR   - Directory containing the trusted tools (render-review.py, etc.)
+#                 If not set, defaults to the directory containing this script.
+#   WORK_DIR    - Directory to operate in (where the code to modify is).
+#                 If not set, defaults to the parent of the tools directory.
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+tools_dir="${TOOLS_DIR:-${script_dir}}"
+work_dir="${WORK_DIR:-$(cd "${script_dir}/.." && pwd)}"
+
+cd "${work_dir}"
 
 # Default options
 pr_number=""
@@ -301,7 +314,7 @@ fi
 
 # Validate the JSON
 echo "Validating review JSON..."
-validate_cmd="${topdir}/tools/render-review.py"
+validate_cmd="${tools_dir}/render-review.py"
 if ! python3 "${validate_cmd}" --validate "${output_dir}/review.json"; then
     echo -e "${RED}Error: Invalid review JSON${NC}"
     exit 1
