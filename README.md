@@ -470,6 +470,20 @@ The workflow builds the package, signs the tag with Sigstore, publishes to
 PyPI, and creates a GitHub Release. See [RELEASE-SETUP.md](RELEASE-SETUP.md)
 for one-time configuration steps.
 
+## Developer Automation
+
+This project supports automated CI helpers via PR comments. To use these
+commands, comment on a pull request with one of the following:
+
+- `@shakenfist-bot please retest` - Re-run the functional test suite
+- `@shakenfist-bot please attempt to fix` - Have Claude Code attempt to fix
+  test failures
+- `@shakenfist-bot please re-review` - Request another automated code review
+- `@shakenfist-bot please address comments` - Have Claude Code address the
+  automated review comments
+
+These commands are only available to repository collaborators with write access.
+
 ## Documentation
 
 For more detailed documentation, see the [docs/](docs/) directory:
