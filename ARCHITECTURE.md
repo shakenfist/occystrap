@@ -9,7 +9,8 @@ container images.
 occystrap/
     __init__.py
     main.py              # CLI entry point (Click-based)
-    constants.py         # Element type constants (CONFIG_FILE, IMAGE_LAYER)
+    constants.py         # Element/compression type constants, media types
+    compression.py       # Compression utilities (gzip/zstd detection & streaming)
     common.py            # Shared utilities
     util.py              # Additional utilities
     uri.py               # URI parsing for pipeline specification
@@ -39,6 +40,7 @@ occystrap/
         mounts.py        # Creates overlay mount-based extraction
     tests/               # Unit tests (run with tox -epy3)
         __init__.py
+        test_compression.py
         test_inspect.py
         test_tarformat.py
 
@@ -192,6 +194,20 @@ layers belong to which images.
 
 The `normalize-timestamps` filter rewrites layer tar mtimes for reproducible
 builds, recalculating layer SHAs.
+
+### Layer Compression
+
+The `compression.py` module provides unified handling for layer compression
+formats:
+
+- **Detection**: Magic byte and media type detection for gzip/zstd
+- **Streaming decompression**: Used by registry input for downloading layers
+- **Streaming compression**: Used by registry output for uploading layers
+- **Configurable output**: `--compression` CLI option (gzip default, zstd optional)
+
+Media type constants in `constants.py` define Docker and OCI layer types:
+- `MEDIA_TYPE_DOCKER_LAYER_GZIP` / `MEDIA_TYPE_DOCKER_LAYER_ZSTD`
+- `MEDIA_TYPE_OCI_LAYER_GZIP` / `MEDIA_TYPE_OCI_LAYER_ZSTD`
 
 ## Data Flow
 

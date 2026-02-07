@@ -4,6 +4,7 @@ import logging
 import os
 import tarfile
 
+from occystrap import compression
 from occystrap import constants
 from occystrap.inputs.base import ImageInput
 
@@ -106,6 +107,17 @@ class Image(ImageInput):
                 layer_member = tf.getmember(layer_path)
                 layer_file = tf.extractfile(layer_member)
                 layer_data = layer_file.read()
+
+                # For OCI format (blobs/ paths), layers may be compressed
+                if layer_path.startswith('blobs/'):
+                    compression_type = compression.detect_compression(
+                        layer_data)
+                    if compression_type in (constants.COMPRESSION_GZIP,
+                                            constants.COMPRESSION_ZSTD):
+                        LOG.info('Decompressing %s layer' % compression_type)
+                        layer_data = compression.decompress_data(
+                            layer_data, compression_type)
+
                 yield (constants.IMAGE_LAYER, layer_digest,
                        io.BytesIO(layer_data))
 

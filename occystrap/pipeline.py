@@ -159,11 +159,14 @@ class PipelineBuilder:
                 'password', self._get_ctx('PASSWORD'))
             insecure = uri_spec.options.get(
                 'insecure', self._get_ctx('INSECURE', False))
+            compression_type = uri_spec.options.get(
+                'compression', self._get_ctx('COMPRESSION'))
             return output_registry.RegistryWriter(
                 host, dest_image, dest_tag,
                 secure=(not insecure),
                 username=username,
-                password=password)
+                password=password,
+                compression_type=compression_type)
 
         else:
             raise PipelineError('Unknown output scheme: %s' % uri_spec.scheme)

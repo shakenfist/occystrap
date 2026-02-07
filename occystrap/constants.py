@@ -1,6 +1,34 @@
 CONFIG_FILE = 'config_file'
 IMAGE_LAYER = 'image_layer'
 
+# Compression type constants
+COMPRESSION_GZIP = 'gzip'
+COMPRESSION_ZSTD = 'zstd'
+COMPRESSION_NONE = 'none'
+COMPRESSION_UNKNOWN = 'unknown'
+
+# Docker manifest media types
+MEDIA_TYPE_DOCKER_MANIFEST_V2 = \
+    'application/vnd.docker.distribution.manifest.v2+json'
+MEDIA_TYPE_DOCKER_MANIFEST_LIST_V2 = \
+    'application/vnd.docker.distribution.manifest.list.v2+json'
+MEDIA_TYPE_DOCKER_CONFIG = 'application/vnd.docker.container.image.v1+json'
+
+# Docker layer media types
+MEDIA_TYPE_DOCKER_LAYER_GZIP = \
+    'application/vnd.docker.image.rootfs.diff.tar.gzip'
+MEDIA_TYPE_DOCKER_LAYER_ZSTD = \
+    'application/vnd.docker.image.rootfs.diff.tar.zstd'
+
+# OCI manifest media types
+MEDIA_TYPE_OCI_MANIFEST = 'application/vnd.oci.image.manifest.v1+json'
+MEDIA_TYPE_OCI_INDEX = 'application/vnd.oci.image.index.v1+json'
+
+# OCI layer media types
+MEDIA_TYPE_OCI_LAYER_GZIP = 'application/vnd.oci.image.layer.v1.tar+gzip'
+MEDIA_TYPE_OCI_LAYER_ZSTD = 'application/vnd.oci.image.layer.v1.tar+zstd'
+MEDIA_TYPE_OCI_LAYER_UNCOMPRESSED = 'application/vnd.oci.image.layer.v1.tar'
+
 RUNC_SPEC_TEMPLATE = """{
     "ociVersion": "1.0.2-dev",
     "process": {
