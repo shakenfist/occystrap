@@ -93,3 +93,22 @@ The project uses pre-commit hooks for `tox -eflake8` (linting) and `tox -epy3`
   handling gzip/zstd compressed layers. Media type constants are in `constants.py`.
 - **Add new compression format**: Extend `compression.py` with detection magic,
   `StreamingDecompressor`/`StreamingCompressor` classes, and media type mapping
+
+## CI/CD Automation Tools
+
+The `tools/` directory contains scripts for automated PR workflows:
+
+- **review-pr-with-claude.sh**: Generates structured JSON code reviews using
+  Claude Code
+- **render-review.py**: Converts review JSON to formatted markdown
+- **create-review-issues.py**: Creates GitHub issues for actionable review items
+- **address-comments-with-claude.sh**: Processes review items and creates
+  commits for fixes
+
+These scripts are used by GitHub Actions workflows in `.github/workflows/`:
+
+- `pr-retest.yml` - Re-run tests via `@shakenfist-bot please retest`
+- `pr-fix-tests.yml` - Fix test failures via `@shakenfist-bot please attempt to fix`
+- `pr-re-review.yml` - Re-review PR via `@shakenfist-bot please re-review`
+- `pr-address-comments.yml` - Address review comments via
+  `@shakenfist-bot please address comments`

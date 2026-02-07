@@ -1,0 +1,192 @@
+name: PR Address Review Comments
+
+# Triggers Claude Code to address automated review comments when an authorized
+# user comments "@shakenfist-bot please address comments"
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  trigger-address:
+    name: "Trigger comment addressing"
+    # Only run on PR comments (not issue comments)
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@shakenfist-bot please address comments')
+    runs-on: [self-hosted, static]
+    outputs:
+      authorized: ${{ steps.trigger.outputs.authorized }}
+      pr_ref: ${{ steps.trigger.outputs.pr-ref }}
+      pr_number: ${{ github.event.issue.number }}
+
+    steps:
+      - name: Handle trigger
+        id: trigger
+        uses: shakenfist/actions/pr-bot-trigger@main
+        with:
+          trigger-phrase: 'please address comments'
+          reaction: 'rocket'
+          starting-message: |
+            Starting to address automated review comments...
+
+            [View workflow run]({run_url})
+
+  address-comments:
+    needs: trigger-address
+    if: needs.trigger-address.outputs.authorized == 'true'
+    runs-on: [self-hosted, claude-code]
+    timeout-minutes: 120
+    concurrency:
+      group: address-comments-${{ github.event.issue.number }}
+      cancel-in-progress: true
+
+    env:
+      PR_NUMBER: ${{ needs.trigger-address.outputs.pr_number }}
+      PR_REF: ${{ needs.trigger-address.outputs.pr_ref }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.trigger-address.outputs.pr_ref }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config --global user.name "Michael Still"
+          git config --global user.email "mikal@stillhq.com"
+
+      - name: Run address comments script
+        id: address
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # The script will extract the review JSON from the PR comment
+          # (embedded in a <details> section by the automated reviewer)
+          mkdir -p ${{ github.workspace }}/address-output
+
+          ./tools/address-comments-with-claude.sh \
+            --ci \
+            --pr ${{ env.PR_NUMBER }} \
+            --output-dir ${{ github.workspace }}/address-output \
+            2>&1 | tee ${{ github.workspace }}/address-log.txt
+
+          # Extract summary file path (last line of output)
+          summary_file=$(tail -1 ${{ github.workspace }}/address-log.txt)
+          if [ -f "${summary_file}" ]; then
+            cp "${summary_file}" ${{ github.workspace }}/summary.md
+          fi
+
+          # Extract counts from CI output
+          addressed=$(grep "^items_addressed=" ${{ github.workspace }}/address-log.txt | cut -d= -f2 || echo "0")
+          skipped=$(grep "^items_skipped=" ${{ github.workspace }}/address-log.txt | cut -d= -f2 || echo "0")
+
+          echo "addressed=${addressed}" >> $GITHUB_OUTPUT
+          echo "skipped=${skipped}" >> $GITHUB_OUTPUT
+
+      - name: Run pre-commit checks
+        id: precommit
+        continue-on-error: true
+        run: |
+          # Run pre-commit on all files to catch any issues
+          if command -v pre-commit &> /dev/null; then
+            pre-commit run --all-files 2>&1 | tee ${{ github.workspace }}/precommit-output.txt
+            echo "precommit_passed=$?" >> $GITHUB_OUTPUT
+          else
+            echo "pre-commit not available, skipping"
+            echo "precommit_passed=0" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fix pre-commit issues if any
+        if: steps.precommit.outputs.precommit_passed != '0'
+        run: |
+          # Stage any auto-fixed files and amend the last commit if there was one
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            # Only amend if we have commits to push
+            # Use quoted variable to prevent word splitting
+            if [ "$(git rev-list --count "origin/${{ env.PR_REF }}"..HEAD)" -gt 0 ]; then
+              git commit --amend --no-edit
+            fi
+          fi
+
+      - name: Push commits
+        id: push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass branch name through environment to avoid direct interpolation
+          BRANCH_NAME: ${{ env.PR_REF }}
+        run: |
+          # Count commits to push (use quoted variable)
+          commit_count=$(git rev-list --count "origin/${BRANCH_NAME}"..HEAD 2>/dev/null || echo "0")
+          echo "commit_count=${commit_count}" >> $GITHUB_OUTPUT
+
+          if [ "${commit_count}" -gt 0 ]; then
+            echo "Pushing ${commit_count} commits..."
+            # Use explicit refs/heads/ prefix and quoted variable for safety
+            git push origin "HEAD:refs/heads/${BRANCH_NAME}"
+          else
+            echo "No commits to push"
+          fi
+
+      - name: Post success comment
+        if: steps.push.outputs.commit_count != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Build summary from the markdown file
+          if [ -f "${{ github.workspace }}/summary.md" ]; then
+            summary=$(cat ${{ github.workspace }}/summary.md)
+          else
+            summary="See workflow logs for details."
+          fi
+
+          gh pr comment ${{ env.PR_NUMBER }} \
+            --body "$(cat <<EOF
+          Addressed automated review comments and pushed ${{ steps.push.outputs.commit_count }} commit(s).
+
+          ${summary}
+
+          [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          EOF
+          )"
+
+      - name: Post no-changes comment
+        if: steps.push.outputs.commit_count == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f "${{ github.workspace }}/summary.md" ]; then
+            summary=$(cat ${{ github.workspace }}/summary.md)
+          else
+            summary="No actionable items found or all items were skipped."
+          fi
+
+          gh pr comment ${{ env.PR_NUMBER }} \
+            --body "$(cat <<EOF
+          No changes were made after reviewing automated comments.
+
+          ${summary}
+
+          [View workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          EOF
+          )"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: address-comments-logs-${{ env.PR_NUMBER }}
+          path: |
+            ${{ github.workspace }}/address-output/
+            ${{ github.workspace }}/address-log.txt
+            ${{ github.workspace }}/summary.md
+            ${{ github.workspace }}/precommit-output.txt
+          retention-days: 14
