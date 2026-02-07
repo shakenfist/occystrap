@@ -3,9 +3,28 @@ name: PR Address Review Comments
 # Triggers Claude Code to address automated review comments when an authorized
 # user comments "@shakenfist-bot please address comments"
 #
-# SECURITY: This workflow runs on issue_comment which has write permissions.
-# We checkout tools from the base branch (main) to prevent execution of
-# potentially malicious code from the PR branch.
+# SECURITY CONSIDERATIONS:
+# This workflow uses issue_comment trigger which runs with write permissions.
+# We implement multiple layers of defense:
+#
+# 1. Authorization: Only repository maintainers can trigger (enforced by
+#    shakenfist/actions/pr-bot-trigger before any code checkout)
+# 2. Trusted tools: Scripts are checked out from the base branch (main), not
+#    the PR, preventing execution of malicious code from the PR
+# 3. No credential persistence: persist-credentials: false prevents the
+#    GITHUB_TOKEN from being stored in the checked-out repository
+# 4. Git hooks disabled: core.hooksPath=/dev/null prevents malicious git hooks
+# 5. No pre-commit: We skip pre-commit as it executes code from the repository
+# 6. Just-in-time auth: We use 'gh auth setup-git' only when pushing
+# 7. Self-hosted runners: Provides isolation from production systems
+#
+# The PR code IS checked out (for Claude to read/modify), but no code FROM the
+# PR is executed. Claude operates on the files but doesn't run them.
+#
+# CodeQL may flag this pattern. The alert can be dismissed as "used in tests"
+# or "won't fix" with reference to these mitigations.
+#
+# See: https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
 
 on:
   issue_comment:

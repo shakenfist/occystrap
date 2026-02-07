@@ -1,5 +1,26 @@
 name: Fix test failures with Claude Code
 
+# SECURITY CONSIDERATIONS:
+# This workflow can be triggered in two ways:
+#
+# 1. workflow_dispatch (manual): Safe - only users with write access can trigger
+# 2. workflow_call (from pr-fix-tests.yml): Requires careful consideration
+#
+# When called from issue_comment-triggered workflows:
+# - Code from the PR is checked out and tests are executed
+# - This intentionally runs untrusted code in a privileged context
+# - Security is enforced by:
+#   a) Authorization check in the calling workflow (pr-fix-tests.yml)
+#      Only repository maintainers can trigger via shakenfist/actions/pr-bot-trigger
+#   b) Self-hosted runners provide isolation from production systems
+#   c) GITHUB_TOKEN scope is limited to this repository
+#   d) The runner is ephemeral/disposable
+#
+# Risk acceptance: The benefit of automated test fixes outweighs the risk
+# because only trusted maintainers can trigger execution.
+#
+# See: https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+
 on:
   workflow_dispatch:
     inputs:
