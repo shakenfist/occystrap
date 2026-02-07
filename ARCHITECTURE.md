@@ -118,7 +118,8 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
 
 Output writer implementations:
 - `outputs/docker.py` - Loads images into local Docker/Podman daemon via API
-- `outputs/registry.py` - Pushes images to Docker/OCI registries via HTTP API
+- `outputs/registry.py` - Pushes images to Docker/OCI registries via HTTP API,
+  with parallel layer uploads using ThreadPoolExecutor
 - `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
 - `outputs/directory.py` - Extracts to directory with optional layer deduplication
 - `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from
@@ -194,6 +195,32 @@ layers belong to which images.
 
 The `normalize-timestamps` filter rewrites layer tar mtimes for reproducible
 builds, recalculating layer SHAs.
+
+### Parallel Layer Uploads
+
+The registry output (`outputs/registry.py`) uses `ThreadPoolExecutor` to upload
+layers in parallel:
+
+```
+process_image_element() called for each layer
+    └── Compress layer (synchronous - CPU bound)
+    └── Submit upload task to ThreadPoolExecutor (non-blocking)
+    └── Store Future in list, record layer metadata immediately
+
+finalize()
+    └── Wait for all upload futures to complete
+    └── Check for any upload failures
+    └── Push manifest only after all blobs uploaded
+```
+
+Key design considerations:
+- Compression happens synchronously before submitting the upload, as it's
+  CPU-bound and benefits from predictable memory usage
+- Layer metadata is recorded immediately upon processing to preserve ordering
+  in the final manifest
+- Authentication token updates are protected by a threading lock for
+  thread-safety
+- The `max_workers` parameter controls parallelism (default: 4)
 
 ### Layer Compression
 
