@@ -21,15 +21,18 @@ class ImageFilter(ImageOutput, ABC):
     - Accumulate state across elements (e.g., collect search results)
     """
 
-    def __init__(self, wrapped_output):
+    def __init__(self, wrapped_output, temp_dir=None):
         """Wrap another output (or filter) to form a chain.
 
         Args:
             wrapped_output: The ImageOutput to pass processed elements to.
                 Can be None for terminal filters that don't produce output
                 (e.g., search-only mode).
+            temp_dir: Directory for temporary files (default:
+                system temp directory).
         """
         self._wrapped = wrapped_output
+        self.temp_dir = temp_dir
 
     def fetch_callback(self, digest):
         """Determine whether a layer should be fetched.

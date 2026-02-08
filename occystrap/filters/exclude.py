@@ -26,15 +26,17 @@ class ExcludeFilter(ImageFilter):
     __pycache__ folders, or other files before writing output.
     """
 
-    def __init__(self, wrapped_output, patterns):
+    def __init__(self, wrapped_output, patterns, temp_dir=None):
         """Initialize the exclude filter.
 
         Args:
             wrapped_output: The ImageOutput to pass filtered elements to.
             patterns: List of glob patterns to exclude. Each pattern is
                 matched against the full path using fnmatch.
+            temp_dir: Directory for temporary files (default:
+                system temp directory).
         """
-        super().__init__(wrapped_output)
+        super().__init__(wrapped_output, temp_dir=temp_dir)
         self.patterns = patterns
 
     def _matches_exclusion(self, path):
@@ -74,7 +76,8 @@ class ExcludeFilter(ImageFilter):
 
         excluded_count = 0
 
-        with tempfile.NamedTemporaryFile(delete=False) as filtered_tf:
+        with tempfile.NamedTemporaryFile(
+                delete=False, dir=self.temp_dir) as filtered_tf:
             try:
                 with tarfile.open(fileobj=filtered_tf, mode='w',
                                   format=tar_format) as filtered_tar:

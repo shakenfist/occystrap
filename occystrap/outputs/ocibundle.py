@@ -22,6 +22,7 @@ class OCIBundleWriter(DirWriter):
 
     def finalize(self):
         self._log_bundle()
+        self._log_summary()
 
     def write_bundle(self, container_template=RUNC_SPEC_TEMPLATE,
                      container_values=None):

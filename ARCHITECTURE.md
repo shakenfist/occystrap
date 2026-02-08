@@ -80,8 +80,10 @@ All input sources inherit from the `ImageInput` abstract base class defined in
 - `fetch(fetch_callback)` - Yields image elements (config files and layers)
 
 Input source implementations:
-- `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket
-- `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API
+- `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket,
+  using hybrid streaming to minimize disk usage
+- `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API,
+  with parallel layer downloads using ThreadPoolExecutor
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
 
 ### Filters
@@ -115,6 +117,14 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
 - `fetch_callback(digest)` - Returns whether a layer should be fetched
 - `process_image_element(type, name, data)` - Handles CONFIG_FILE or IMAGE_LAYER
 - `finalize()` - Writes manifest and completes output
+
+The base class also provides summary statistics tracking. All output writers log
+a summary line at the end of processing showing total bytes processed, layer
+count, and elapsed time:
+
+```
+Processed 12345678 bytes in 5 layers in 3.2 seconds
+```
 
 Output writer implementations:
 - `outputs/docker.py` - Loads images into local Docker/Podman daemon via API
@@ -196,28 +206,111 @@ layers belong to which images.
 The `normalize-timestamps` filter rewrites layer tar mtimes for reproducible
 builds, recalculating layer SHAs.
 
-### Parallel Layer Uploads
+### Docker Daemon Hybrid Streaming
 
-The registry output (`outputs/registry.py`) uses `ThreadPoolExecutor` to upload
-layers in parallel:
+The Docker daemon input (`inputs/docker.py`) uses a hybrid streaming approach
+to minimize disk usage when exporting images. It also uses the Docker Engine
+inspect API to pre-compute manifest information, avoiding the need to wait
+for `manifest.json` (which arrives near the end of the tarball stream).
+
+#### Pre-Computed Manifest
+
+Before streaming begins, `fetch()` calls the inspect API
+(`GET /images/{name}/json`) to extract:
+
+- **Config hash** from `Id` field (e.g., `sha256:abc123...`)
+- **DiffIDs** from `RootFS.Layers` (SHA256 hashes of uncompressed layers)
+
+For Docker 25+ OCI format (detected when tarball entries start with
+`blobs/`), DiffIDs directly correspond to blob paths
+(`blobs/sha256/<diffid>`), so the full manifest can be pre-computed before
+any data arrives. This eliminates buffering entirely.
+
+For Docker 1.10-24.x content-addressable format, the config file can be
+identified early (`<config-hex>.json`) and yielded immediately, but layer
+directory names (v1-compat IDs) cannot be predicted from inspect data.
+Layers are still buffered until `manifest.json` arrives for ordering.
+
+When inspect data is unavailable or the pre-computed manifest differs from
+the actual `manifest.json`, occystrap falls back to buffered processing.
+
+See [docs/docker-tarball-formats.md](docs/docker-tarball-formats.md) for
+detailed documentation on tarball formats, entry ordering, and the inspect
+API.
+
+#### Streaming Pipeline
+
+```
+fetch() generator
+    └── Call inspect API to get config hash and DiffIDs
+    └── Stream tarball sequentially (mode='r|')
+    └── Detect format from first entry (blobs/ prefix = OCI)
+    └── If OCI: pre-compute manifest from DiffIDs
+    └── If legacy: identify config early from inspect hash
+    └── For each file in stream:
+        ├── If next expected layer: yield directly (no disk I/O)
+        └── If out-of-order: buffer to temp file for later
+    └── After stream ends: yield remaining buffered layers in order
+```
+
+Key design considerations:
+- Uses tarfile streaming mode (`r|`) - files read sequentially as they appear
+- Pre-computed manifest enables zero-buffering for Docker 25+ OCI format
+- Early config identification reduces blocking for Docker 1.10-24.x format
+- Optimistic case: layers in order are streamed directly with no temp files
+- Pessimistic case: out-of-order layers buffered to individual temp files
+- Temp files are cleaned up immediately after yielding each layer
+- Temp file location is configurable via `--temp-dir` CLI option
+- Graceful fallback when inspect data is unavailable or incorrect
+
+### Parallel Downloads
+
+The registry input (`inputs/registry.py`) uses `ThreadPoolExecutor` for parallel
+layer downloads:
+
+```
+fetch() generator
+    └── Yield config file first (synchronous)
+    └── Submit all layer downloads to ThreadPoolExecutor
+    └── Yield layers in order as downloads complete
+
+_download_layer() worker
+    └── Fetch layer blob from registry
+    └── Decompress to temp file with hash verification
+    └── Retry on connection failures (exponential backoff)
+```
+
+Key design considerations:
+- All layers are downloaded in parallel to maximize throughput
+- Layers are yielded to the pipeline in order despite parallel download
+- Authentication token updates are protected by a threading lock
+- The `max_workers` parameter controls parallelism (default: 4)
+- Temp files are cleaned up after each layer is processed
+- Temp file location is configurable via `--temp-dir` CLI option
+
+### Parallel Compression and Uploads
+
+The registry output (`outputs/registry.py`) uses `ThreadPoolExecutor` for both
+layer compression and uploads in parallel:
 
 ```
 process_image_element() called for each layer
-    └── Compress layer (synchronous - CPU bound)
-    └── Submit upload task to ThreadPoolExecutor (non-blocking)
-    └── Store Future in list, record layer metadata immediately
+    └── Read layer data
+    └── Submit (compress + upload) task to ThreadPoolExecutor (non-blocking)
+    └── Main thread continues to next layer immediately
 
 finalize()
-    └── Wait for all upload futures to complete
-    └── Check for any upload failures
+    └── Wait for all compression/upload futures to complete
+    └── Collect layer metadata from futures (in submission order)
+    └── Check for any failures
     └── Push manifest only after all blobs uploaded
 ```
 
 Key design considerations:
-- Compression happens synchronously before submitting the upload, as it's
-  CPU-bound and benefits from predictable memory usage
-- Layer metadata is recorded immediately upon processing to preserve ordering
-  in the final manifest
+- Both compression and upload run in the thread pool, allowing multiple layers
+  to compress simultaneously on multi-core systems
+- Layer order is preserved by collecting futures in submission order at finalize
+- Progress is reported every 10 seconds during the wait phase
 - Authentication token updates are protected by a threading lock for
   thread-safety
 - The `max_workers` parameter controls parallelism (default: 4)
@@ -231,6 +324,13 @@ formats:
 - **Streaming decompression**: Used by registry input for downloading layers
 - **Streaming compression**: Used by registry output for uploading layers
 - **Configurable output**: `--compression` CLI option (gzip default, zstd optional)
+- **Deterministic output**: gzip uses `mtime=0` to suppress header timestamps;
+  zstd is inherently deterministic (no timestamps in format)
+
+Deterministic compression is important for blob deduplication: the registry
+output checks if a blob already exists before uploading (`HEAD` on the blob
+digest), and this only works when identical input always produces the same
+compressed output with the same SHA256 digest.
 
 Media type constants in `constants.py` define Docker and OCI layer types:
 - `MEDIA_TYPE_DOCKER_LAYER_GZIP` / `MEDIA_TYPE_DOCKER_LAYER_ZSTD`

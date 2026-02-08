@@ -44,20 +44,27 @@ class DockerWriter(ImageOutput):
     (SHA256 hashes and small filenames), avoiding PAX extended headers.
     """
 
-    def __init__(self, image, tag, socket_path=DEFAULT_SOCKET_PATH):
+    def __init__(self, image, tag, socket_path=DEFAULT_SOCKET_PATH,
+                 temp_dir=None):
         """Initialize the Docker writer.
 
         Args:
             image: The image name.
             tag: The image tag.
-            socket_path: Path to the Docker socket (default: /var/run/docker.sock).
+            socket_path: Path to the Docker socket
+                (default: /var/run/docker.sock).
+            temp_dir: Directory for temporary files (default:
+                system temp directory).
         """
+        super().__init__(temp_dir=temp_dir)
+
         self.image = image
         self.tag = tag
         self.socket_path = socket_path
         self._session = None
 
-        self._temp_file = tempfile.NamedTemporaryFile(delete=False)
+        self._temp_file = tempfile.NamedTemporaryFile(
+            delete=False, dir=self.temp_dir)
         self._image_tar = tarfile.open(fileobj=self._temp_file, mode='w',
                                        format=tarfile.USTAR_FORMAT)
 
@@ -89,6 +96,7 @@ class DockerWriter(ImageOutput):
             data.seek(0)
             self._image_tar.addfile(ti, data)
             self._tar_manifest[0]['Config'] = name
+            self._track_element(element_type, ti.size)
 
         elif element_type == constants.IMAGE_LAYER:
             LOG.info('Adding layer to tarball')
@@ -100,6 +108,7 @@ class DockerWriter(ImageOutput):
             data.seek(0)
             self._image_tar.addfile(ti, data)
             self._tar_manifest[0]['Layers'].append(name)
+            self._track_element(element_type, ti.size)
 
     def finalize(self):
         """Write manifest and load the image into Docker."""
@@ -131,6 +140,7 @@ class DockerWriter(ImageOutput):
 
             LOG.info('Image loaded successfully: %s:%s'
                      % (self.image, self.tag))
+            self._log_summary()
 
         finally:
             if os.path.exists(temp_path):

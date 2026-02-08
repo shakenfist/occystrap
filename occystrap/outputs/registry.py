@@ -14,13 +14,14 @@
 # 2. Upload config blob (same as layer)
 # 3. Push manifest: PUT /v2/<name>/manifests/<tag>
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import json
 import logging
 import re
 import threading
+import time
 
 import requests
 
@@ -58,6 +59,8 @@ class RegistryWriter(ImageOutput):
                 Defaults to 'gzip' for maximum compatibility.
             max_workers: Number of parallel upload threads (default: 4).
         """
+        super().__init__()
+
         self.registry = registry
         self.image = image
         self.tag = tag
@@ -72,11 +75,11 @@ class RegistryWriter(ImageOutput):
         self._auth_lock = threading.Lock()
 
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._upload_futures = []
+        self._config_future = None
+        self._layer_futures = []  # List of futures that return layer metadata
 
         self._config_digest = None
         self._config_size = None
-        self._layers = []
 
     def _request(self, method, url, headers=None, data=None, stream=False):
         """Make an authenticated request to the registry.
@@ -169,6 +172,41 @@ class RegistryWriter(ImageOutput):
 
         LOG.info('Blob uploaded successfully')
 
+    def _compress_and_upload_layer(self, layer_data):
+        """Compress a layer and upload it to the registry.
+
+        This method runs in the thread pool to parallelize compression.
+
+        Args:
+            layer_data: Uncompressed layer tarball data (bytes).
+
+        Returns:
+            Dict with layer metadata (mediaType, size, digest).
+        """
+        # Compress layer
+        compressed_data = compression.compress_data(
+            layer_data, self.compression_type)
+
+        # Calculate digest
+        h = hashlib.sha256()
+        h.update(compressed_data)
+        layer_digest = f'sha256:{h.hexdigest()}'
+        layer_size = len(compressed_data)
+
+        # Get media type for compression format
+        layer_media_type = compression.get_media_type_for_compression(
+            self.compression_type)
+
+        # Upload
+        self._upload_blob(layer_digest, io.BytesIO(compressed_data), layer_size)
+
+        # Return metadata for manifest
+        return {
+            'mediaType': layer_media_type,
+            'size': layer_size,
+            'digest': layer_digest
+        }
+
     def fetch_callback(self, digest):
         """Always fetch all layers for pushing."""
         return True
@@ -176,10 +214,15 @@ class RegistryWriter(ImageOutput):
     def process_image_element(self, element_type, name, data):
         """Process an image element, uploading it to the registry.
 
-        Uploads are submitted to a thread pool for parallel execution.
-        Layer metadata is recorded immediately to preserve order in the
-        manifest.
+        Both compression and uploads are submitted to a thread pool for
+        parallel execution. This allows multiple layers to compress and
+        upload simultaneously.
         """
+        # Track start time (can't use _track_element because we track
+        # compressed sizes which are only known after compression)
+        if self._start_time is None:
+            self._start_time = time.time()
+
         if element_type == constants.CONFIG_FILE and data is not None:
             LOG.info('Processing config file')
 
@@ -191,11 +234,10 @@ class RegistryWriter(ImageOutput):
             self._config_digest = f'sha256:{h.hexdigest()}'
             self._config_size = len(config_data)
 
-            # Submit upload to thread pool
-            future = self._executor.submit(
+            # Submit config upload to thread pool
+            self._config_future = self._executor.submit(
                 self._upload_blob, self._config_digest,
                 io.BytesIO(config_data), self._config_size)
-            self._upload_futures.append(future)
 
         elif element_type == constants.IMAGE_LAYER and data is not None:
             LOG.info(f'Processing layer {name}')
@@ -203,47 +245,56 @@ class RegistryWriter(ImageOutput):
             data.seek(0)
             layer_data = data.read()
 
-            # Compress layer with configured compression type (synchronous)
-            compressed_data = compression.compress_data(
-                layer_data, self.compression_type)
-
-            h = hashlib.sha256()
-            h.update(compressed_data)
-            layer_digest = f'sha256:{h.hexdigest()}'
-            layer_size = len(compressed_data)
-
-            # Use appropriate media type for compression format
-            layer_media_type = compression.get_media_type_for_compression(
-                self.compression_type)
-
-            # Record layer metadata immediately to preserve order
-            self._layers.append({
-                'mediaType': layer_media_type,
-                'size': layer_size,
-                'digest': layer_digest
-            })
-
-            # Submit upload to thread pool
+            # Submit compression + upload to thread pool
+            # This allows multiple layers to compress in parallel
             future = self._executor.submit(
-                self._upload_blob, layer_digest,
-                io.BytesIO(compressed_data), layer_size)
-            self._upload_futures.append(future)
+                self._compress_and_upload_layer, layer_data)
+            self._layer_futures.append(future)
 
     def finalize(self):
         """Push the image manifest to the registry.
 
-        Waits for all parallel uploads to complete before pushing the
-        manifest. If any upload fails, an exception is raised.
+        Waits for all parallel compression/uploads to complete before
+        pushing the manifest. Layer metadata is collected from futures
+        in order to build the manifest.
         """
-        # Wait for all uploads to complete
-        LOG.info(f'Waiting for {len(self._upload_futures)} uploads to '
-                 'complete...')
+        total_layers = len(self._layer_futures)
+        LOG.info(f'Waiting for {total_layers} layer compression/uploads '
+                 'to complete...')
+
         errors = []
-        for future in as_completed(self._upload_futures):
+
+        # Wait for config upload first
+        if self._config_future:
             try:
-                future.result()
+                self._config_future.result()
+                LOG.info('Config uploaded')
             except Exception as e:
-                errors.append(str(e))
+                errors.append(f'Config upload: {e}')
+
+        # Collect layer metadata from futures, preserving order
+        # Report progress on a wall clock cadence (every 10 seconds)
+        layers = []
+        completed = 0
+        last_report_time = time.time()
+        progress_interval = 10  # seconds
+
+        for i, future in enumerate(self._layer_futures):
+            try:
+                layer_metadata = future.result()
+                layers.append(layer_metadata)
+                completed += 1
+
+                # Report progress every 10 seconds
+                now = time.time()
+                if now - last_report_time >= progress_interval:
+                    remaining = total_layers - completed
+                    LOG.info(f'Progress: {completed}/{total_layers} layers '
+                             f'complete, {remaining} remaining')
+                    last_report_time = now
+
+            except Exception as e:
+                errors.append(f'Layer {i}: {e}')
 
         self._executor.shutdown(wait=True)
 
@@ -253,7 +304,11 @@ class RegistryWriter(ImageOutput):
         if not self._config_digest:
             raise Exception('No config file was processed')
 
-        LOG.info(f'Pushing manifest for {self.image}:{self.tag}')
+        # Store for introspection (e.g. tests)
+        self._layers = layers
+
+        LOG.info(f'All {total_layers} layers uploaded, pushing manifest '
+                 f'for {self.image}:{self.tag}')
 
         manifest = {
             'schemaVersion': 2,
@@ -283,3 +338,10 @@ class RegistryWriter(ImageOutput):
 
         LOG.info(f'Image pushed successfully: {self.registry}/{self.image}'
                  f':{self.tag}')
+
+        # Summary line
+        elapsed = time.time() - self._start_time
+        total_bytes = self._config_size + sum(
+            layer['size'] for layer in self._layers)
+        LOG.info(f'Processed {total_bytes} bytes in {len(self._layers)} layers '
+                 f'in {elapsed:.1f} seconds')

@@ -18,6 +18,14 @@ from occystrap import uri
 
 LOG = logs.setup_console(__name__)
 
+# setup_console adds a handler to the occystrap.main logger but
+# not to the root logger. Other module loggers (inputs, outputs,
+# filters) propagate to root, so add a root handler for their
+# INFO messages to be visible. Stop the main logger propagating
+# to avoid duplicate output.
+logging.basicConfig(level=logging.INFO)
+logging.getLogger(__name__).propagate = False
+
 
 @click.group()
 @click.option('--verbose', is_flag=True)
@@ -33,15 +41,19 @@ LOG = logs.setup_console(__name__)
 @click.option('--compression', default=None, envvar='OCCYSTRAP_COMPRESSION',
               type=click.Choice(['gzip', 'zstd']),
               help='Compression for registry output (default: gzip)')
-@click.option('--parallel-uploads', '-j', default=4, type=int,
-              envvar='OCCYSTRAP_PARALLEL_UPLOADS',
-              help='Number of parallel upload threads (default: 4)')
+@click.option('--parallel', '-j', default=4, type=int,
+              envvar='OCCYSTRAP_PARALLEL',
+              help='Number of parallel download/upload threads (default: 4)')
+@click.option('--temp-dir', default=None, envvar='OCCYSTRAP_TEMP_DIR',
+              help='Directory for temporary files (default: system temp)')
 @click.pass_context
 def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
         username=None, password=None, insecure=None, compression=None,
-        parallel_uploads=None):
+        parallel=None, temp_dir=None):
     if verbose:
-        logging.basicConfig(level=logging.DEBUG)
+        logging.root.setLevel(logging.DEBUG)
+        for handler in logging.root.handlers:
+            handler.setLevel(logging.DEBUG)
         LOG.setLevel(logging.DEBUG)
 
     if not ctx.obj:
@@ -53,7 +65,8 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
     ctx.obj['PASSWORD'] = password
     ctx.obj['INSECURE'] = insecure
     ctx.obj['COMPRESSION'] = compression
-    ctx.obj['MAX_WORKERS'] = parallel_uploads
+    ctx.obj['MAX_WORKERS'] = parallel
+    ctx.obj['TEMP_DIR'] = temp_dir
 
 
 def _fetch(img, output):
