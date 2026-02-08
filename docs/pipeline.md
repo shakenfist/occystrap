@@ -72,12 +72,33 @@ Fetches images from local Docker or Podman daemons.
 docker://IMAGE:TAG
 ```
 
-Uses the Docker Engine API over Unix socket. The entire image is streamed
-(equivalent to `docker save`), then parsed on the fly.
+Uses the Docker Engine API over Unix socket to stream the image tarball
+(equivalent to `docker save`).
 
 **Note:** The Docker Engine API only provides complete image export - there's
 no way to fetch individual layers separately. This is a limitation of the API
 design.
+
+**Hybrid Streaming:**
+
+To minimize disk usage for large images, the Docker input uses a hybrid
+streaming approach:
+
+```
+fetch() generator
+    └── Stream tarball sequentially (mode='r|')
+    └── Read manifest.json to get expected layer order
+    └── For each file in stream:
+        ├── If next expected layer: yield directly (zero disk I/O)
+        └── If out-of-order: buffer to temp file for later
+    └── After stream: yield remaining buffered layers in order
+```
+
+Key aspects:
+- In the optimistic case (layers in order), no temp files are used
+- Out-of-order layers are buffered to individual temp files
+- Temp files are deleted immediately after yielding
+- For a 26GB image with in-order layers, disk usage is near zero
 
 ### Tarball Input
 

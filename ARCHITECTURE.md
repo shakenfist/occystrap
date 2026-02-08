@@ -80,7 +80,8 @@ All input sources inherit from the `ImageInput` abstract base class defined in
 - `fetch(fetch_callback)` - Yields image elements (config files and layers)
 
 Input source implementations:
-- `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket
+- `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket,
+  using hybrid streaming to minimize disk usage
 - `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API,
   with parallel layer downloads using ThreadPoolExecutor
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
@@ -204,6 +205,31 @@ layers belong to which images.
 
 The `normalize-timestamps` filter rewrites layer tar mtimes for reproducible
 builds, recalculating layer SHAs.
+
+### Docker Daemon Hybrid Streaming
+
+The Docker daemon input (`inputs/docker.py`) uses a hybrid streaming approach
+to minimize disk usage when exporting images:
+
+```
+fetch() generator
+    └── Stream tarball sequentially (mode='r|')
+    └── Read manifest.json to get expected layer order
+    └── For each file in stream:
+        ├── If next expected layer: yield directly (no disk I/O)
+        └── If out-of-order: buffer to temp file for later
+    └── After stream ends: yield remaining buffered layers in order
+```
+
+Key design considerations:
+- Uses tarfile streaming mode (`r|`) - files read sequentially as they appear
+- Optimistic case: layers in order are streamed directly with no temp files
+- Pessimistic case: out-of-order layers buffered to individual temp files
+- For large images with in-order layers, disk usage is near zero
+- Temp files are cleaned up immediately after yielding each layer
+
+This approach significantly reduces disk usage compared to the original method
+which buffered the entire tarball to a single temp file before processing.
 
 ### Parallel Downloads
 

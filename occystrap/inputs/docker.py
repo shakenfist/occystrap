@@ -12,8 +12,7 @@
 # See: https://docs.podman.io/en/latest/markdown/podman-system-service.1.html
 #
 # The API returns images in the same format as 'docker save', which is the
-# same format that inputs/tarfile.py reads. We stream the tarball and parse
-# it on the fly.
+# same format that inputs/tarfile.py reads.
 #
 # API Limitation: Unlike the registry API (inputs/registry.py) which can fetch
 # individual layer blobs via GET /v2/<name>/blobs/<digest>, the Docker Engine
@@ -22,14 +21,23 @@
 # separately. This is a fundamental limitation of the Docker Engine API.
 # See: https://github.com/moby/moby/issues/24851
 #
-# The tarball streaming approach used here is the official supported method
-# and matches what 'docker save' does internally.
+# Hybrid Streaming:
+# We use a hybrid approach to minimize disk usage:
+# - Stream the tarball sequentially (mode='r|')
+# - When layers arrive in expected order, yield them directly (no disk I/O)
+# - When layers arrive out of order, buffer them to temp files for later
+# - In the best case (layers in order), no temp files are used
+# - In the worst case (all layers out of order), we buffer like before
+#
+# This is an improvement over the original approach which always buffered the
+# entire tarball to a temp file before processing.
 
 import io
 import json
 import logging
 import os
 import tarfile
+import tempfile
 
 import requests_unixsocket
 
@@ -95,11 +103,28 @@ class Image(ImageInput):
         r = self._request('GET', '/images/%s/json' % ref)
         return r.json()
 
+    def _buffer_to_tempfile(self, fileobj, name):
+        """Buffer file content to a temporary file and return the path."""
+        tf = tempfile.NamedTemporaryFile(delete=False)
+        tf.write(fileobj.read())
+        tf.close()
+        LOG.debug('Buffered %s to %s' % (name, tf.name))
+        return tf.name
+
+    def _read_and_delete_buffered(self, buffered, filename):
+        """Read content from a buffered file and delete it."""
+        with open(buffered[filename], 'rb') as f:
+            data = f.read()
+        os.unlink(buffered[filename])
+        del buffered[filename]
+        return data
+
     def fetch(self, fetch_callback=always_fetch):
         """Fetch image layers from the local Docker daemon.
 
-        This uses the Docker Engine API to export the image as a tarball
-        (equivalent to 'docker save') and streams/parses it on the fly.
+        Uses hybrid streaming: streams layers directly when they arrive in
+        expected order, buffers out-of-order layers to temp files. This
+        minimizes disk usage when layers arrive in order (common case).
         """
         ref = self._get_image_reference()
         LOG.info('Fetching image %s from Docker daemon at %s'
@@ -112,60 +137,153 @@ class Image(ImageInput):
             LOG.error('Failed to inspect image: %s' % str(e))
             raise
 
-        # Stream the image tarball from Docker
+        # Stream the image tarball from Docker using sequential mode
         LOG.info('Streaming image tarball from Docker daemon')
         r = self._request('GET', '/images/%s/get' % ref, stream=True)
 
-        # We need to buffer the stream into a file-like object for tarfile
-        # because tarfile needs to seek. We use a temporary file approach
-        # similar to the registry input.
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False) as tf:
-            LOG.info('Buffering image to temporary file %s' % tf.name)
-            for chunk in r.iter_content(8192):
-                tf.write(chunk)
-            temp_path = tf.name
+        # State tracking
+        manifest = None
+        config_filename = None
+        expected_layers = None
+        next_layer_idx = 0
+        config_yielded = False
+
+        # Buffered files: filename -> temp file path
+        # Used for files that arrive before we can process them
+        buffered = {}
+
+        # Helper to yield buffered layers that are now ready
+        def flush_ready_layers():
+            nonlocal next_layer_idx
+            while (next_layer_idx < len(expected_layers) and
+                   expected_layers[next_layer_idx] in buffered):
+                layer_path = expected_layers[next_layer_idx]
+                layer_digest = os.path.dirname(layer_path)
+
+                if not fetch_callback(layer_digest):
+                    LOG.info('Fetch callback says skip layer %s'
+                             % layer_digest)
+                    yield (constants.IMAGE_LAYER, layer_digest, None)
+                else:
+                    LOG.info('Yielding buffered layer %s' % layer_path)
+                    layer_data = self._read_and_delete_buffered(
+                        buffered, layer_path)
+                    yield (constants.IMAGE_LAYER, layer_digest,
+                           io.BytesIO(layer_data))
+                next_layer_idx += 1
 
         try:
-            # Parse the tarball (same format as 'docker save')
-            with tarfile.open(temp_path, 'r') as tar:
-                # Read manifest.json
-                manifest_member = tar.getmember('manifest.json')
-                manifest_file = tar.extractfile(manifest_member)
-                manifest = json.loads(manifest_file.read().decode('utf-8'))
+            # Use streaming mode - files are read sequentially as they appear
+            tar = tarfile.open(fileobj=r.raw, mode='r|')
 
-                # Yield config file
-                config_filename = manifest[0]['Config']
-                LOG.info('Reading config file %s' % config_filename)
-                config_member = tar.getmember(config_filename)
-                config_file = tar.extractfile(config_member)
-                config_data = config_file.read()
-                yield (constants.CONFIG_FILE, config_filename,
-                       io.BytesIO(config_data))
+            for member in tar:
+                f = tar.extractfile(member)
+                if f is None:
+                    continue  # Skip directories
 
-                # Yield each layer
-                layers = manifest[0]['Layers']
-                LOG.info('There are %d image layers' % len(layers))
+                # Handle manifest.json
+                if member.name == 'manifest.json':
+                    manifest = json.loads(f.read().decode('utf-8'))
+                    config_filename = manifest[0]['Config']
+                    expected_layers = manifest[0]['Layers']
+                    LOG.info('Found manifest: config=%s, %d layers'
+                             % (config_filename, len(expected_layers)))
 
-                for layer_path in layers:
-                    # Layer path is like "abc123/layer.tar"
+                    # Check if config was already buffered
+                    if config_filename in buffered:
+                        config_data = self._read_and_delete_buffered(
+                            buffered, config_filename)
+                        yield (constants.CONFIG_FILE, config_filename,
+                               io.BytesIO(config_data))
+                        config_yielded = True
+
+                        # Yield any buffered layers that are now ready
+                        for elem in flush_ready_layers():
+                            yield elem
+                    continue
+
+                # Before manifest, buffer everything
+                if manifest is None:
+                    buffered[member.name] = self._buffer_to_tempfile(
+                        f, member.name)
+                    continue
+
+                # Handle config file
+                if member.name == config_filename and not config_yielded:
+                    config_data = f.read()
+                    yield (constants.CONFIG_FILE, config_filename,
+                           io.BytesIO(config_data))
+                    config_yielded = True
+
+                    # Yield any buffered layers
+                    for elem in flush_ready_layers():
+                        yield elem
+                    continue
+
+                # Check if this is the next expected layer (optimistic case)
+                if (config_yielded and
+                        next_layer_idx < len(expected_layers) and
+                        member.name == expected_layers[next_layer_idx]):
+                    layer_path = member.name
                     layer_digest = os.path.dirname(layer_path)
+
                     if not fetch_callback(layer_digest):
                         LOG.info('Fetch callback says skip layer %s'
                                  % layer_digest)
                         yield (constants.IMAGE_LAYER, layer_digest, None)
-                        continue
+                    else:
+                        LOG.info('Streaming layer %s directly' % layer_path)
+                        layer_data = f.read()
+                        yield (constants.IMAGE_LAYER, layer_digest,
+                               io.BytesIO(layer_data))
+                    next_layer_idx += 1
 
-                    LOG.info('Reading layer %s' % layer_path)
-                    layer_member = tar.getmember(layer_path)
-                    layer_file = tar.extractfile(layer_member)
-                    layer_data = layer_file.read()
+                    # Yield any buffered layers that are now next
+                    for elem in flush_ready_layers():
+                        yield elem
+                    continue
+
+                # Out-of-order layer or unknown file - buffer it
+                if member.isfile():
+                    buffered[member.name] = self._buffer_to_tempfile(
+                        f, member.name)
+
+            tar.close()
+
+            # After tarball is fully read, yield any remaining buffered items
+            if not config_yielded and config_filename and \
+                    config_filename in buffered:
+                config_data = self._read_and_delete_buffered(
+                    buffered, config_filename)
+                yield (constants.CONFIG_FILE, config_filename,
+                       io.BytesIO(config_data))
+                config_yielded = True
+
+            # Yield remaining buffered layers in order
+            while next_layer_idx < len(expected_layers):
+                layer_path = expected_layers[next_layer_idx]
+                layer_digest = os.path.dirname(layer_path)
+
+                if layer_path not in buffered:
+                    raise Exception('Layer %s not found in tarball'
+                                    % layer_path)
+
+                if not fetch_callback(layer_digest):
+                    LOG.info('Fetch callback says skip layer %s'
+                             % layer_digest)
+                    yield (constants.IMAGE_LAYER, layer_digest, None)
+                else:
+                    LOG.info('Yielding buffered layer %s' % layer_path)
+                    layer_data = self._read_and_delete_buffered(
+                        buffered, layer_path)
                     yield (constants.IMAGE_LAYER, layer_digest,
                            io.BytesIO(layer_data))
+                next_layer_idx += 1
 
         finally:
-            # Clean up temp file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+            # Clean up any remaining buffered files
+            for path in buffered.values():
+                if os.path.exists(path):
+                    os.unlink(path)
 
         LOG.info('Done')
