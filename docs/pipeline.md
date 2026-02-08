@@ -284,6 +284,29 @@ Key design aspects:
 - Default parallelism is 4 threads, configurable via `--parallel` or `-j`,
   or the `max_workers` URI option
 
+**Cross-Invocation Layer Cache:**
+
+When pushing multiple images that share base layers (common in CI), the
+`--layer-cache` option enables persistent caching of layer processing results:
+
+```
+fetch_callback(digest)
+    └── Check cache for (digest, filters_hash)
+    └── If found: HEAD request to verify registry still has blob
+    └── If registry has blob: skip layer (no fetch/filter/compress/upload)
+    └── If not: process normally and record result to cache
+```
+
+Cache entries are keyed by `(input_diffid, filters_hash)` so that the same
+layer processed with different filter configurations gets separate entries.
+The cache is stored as a JSON file with one entry per layer, recording
+the compressed digest, size, media type, and filter hash. The cache is
+saved atomically to disk (via temporary file and rename) after each
+successful push. Cache hits are reported in the summary line.
+
+See [Command Reference](command-reference.md#layer-cache) for the full
+cache file format and usage examples.
+
 **Blob Deduplication:**
 
 Before uploading a layer blob, the registry output checks whether the blob

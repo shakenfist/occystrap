@@ -15,6 +15,7 @@ occystrap/
     util.py              # Additional utilities
     uri.py               # URI parsing for pipeline specification
     pipeline.py          # Pipeline builder from URIs
+    layer_cache.py       # Cross-invocation layer cache for registry push
     docker_extract.py    # Layer extraction utilities
     inputs/              # Input source modules
         __init__.py
@@ -43,6 +44,7 @@ occystrap/
         test_compression.py
         test_inspect.py
         test_registry_output.py
+        test_layer_cache.py
         test_tarformat.py
 
 deploy/
@@ -325,6 +327,45 @@ Key design considerations:
 - Granular timing is collected per-layer (compress time, upload time, input
   size) using a thread-safe lock, and reported in the summary line
 - Upload skip count tracks how many blobs already existed in the registry
+- Cross-invocation layer cache (`--layer-cache`) skips layers that were
+  previously processed with the same filter configuration and whose
+  compressed blobs still exist in the target registry
+
+### Cross-Invocation Layer Cache
+
+The `layer_cache.py` module provides a persistent cache that maps input layer
+DiffIDs to their compressed output digests. When pushing multiple images that
+share base layers (common in CI), the cache allows subsequent invocations to
+skip layers entirely -- no fetch, no filter, no compress, no upload.
+
+```
+fetch_callback(digest)
+    └── Check cache for (digest, filters_hash)
+    └── If found: HEAD request to verify registry still has blob
+    └── If registry has blob: skip layer entirely
+    └── If not: process normally
+
+_compress_and_upload_layer()
+    └── After successful compress + upload: record to cache
+
+finalize()
+    └── Save cache to disk (atomic write via temp file + rename)
+```
+
+Key design considerations:
+- Cache keyed by `(input_diffid, filters_hash)` so different pipeline
+  configurations get separate entries
+- Original DiffIDs are tracked via a FIFO queue in `fetch_callback` and
+  consumed in `process_image_element`, because content-modifying filters
+  (ExcludeFilter, TimestampNormalizer) recalculate the layer hash —
+  the cache must record under the original DiffID, not the transformed one
+- `filters_hash` is computed from the serialized filter chain **and**
+  compression type, so gzip vs zstd pipelines do not share entries
+- Registry blob existence is verified on each run (`HEAD` request) to handle
+  registry garbage collection
+- Cache file is JSON, stored at the path specified by `--layer-cache`
+- Atomic save via temporary file and `os.replace` prevents corruption
+- Cache statistics (hits) are included in the summary line
 
 ### Layer Compression
 

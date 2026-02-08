@@ -396,6 +396,36 @@ occystrap process docker://myimage:v1 "registry://myregistry/myimage:v1?compress
 When pulling images, occystrap automatically detects and handles both gzip and
 zstd compressed layers from registries or OCI tarballs.
 
+## Cross-Invocation Layer Cache
+
+When pushing multiple images that share base layers (common in CI), occystrap
+can cache layer processing results across invocations. This avoids re-fetching,
+re-filtering, re-compressing, and re-uploading layers that have already been
+processed:
+
+```
+# First push: processes all layers
+occystrap --layer-cache /tmp/layer-cache.json \
+    process docker://myimage1:v1 registry://myregistry/myimage1:v1
+
+# Second push: skips shared base layers
+occystrap --layer-cache /tmp/layer-cache.json \
+    process docker://myimage2:v1 registry://myregistry/myimage2:v1
+```
+
+You can also set the cache path via environment variable:
+
+```
+export OCCYSTRAP_LAYER_CACHE=/tmp/layer-cache.json
+occystrap process docker://myimage:v1 registry://myregistry/myimage:v1
+```
+
+The cache records the mapping from input layer DiffIDs to compressed output
+digests. On subsequent runs, if a cached layer's compressed blob still exists
+in the target registry, the layer is skipped entirely (no fetch, no filter,
+no compress, no upload). The cache is filter-aware: layers processed with
+different filter configurations get separate cache entries.
+
 ## Supporting non-default architectures
 
 Docker image repositories can store multiple versions of a single image, with
