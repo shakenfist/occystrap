@@ -159,8 +159,9 @@ class Image(ImageInput):
             raise
 
         # Stream the image tarball from Docker using sequential mode
-        LOG.info('Streaming image tarball from Docker daemon')
+        LOG.info('Requesting image tarball from Docker daemon...')
         r = self._request('GET', '/images/%s/get' % ref, stream=True)
+        LOG.info('Docker API responded, stream ready')
 
         # State tracking
         manifest = None
@@ -222,8 +223,11 @@ class Image(ImageInput):
 
         try:
             # Use streaming mode - files are read sequentially
-            LOG.info('Opening tarball stream (sequential mode)')
+            LOG.info(
+                'Opening tarball stream (this may take a while'
+                ' for large images)...')
             tar = tarfile.open(fileobj=r.raw, mode='r|')
+            LOG.info('Tarball stream opened, reading entries...')
 
             for member in tar:
                 f = tar.extractfile(member)
