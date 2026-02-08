@@ -241,9 +241,14 @@ class DockerInputTestCase(unittest.TestCase):
 
         Args:
             config_data: Dict for config content.
-            layers: List of (diff_id, layer_content).
+            layers: List of layer_content dicts, one per
+                unique DiffID.
             config_hex: Config SHA256 hex.
             diff_ids: List of layer DiffID hex strings.
+                May contain duplicates (e.g., empty
+                layers). Duplicate blobs are written
+                once but referenced multiple times in
+                the manifest.
 
         Returns:
             Path to the temporary tarball.
@@ -259,32 +264,41 @@ class DockerInputTestCase(unittest.TestCase):
             ti.size = len(config_json)
             tar.addfile(ti, io.BytesIO(config_json))
 
-            # Write layer blobs
+            # Write layer blobs (deduplicate paths)
             layer_paths = []
-            for diff_id, layer_content in \
-                    zip(diff_ids, layers):
-                layer_tf = io.BytesIO()
-                with tarfile.open(
-                        fileobj=layer_tf,
-                        mode='w') as layer_tar:
-                    for path, content in \
-                            layer_content.items():
-                        data = content.encode('utf-8') \
-                            if isinstance(
-                                content, str) \
-                            else content
-                        lti = tarfile.TarInfo(path)
-                        lti.size = len(data)
-                        layer_tar.addfile(
-                            lti, io.BytesIO(data))
-                layer_tf.seek(0)
-
+            written_blobs = set()
+            layer_idx = 0
+            for diff_id in diff_ids:
                 blob_path = 'blobs/sha256/%s' % diff_id
                 layer_paths.append(blob_path)
-                layer_data = layer_tf.read()
-                ti = tarfile.TarInfo(blob_path)
-                ti.size = len(layer_data)
-                tar.addfile(ti, io.BytesIO(layer_data))
+
+                if blob_path not in written_blobs:
+                    written_blobs.add(blob_path)
+                    layer_content = layers[layer_idx]
+                    layer_idx += 1
+
+                    layer_tf = io.BytesIO()
+                    with tarfile.open(
+                            fileobj=layer_tf,
+                            mode='w') as layer_tar:
+                        for path, content in \
+                                layer_content.items():
+                            data = \
+                                content.encode('utf-8') \
+                                if isinstance(
+                                    content, str) \
+                                else content
+                            lti = tarfile.TarInfo(path)
+                            lti.size = len(data)
+                            layer_tar.addfile(
+                                lti, io.BytesIO(data))
+                    layer_tf.seek(0)
+
+                    layer_data = layer_tf.read()
+                    ti = tarfile.TarInfo(blob_path)
+                    ti.size = len(layer_data)
+                    tar.addfile(
+                        ti, io.BytesIO(layer_data))
 
             # Write manifest.json (last)
             manifest = [{
@@ -587,6 +601,82 @@ class DockerInputTestCase(unittest.TestCase):
                 e for e in elements
                 if e[1] == 'diff444'][0]
             self.assertIsNotNone(layer2[2])
+
+        finally:
+            os.unlink(tarball_path)
+
+    @mock.patch(
+        'occystrap.inputs.docker'
+        '.requests_unixsocket.Session')
+    def test_fetch_oci_duplicate_layer_paths(
+            self, mock_session_class):
+        """Test OCI format handles duplicate layer paths.
+
+        When a manifest references the same blob path
+        multiple times (e.g., empty layers from ENV/CMD
+        directives), the blob only exists once in the
+        tarball but must be yielded for each reference.
+        """
+        config_hex = 'cfgdup999'
+        empty_id = 'emptyaaa'
+        diff_ids = ['diff555', empty_id, 'diff666',
+                    empty_id]
+
+        tarball_path = self._create_oci_tarball(
+            config_data={
+                'architecture': 'amd64',
+                'os': 'linux'},
+            layers=[
+                {'file1.txt': 'content1'},
+                {},
+                {'file3.txt': 'content3'},
+            ],
+            config_hex=config_hex,
+            diff_ids=diff_ids)
+
+        try:
+            self._make_mock_session(
+                {
+                    'Id': 'sha256:%s' % config_hex,
+                    'RootFS': {
+                        'Type': 'layers',
+                        'Layers': [
+                            'sha256:%s' % d
+                            for d in diff_ids
+                        ]
+                    }
+                },
+                tarball_path,
+                mock_session_class)
+
+            img = input_docker.Image('myimage', 'v1.0')
+            elements = list(img.fetch())
+
+            # Should yield config + 4 layers
+            self.assertEqual(5, len(elements))
+
+            # Config is first
+            self.assertEqual(
+                constants.CONFIG_FILE, elements[0][0])
+
+            # All 4 layers yielded with data
+            layer_elements = [
+                e for e in elements
+                if e[0] == constants.IMAGE_LAYER]
+            self.assertEqual(4, len(layer_elements))
+
+            # Verify each layer has data
+            for elem in layer_elements:
+                self.assertIsNotNone(elem[2])
+
+            # Verify layer order matches DiffIDs
+            expected_digests = [
+                'diff555', empty_id,
+                'diff666', empty_id]
+            actual_digests = [
+                e[1] for e in layer_elements]
+            self.assertEqual(
+                expected_digests, actual_digests)
 
         finally:
             os.unlink(tarball_path)

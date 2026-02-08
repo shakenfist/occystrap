@@ -286,6 +286,18 @@ predict layer directory names (v1-compat IDs). The config is yielded
 immediately when seen, while layers are still buffered until manifest.json
 arrives for ordering.
 
+### Duplicate Layer Paths
+
+A manifest can reference the same blob path multiple times. This happens
+when multiple Dockerfile instructions (e.g., `ENV`, `CMD`, `EXPOSE`)
+produce empty layers that share the same DiffID
+(`5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef`,
+the SHA256 of 1024 null bytes -- a minimal empty tar archive).
+
+The blob exists only once in the tarball, but the manifest lists it at
+multiple positions. Occystrap tracks reference counts for each blob path
+and keeps the temp file alive until the last reference is consumed.
+
 ### Fallback Behavior
 
 When inspect data is unavailable or incomplete (e.g., old API version,

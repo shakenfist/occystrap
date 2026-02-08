@@ -272,12 +272,45 @@ class Image(ImageInput):
         next_layer_idx = 0
         config_yielded = False
 
+        # Reference counts for layer paths. When the same
+        # blob path appears multiple times in the manifest
+        # (e.g., empty layers from ENV/CMD directives), we
+        # must keep the temp file alive until all references
+        # are consumed.
+        layer_refcounts = {}
+
         # Stats for summary
         layers_streamed = 0
         layers_buffered = 0
 
         # Buffered files: filename -> temp file path
         buffered = {}
+
+        def _compute_refcounts():
+            """Compute reference counts for layer paths.
+
+            Some manifests reference the same blob path
+            multiple times (e.g., empty layers from
+            ENV/CMD). We track how many references
+            remain so temp files are kept alive until
+            the last reference is consumed.
+            """
+            nonlocal layer_refcounts
+            layer_refcounts = {}
+            if expected_layers:
+                for path in expected_layers:
+                    layer_refcounts[path] = \
+                        layer_refcounts.get(path, 0) + 1
+                dupes = {
+                    k: v for k, v
+                    in layer_refcounts.items()
+                    if v > 1
+                }
+                if dupes:
+                    LOG.info(
+                        '%d layer path(s) referenced'
+                        ' multiple times in manifest'
+                        % len(dupes))
 
         def _detect_format(name):
             """Detect tarball format from entry name.
@@ -307,6 +340,7 @@ class Image(ImageInput):
                     'Config': config_filename,
                     'Layers': expected_layers
                 }]
+                _compute_refcounts()
                 LOG.info(
                     'OCI format detected, pre-computed'
                     ' manifest: config=%s, %d layers'
@@ -329,12 +363,26 @@ class Image(ImageInput):
                     len(expected_layers))
             return ''
 
+        def _consume_ref(layer_path):
+            """Decrement refcount for a layer path.
+
+            Returns True if this was the last reference
+            and the temp file should be cleaned up.
+            """
+            remaining = layer_refcounts.get(
+                layer_path, 1) - 1
+            layer_refcounts[layer_path] = remaining
+            return remaining <= 0
+
         def _yield_layer(layer_path, from_buffer=False):
             """Yield a layer from a buffered temp file."""
             layer_digest = self._digest_from_path(
                 layer_path)
-            fh, path = self._open_buffered(
-                buffered, layer_path)
+            last_ref = _consume_ref(layer_path)
+            path = buffered[layer_path]
+            if last_ref:
+                buffered.pop(layer_path)
+            fh = open(path, 'rb')
             size = os.path.getsize(path)
             source = 'buffer' if from_buffer else 'temp'
             LOG.info(
@@ -346,7 +394,12 @@ class Image(ImageInput):
                 yield (constants.IMAGE_LAYER,
                        layer_digest, fh)
             finally:
-                self._cleanup_file(fh, path)
+                fh.close()
+                if last_ref:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
 
         def flush_ready_layers():
             """Yield buffered layers that are next."""
@@ -362,6 +415,7 @@ class Image(ImageInput):
                     layer_path)
 
                 if not fetch_callback(layer_digest):
+                    _consume_ref(layer_path)
                     LOG.info(
                         '%s Skipping layer %s'
                         ' (fetch callback)'
@@ -418,6 +472,7 @@ class Image(ImageInput):
                             expected_layers = \
                                 real[0]['Layers']
                             manifest = real
+                            _compute_refcounts()
                         else:
                             LOG.info(
                                 'Pre-computed manifest'
@@ -431,6 +486,7 @@ class Image(ImageInput):
                     real_config = manifest[0]['Config']
                     expected_layers = \
                         manifest[0]['Layers']
+                    _compute_refcounts()
 
                     # Correct config filename if
                     # pre-computed was wrong
@@ -546,6 +602,7 @@ class Image(ImageInput):
 
                     if not fetch_callback(
                             layer_digest):
+                        _consume_ref(layer_path)
                         LOG.info(
                             '%s Skipping layer %s'
                             ' (fetch callback)'
@@ -560,6 +617,8 @@ class Image(ImageInput):
                         temp_path = \
                             self._buffer_to_tempfile(
                                 f, member.name)
+                        last_ref = _consume_ref(
+                            layer_path)
                         fh = open(temp_path, 'rb')
                         size = os.path.getsize(
                             temp_path)
@@ -573,8 +632,18 @@ class Image(ImageInput):
                                 constants.IMAGE_LAYER,
                                 layer_digest, fh)
                         finally:
-                            self._cleanup_file(
-                                fh, temp_path)
+                            fh.close()
+                            if last_ref:
+                                try:
+                                    os.unlink(
+                                        temp_path)
+                                except OSError:
+                                    pass
+                            else:
+                                # Keep for later refs
+                                buffered[
+                                    layer_path
+                                ] = temp_path
                         layers_streamed += 1
                     next_layer_idx += 1
 
@@ -636,6 +705,7 @@ class Image(ImageInput):
                         ' tarball' % layer_path)
 
                 if not fetch_callback(layer_digest):
+                    _consume_ref(layer_path)
                     LOG.info(
                         '%s Skipping layer %s'
                         ' (fetch callback)'
@@ -643,7 +713,6 @@ class Image(ImageInput):
                            layer_digest))
                     yield (constants.IMAGE_LAYER,
                            layer_digest, None)
-                    buffered.pop(layer_path)
                 else:
                     for elem in _yield_layer(
                             layer_path,
