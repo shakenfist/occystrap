@@ -304,6 +304,9 @@ class RegistryWriter(ImageOutput):
         if not self._config_digest:
             raise Exception('No config file was processed')
 
+        # Store for introspection (e.g. tests)
+        self._layers = layers
+
         LOG.info(f'All {total_layers} layers uploaded, pushing manifest '
                  f'for {self.image}:{self.tag}')
 
@@ -315,7 +318,7 @@ class RegistryWriter(ImageOutput):
                 'size': self._config_size,
                 'digest': self._config_digest
             },
-            'layers': layers
+            'layers': self._layers
         }
 
         manifest_json = json.dumps(manifest, separators=(',', ':'))
@@ -339,6 +342,6 @@ class RegistryWriter(ImageOutput):
         # Summary line
         elapsed = time.time() - self._start_time
         total_bytes = self._config_size + sum(
-            layer['size'] for layer in layers)
-        LOG.info(f'Processed {total_bytes} bytes in {len(layers)} layers '
+            layer['size'] for layer in self._layers)
+        LOG.info(f'Processed {total_bytes} bytes in {len(self._layers)} layers '
                  f'in {elapsed:.1f} seconds')
