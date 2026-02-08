@@ -108,9 +108,11 @@ class Image(ImageInput):
     def _buffer_to_tempfile(self, fileobj, name):
         """Buffer file content to a temporary file and return the path."""
         tf = tempfile.NamedTemporaryFile(delete=False, dir=self.temp_dir)
-        tf.write(fileobj.read())
+        data = fileobj.read()
+        tf.write(data)
         tf.close()
-        LOG.debug('Buffered %s to %s' % (name, tf.name))
+        LOG.info('Buffered %s to %s (%d bytes)'
+                 % (name, tf.name, len(data)))
         return tf.name
 
     def _read_and_delete_buffered(self, buffered, filename):
@@ -150,38 +152,51 @@ class Image(ImageInput):
         next_layer_idx = 0
         config_yielded = False
 
+        # Stats for summary
+        layers_streamed = 0
+        layers_buffered = 0
+
         # Buffered files: filename -> temp file path
         # Used for files that arrive before we can process them
         buffered = {}
 
+        def _layer_progress():
+            """Return a progress string like '[3/10]'."""
+            return '[%d/%d]' % (next_layer_idx + 1, len(expected_layers))
+
         # Helper to yield buffered layers that are now ready
         def flush_ready_layers():
-            nonlocal next_layer_idx
+            nonlocal next_layer_idx, layers_buffered
             while (next_layer_idx < len(expected_layers) and
                    expected_layers[next_layer_idx] in buffered):
                 layer_path = expected_layers[next_layer_idx]
                 layer_digest = os.path.dirname(layer_path)
 
                 if not fetch_callback(layer_digest):
-                    LOG.info('Fetch callback says skip layer %s'
-                             % layer_digest)
+                    LOG.info('%s Skipping layer %s (fetch callback)'
+                             % (_layer_progress(), layer_digest))
                     yield (constants.IMAGE_LAYER, layer_digest, None)
                 else:
-                    LOG.info('Yielding buffered layer %s' % layer_path)
+                    LOG.info(
+                        '%s Yielding previously buffered layer %s'
+                        % (_layer_progress(), layer_digest))
                     layer_data = self._read_and_delete_buffered(
                         buffered, layer_path)
                     yield (constants.IMAGE_LAYER, layer_digest,
                            io.BytesIO(layer_data))
+                    layers_buffered += 1
                 next_layer_idx += 1
 
         try:
             # Use streaming mode - files are read sequentially as they appear
+            LOG.info('Opening tarball stream (sequential mode)')
             tar = tarfile.open(fileobj=r.raw, mode='r|')
 
             for member in tar:
                 f = tar.extractfile(member)
                 if f is None:
-                    continue  # Skip directories
+                    LOG.info('Skipping directory entry: %s' % member.name)
+                    continue
 
                 # Handle manifest.json
                 if member.name == 'manifest.json':
@@ -190,9 +205,16 @@ class Image(ImageInput):
                     expected_layers = manifest[0]['Layers']
                     LOG.info('Found manifest: config=%s, %d layers'
                              % (config_filename, len(expected_layers)))
+                    if buffered:
+                        LOG.info(
+                            '%d file(s) were buffered before manifest'
+                            % len(buffered))
 
                     # Check if config was already buffered
                     if config_filename in buffered:
+                        LOG.info(
+                            'Config was buffered before manifest,'
+                            ' yielding from buffer')
                         config_data = self._read_and_delete_buffered(
                             buffered, config_filename)
                         yield (constants.CONFIG_FILE, config_filename,
@@ -206,6 +228,9 @@ class Image(ImageInput):
 
                 # Before manifest, buffer everything
                 if manifest is None:
+                    LOG.info(
+                        'Manifest not yet seen, buffering %s'
+                        % member.name)
                     buffered[member.name] = self._buffer_to_tempfile(
                         f, member.name)
                     continue
@@ -213,6 +238,8 @@ class Image(ImageInput):
                 # Handle config file
                 if member.name == config_filename and not config_yielded:
                     config_data = f.read()
+                    LOG.info('Found config file %s (%d bytes)'
+                             % (config_filename, len(config_data)))
                     yield (constants.CONFIG_FILE, config_filename,
                            io.BytesIO(config_data))
                     config_yielded = True
@@ -222,7 +249,7 @@ class Image(ImageInput):
                         yield elem
                     continue
 
-                # Check if this is the next expected layer (optimistic case)
+                # Check if this is the next expected layer (optimistic)
                 if (config_yielded and
                         next_layer_idx < len(expected_layers) and
                         member.name == expected_layers[next_layer_idx]):
@@ -230,14 +257,20 @@ class Image(ImageInput):
                     layer_digest = os.path.dirname(layer_path)
 
                     if not fetch_callback(layer_digest):
-                        LOG.info('Fetch callback says skip layer %s'
-                                 % layer_digest)
+                        LOG.info(
+                            '%s Skipping layer %s (fetch callback)'
+                            % (_layer_progress(), layer_digest))
                         yield (constants.IMAGE_LAYER, layer_digest, None)
                     else:
-                        LOG.info('Streaming layer %s directly' % layer_path)
                         layer_data = f.read()
+                        LOG.info(
+                            '%s Streaming layer %s directly'
+                            ' (%d bytes, no temp file)'
+                            % (_layer_progress(), layer_digest,
+                               len(layer_data)))
                         yield (constants.IMAGE_LAYER, layer_digest,
                                io.BytesIO(layer_data))
+                        layers_streamed += 1
                     next_layer_idx += 1
 
                     # Yield any buffered layers that are now next
@@ -247,14 +280,20 @@ class Image(ImageInput):
 
                 # Out-of-order layer or unknown file - buffer it
                 if member.isfile():
+                    LOG.info(
+                        'Out-of-order file %s, buffering to temp'
+                        % member.name)
                     buffered[member.name] = self._buffer_to_tempfile(
                         f, member.name)
 
             tar.close()
+            LOG.info('Tarball stream complete')
 
             # After tarball is fully read, yield any remaining buffered items
             if not config_yielded and config_filename and \
                     config_filename in buffered:
+                LOG.info(
+                    'Yielding config from buffer (arrived after layers)')
                 config_data = self._read_and_delete_buffered(
                     buffered, config_filename)
                 yield (constants.CONFIG_FILE, config_filename,
@@ -262,6 +301,12 @@ class Image(ImageInput):
                 config_yielded = True
 
             # Yield remaining buffered layers in order
+            if next_layer_idx < len(expected_layers):
+                remaining = len(expected_layers) - next_layer_idx
+                LOG.info(
+                    '%d layer(s) remaining in buffer, yielding in order'
+                    % remaining)
+
             while next_layer_idx < len(expected_layers):
                 layer_path = expected_layers[next_layer_idx]
                 layer_digest = os.path.dirname(layer_path)
@@ -271,15 +316,19 @@ class Image(ImageInput):
                                     % layer_path)
 
                 if not fetch_callback(layer_digest):
-                    LOG.info('Fetch callback says skip layer %s'
-                             % layer_digest)
+                    LOG.info(
+                        '%s Skipping layer %s (fetch callback)'
+                        % (_layer_progress(), layer_digest))
                     yield (constants.IMAGE_LAYER, layer_digest, None)
                 else:
-                    LOG.info('Yielding buffered layer %s' % layer_path)
+                    LOG.info(
+                        '%s Yielding buffered layer %s'
+                        % (_layer_progress(), layer_digest))
                     layer_data = self._read_and_delete_buffered(
                         buffered, layer_path)
                     yield (constants.IMAGE_LAYER, layer_digest,
                            io.BytesIO(layer_data))
+                    layers_buffered += 1
                 next_layer_idx += 1
 
         finally:
@@ -288,4 +337,8 @@ class Image(ImageInput):
                 if os.path.exists(path):
                     os.unlink(path)
 
-        LOG.info('Done')
+        total = layers_streamed + layers_buffered
+        LOG.info(
+            'Done: %d layer(s) streamed directly, %d from temp files'
+            ' (%d total)'
+            % (layers_streamed, layers_buffered, total))
