@@ -402,3 +402,139 @@ class RegistryWriterTestCase(unittest.TestCase):
         self.assertIn('layers', manifest)
         self.assertEqual(writer._config_digest, manifest['config']['digest'])
         self.assertEqual(1, len(manifest['layers']))
+
+    def test_timing_fields_initialized(self):
+        """Test that timing fields are initialized to zero."""
+        writer = output_registry.RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0')
+        self.assertEqual(0.0, writer._total_compress_time)
+        self.assertEqual(0.0, writer._total_upload_time)
+        self.assertEqual(0, writer._total_input_bytes)
+        self.assertEqual(0, writer._upload_skipped)
+
+    @mock.patch('occystrap.outputs.registry.requests.request')
+    def test_timing_fields_populated_after_finalize(self, mock_request):
+        """Test that timing fields are populated after processing."""
+        writer = output_registry.RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+
+        def mock_request_handler(method, url, **kwargs):
+            response = mock.MagicMock()
+            if method == 'HEAD':
+                response.status_code = 200  # Blob exists
+            elif method == 'PUT' and '/manifests/' in url:
+                response.status_code = 201
+            else:
+                response.status_code = 200
+            return response
+
+        mock_request.side_effect = mock_request_handler
+
+        config_data = json.dumps({'architecture': 'amd64'}).encode()
+        writer.process_image_element(
+            constants.CONFIG_FILE, 'config.json',
+            io.BytesIO(config_data))
+
+        layer_data = b'test layer content for timing'
+        writer.process_image_element(
+            constants.IMAGE_LAYER, 'sha256_layer',
+            io.BytesIO(layer_data))
+
+        writer.finalize()
+
+        self.assertGreater(writer._total_compress_time, 0.0)
+        self.assertGreater(writer._total_upload_time, 0.0)
+        self.assertEqual(len(layer_data), writer._total_input_bytes)
+        # Blob existed, so upload was skipped
+        self.assertEqual(1, writer._upload_skipped)
+
+    @mock.patch('occystrap.outputs.registry.requests.request')
+    def test_upload_blob_returns_true_when_exists(self, mock_request):
+        """Test _upload_blob returns True when blob already exists."""
+        writer = output_registry.RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0')
+
+        mock_response = mock.MagicMock()
+        mock_response.status_code = 200
+        mock_request.return_value = mock_response
+
+        result = writer._upload_blob(
+            'sha256:abc123', io.BytesIO(b'data'), 4)
+        self.assertTrue(result)
+
+    @mock.patch('occystrap.outputs.registry.requests.request')
+    def test_upload_blob_returns_false_when_uploaded(self, mock_request):
+        """Test _upload_blob returns False when blob is uploaded."""
+        writer = output_registry.RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0')
+
+        head_response = mock.MagicMock()
+        head_response.status_code = 404
+
+        post_response = mock.MagicMock()
+        post_response.status_code = 202
+        post_response.headers = {
+            'Location': '/v2/myuser/myimage/blobs/uploads/uuid123'
+        }
+
+        put_response = mock.MagicMock()
+        put_response.status_code = 201
+
+        mock_request.side_effect = [
+            head_response, post_response, put_response
+        ]
+
+        result = writer._upload_blob(
+            'sha256:abc123', io.BytesIO(b'data'), 4)
+        self.assertFalse(result)
+
+    @mock.patch('occystrap.outputs.registry.requests.request')
+    def test_upload_skipped_count_with_multiple_layers(
+            self, mock_request):
+        """Test upload_skipped counts correctly with multiple layers."""
+        writer = output_registry.RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+
+        call_count = [0]
+
+        def mock_request_handler(method, url, **kwargs):
+            response = mock.MagicMock()
+            if method == 'HEAD':
+                call_count[0] += 1
+                # First two HEAD checks: blob exists (skip)
+                # Third HEAD check: blob doesn't exist (upload)
+                if call_count[0] <= 3:
+                    response.status_code = 200
+                else:
+                    response.status_code = 404
+            elif method == 'POST':
+                response.status_code = 202
+                response.headers = {
+                    'Location': '/v2/x/blobs/uploads/uuid'
+                }
+            elif method == 'PUT' and '/manifests/' in url:
+                response.status_code = 201
+            elif method == 'PUT':
+                response.status_code = 201
+            else:
+                response.status_code = 200
+            return response
+
+        mock_request.side_effect = mock_request_handler
+
+        config_data = json.dumps({'architecture': 'amd64'}).encode()
+        writer.process_image_element(
+            constants.CONFIG_FILE, 'config.json',
+            io.BytesIO(config_data))
+
+        # Two layers where blob exists (skipped uploads)
+        for i in range(2):
+            writer.process_image_element(
+                constants.IMAGE_LAYER, f'sha256_layer{i}',
+                io.BytesIO(b'layer data'))
+
+        writer.finalize()
+
+        self.assertEqual(2, writer._upload_skipped)
+        self.assertEqual(2 * len(b'layer data'),
+                         writer._total_input_bytes)

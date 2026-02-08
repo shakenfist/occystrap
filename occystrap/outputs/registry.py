@@ -81,6 +81,13 @@ class RegistryWriter(ImageOutput):
         self._config_digest = None
         self._config_size = None
 
+        # Granular timing instrumentation (thread-safe)
+        self._timing_lock = threading.Lock()
+        self._total_compress_time = 0.0
+        self._total_upload_time = 0.0
+        self._total_input_bytes = 0
+        self._upload_skipped = 0
+
     def _request(self, method, url, headers=None, data=None, stream=False):
         """Make an authenticated request to the registry.
 
@@ -135,10 +142,14 @@ class RegistryWriter(ImageOutput):
             digest: The sha256 digest of the blob (e.g., 'sha256:abc123...').
             data: File-like object containing the blob data.
             size: Size of the blob in bytes.
+
+        Returns:
+            True if the blob already existed (upload skipped),
+            False if it was uploaded.
         """
         if self._blob_exists(digest):
             LOG.info(f'Blob {digest[:19]} already exists, skipping upload')
-            return
+            return True
 
         LOG.info(f'Uploading blob {digest[:19]} ({size} bytes)')
 
@@ -171,6 +182,7 @@ class RegistryWriter(ImageOutput):
             raise Exception(f'Failed to upload blob: {r.status_code} {r.text}')
 
         LOG.info('Blob uploaded successfully')
+        return False
 
     def _compress_and_upload_layer(self, layer_data):
         """Compress a layer and upload it to the registry.
@@ -183,9 +195,13 @@ class RegistryWriter(ImageOutput):
         Returns:
             Dict with layer metadata (mediaType, size, digest).
         """
+        input_size = len(layer_data)
+
         # Compress layer
+        t0 = time.time()
         compressed_data = compression.compress_data(
             layer_data, self.compression_type)
+        compress_time = time.time() - t0
 
         # Calculate digest
         h = hashlib.sha256()
@@ -198,7 +214,18 @@ class RegistryWriter(ImageOutput):
             self.compression_type)
 
         # Upload
-        self._upload_blob(layer_digest, io.BytesIO(compressed_data), layer_size)
+        t0 = time.time()
+        skipped = self._upload_blob(
+            layer_digest, io.BytesIO(compressed_data), layer_size)
+        upload_time = time.time() - t0
+
+        # Accumulate timing stats (thread-safe)
+        with self._timing_lock:
+            self._total_compress_time += compress_time
+            self._total_upload_time += upload_time
+            self._total_input_bytes += input_size
+            if skipped:
+                self._upload_skipped += 1
 
         # Return metadata for manifest
         return {
@@ -343,5 +370,14 @@ class RegistryWriter(ImageOutput):
         elapsed = time.time() - self._start_time
         total_bytes = self._config_size + sum(
             layer['size'] for layer in self._layers)
-        LOG.info(f'Processed {total_bytes} bytes in {len(self._layers)} layers '
-                 f'in {elapsed:.1f} seconds')
+        compressed_mb = total_bytes / 1_000_000
+        input_mb = self._total_input_bytes / 1_000_000
+        ratio = (total_bytes / self._total_input_bytes * 100
+                 if self._total_input_bytes else 0)
+        LOG.info(
+            f'Processed {len(self._layers)} layers in {elapsed:.1f}s '
+            f'(compress: {self._total_compress_time:.1f}s, '
+            f'upload: {self._total_upload_time:.1f}s, '
+            f'upload_skipped: {self._upload_skipped}), '
+            f'{input_mb:.1f} MB in, {compressed_mb:.1f} MB out '
+            f'({ratio:.0f}%)')

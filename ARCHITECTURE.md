@@ -42,6 +42,7 @@ occystrap/
         __init__.py
         test_compression.py
         test_inspect.py
+        test_registry_output.py
         test_tarformat.py
 
 deploy/
@@ -119,8 +120,15 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
 - `finalize()` - Writes manifest and completes output
 
 The base class also provides summary statistics tracking. All output writers log
-a summary line at the end of processing showing total bytes processed, layer
-count, and elapsed time:
+a summary line at the end of processing. The registry output provides granular
+timing with compression and upload breakdowns:
+
+```
+Processed 40 layers in 34.7s (compress: 15.8s, upload: 4.5s,
+  upload_skipped: 22), 980.0 MB in, 326.3 MB out (33%)
+```
+
+Other outputs log a simpler summary:
 
 ```
 Processed 12345678 bytes in 5 layers in 3.2 seconds
@@ -314,6 +322,9 @@ Key design considerations:
 - Authentication token updates are protected by a threading lock for
   thread-safety
 - The `max_workers` parameter controls parallelism (default: 4)
+- Granular timing is collected per-layer (compress time, upload time, input
+  size) using a thread-safe lock, and reported in the summary line
+- Upload skip count tracks how many blobs already existed in the registry
 
 ### Layer Compression
 

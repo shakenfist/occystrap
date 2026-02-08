@@ -185,13 +185,27 @@ Each filter wraps the next, forming a chain that processes elements in order.
 Output writers implement the `ImageOutput` interface and handle the final
 destination of processed elements.
 
-All output writers log a summary line at the end of processing:
+All output writers log a summary line at the end of processing.
+
+The registry output provides a detailed breakdown of where time was spent:
+
+```
+Processed 40 layers in 34.7s (compress: 15.8s, upload: 4.5s,
+  upload_skipped: 22), 980.0 MB in, 326.3 MB out (33%)
+```
+
+This shows:
+- **compress** - total CPU time spent compressing layers (summed across threads)
+- **upload** - total time spent on upload HTTP requests (summed across threads)
+- **upload_skipped** - number of blobs that already existed in the registry
+- **MB in / MB out** - uncompressed input size vs compressed output size
+- **ratio** - compression ratio (compressed / uncompressed as percentage)
+
+Other outputs log a simpler summary:
 
 ```
 Processed 12345678 bytes in 5 layers in 3.2 seconds
 ```
-
-This shows the total bytes processed, layer count, and elapsed time.
 
 ### Tarball Output
 
