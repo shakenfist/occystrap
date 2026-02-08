@@ -4,11 +4,14 @@ This module provides a PipelineBuilder class that constructs input -> filter
 chain -> output pipelines from URI specifications.
 """
 
+import hashlib
+import json
 import os
 
 from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
+from occystrap.layer_cache import LayerCache
 from occystrap.outputs import directory as output_directory
 from occystrap.outputs import docker as output_docker
 from occystrap.outputs import mounts as output_mounts
@@ -103,13 +106,19 @@ class PipelineBuilder:
         else:
             raise PipelineError('Unknown input scheme: %s' % uri_spec.scheme)
 
-    def build_output(self, uri_spec, image, tag):
+    def build_output(self, uri_spec, image, tag,
+                     layer_cache=None, filters_hash='none'):
         """Create an ImageOutput from a URI spec.
 
         Args:
             uri_spec: A URISpec from uri.parse_uri()
             image: Image name (from input source)
             tag: Image tag (from input source)
+            layer_cache: LayerCache instance for
+                cross-invocation caching (optional, registry
+                output only).
+            filters_hash: Hash of the pipeline configuration,
+                used to key cache entries (default: 'none').
 
         Returns:
             An ImageOutput instance.
@@ -180,7 +189,9 @@ class PipelineBuilder:
                 username=username,
                 password=password,
                 compression_type=compression_type,
-                max_workers=max_workers)
+                max_workers=max_workers,
+                layer_cache=layer_cache,
+                filters_hash=filters_hash)
 
         else:
             raise PipelineError('Unknown output scheme: %s' % uri_spec.scheme)
@@ -253,6 +264,41 @@ class PipelineBuilder:
         else:
             raise PipelineError('Unknown filter: %s' % filter_spec.name)
 
+    @staticmethod
+    def _compute_filters_hash(filter_strs,
+                              compression_type=None):
+        """Compute a stable hash of the pipeline configuration.
+
+        Includes both the filter chain and compression type so
+        that the same input layer processed with different
+        pipeline configurations gets separate cache entries.
+
+        Filter order is preserved because it is semantically
+        significant (e.g., exclude before normalize-timestamps
+        produces different output than the reverse).
+
+        Args:
+            filter_strs: List of filter specification strings.
+            compression_type: Compression format ('gzip',
+                'zstd'). None is treated as 'gzip'.
+
+        Returns:
+            A short hex string identifying the pipeline
+            config, or 'none' if the default pipeline (no
+            filters, gzip compression) is in effect.
+        """
+        effective_compression = compression_type or 'gzip'
+        if not filter_strs and effective_compression == 'gzip':
+            return 'none'
+        config = {
+            'compression': effective_compression,
+            'filters': filter_strs or [],
+        }
+        canonical = json.dumps(
+            config, separators=(',', ':'), sort_keys=True)
+        return hashlib.sha256(
+            canonical.encode()).hexdigest()[:16]
+
     def build_pipeline(self, source_uri_str, dest_uri_str, filter_strs=None):
         """Build complete pipeline from URI strings.
 
@@ -279,9 +325,23 @@ class PipelineBuilder:
         # Build input
         input_source = self.build_input(source_spec)
 
+        # Set up layer cache for registry outputs
+        layer_cache = None
+        filters_hash = 'none'
+        cache_path = self._get_ctx('LAYER_CACHE')
+        if cache_path and dest_spec.scheme == 'registry':
+            compression_type = dest_spec.options.get(
+                'compression',
+                self._get_ctx('COMPRESSION'))
+            filters_hash = self._compute_filters_hash(
+                filter_strs, compression_type)
+            layer_cache = LayerCache(cache_path)
+
         # Build output
         output = self.build_output(
-            dest_spec, input_source.image, input_source.tag)
+            dest_spec, input_source.image, input_source.tag,
+            layer_cache=layer_cache,
+            filters_hash=filters_hash)
 
         # Wrap with filters (in reverse order so first filter is outermost)
         for filter_spec in reversed(filter_specs):

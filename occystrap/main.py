@@ -46,10 +46,12 @@ logging.getLogger(__name__).propagate = False
               help='Number of parallel download/upload threads (default: 4)')
 @click.option('--temp-dir', default=None, envvar='OCCYSTRAP_TEMP_DIR',
               help='Directory for temporary files (default: system temp)')
+@click.option('--layer-cache', default=None, envvar='OCCYSTRAP_LAYER_CACHE',
+              help='JSON file for cross-invocation layer caching')
 @click.pass_context
 def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
         username=None, password=None, insecure=None, compression=None,
-        parallel=None, temp_dir=None):
+        parallel=None, temp_dir=None, layer_cache=None):
     if verbose:
         logging.root.setLevel(logging.DEBUG)
         for handler in logging.root.handlers:
@@ -67,6 +69,7 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
     ctx.obj['COMPRESSION'] = compression
     ctx.obj['MAX_WORKERS'] = parallel
     ctx.obj['TEMP_DIR'] = temp_dir
+    ctx.obj['LAYER_CACHE'] = layer_cache
 
 
 def _fetch(img, output):

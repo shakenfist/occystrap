@@ -14,7 +14,8 @@
 # 2. Upload config blob (same as layer)
 # 3. Push manifest: PUT /v2/<name>/manifests/<tag>
 
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import io
 import json
@@ -45,7 +46,7 @@ class RegistryWriter(ImageOutput):
 
     def __init__(self, registry, image, tag, secure=True,
                  username=None, password=None, compression_type=None,
-                 max_workers=4):
+                 max_workers=4, layer_cache=None, filters_hash='none'):
         """Initialize the registry writer.
 
         Args:
@@ -58,6 +59,10 @@ class RegistryWriter(ImageOutput):
             compression_type: Compression for layers ('gzip' or 'zstd').
                 Defaults to 'gzip' for maximum compatibility.
             max_workers: Number of parallel upload threads (default: 4).
+            layer_cache: LayerCache instance for cross-invocation
+                caching (optional).
+            filters_hash: Hash of the filter chain configuration,
+                used to key cache entries (default: 'none').
         """
         super().__init__()
 
@@ -80,6 +85,26 @@ class RegistryWriter(ImageOutput):
 
         self._config_digest = None
         self._config_size = None
+
+        # Granular timing instrumentation (thread-safe)
+        self._timing_lock = threading.Lock()
+        self._total_compress_time = 0.0
+        self._total_upload_time = 0.0
+        self._total_input_bytes = 0
+        self._upload_skipped = 0
+
+        # Cross-invocation layer cache
+        self._layer_cache = layer_cache
+        self._filters_hash = filters_hash
+        self._cached_layers = {}  # digest -> cached metadata
+        self._cache_hits = 0
+
+        # Original DiffIDs from fetch_callback, consumed in
+        # process_image_element order.  Needed because filters
+        # may transform layer names (recalculating SHA256 after
+        # modifying content), but the cache must be keyed by
+        # the original input DiffID.
+        self._original_digests = deque()
 
     def _request(self, method, url, headers=None, data=None, stream=False):
         """Make an authenticated request to the registry.
@@ -135,10 +160,14 @@ class RegistryWriter(ImageOutput):
             digest: The sha256 digest of the blob (e.g., 'sha256:abc123...').
             data: File-like object containing the blob data.
             size: Size of the blob in bytes.
+
+        Returns:
+            True if the blob already existed (upload skipped),
+            False if it was uploaded.
         """
         if self._blob_exists(digest):
             LOG.info(f'Blob {digest[:19]} already exists, skipping upload')
-            return
+            return True
 
         LOG.info(f'Uploading blob {digest[:19]} ({size} bytes)')
 
@@ -171,21 +200,29 @@ class RegistryWriter(ImageOutput):
             raise Exception(f'Failed to upload blob: {r.status_code} {r.text}')
 
         LOG.info('Blob uploaded successfully')
+        return False
 
-    def _compress_and_upload_layer(self, layer_data):
+    def _compress_and_upload_layer(
+            self, layer_data, input_digest=None):
         """Compress a layer and upload it to the registry.
 
         This method runs in the thread pool to parallelize compression.
 
         Args:
             layer_data: Uncompressed layer tarball data (bytes).
+            input_digest: The input layer DiffID for cache recording
+                (optional).
 
         Returns:
             Dict with layer metadata (mediaType, size, digest).
         """
+        input_size = len(layer_data)
+
         # Compress layer
+        t0 = time.time()
         compressed_data = compression.compress_data(
             layer_data, self.compression_type)
+        compress_time = time.time() - t0
 
         # Calculate digest
         h = hashlib.sha256()
@@ -198,7 +235,24 @@ class RegistryWriter(ImageOutput):
             self.compression_type)
 
         # Upload
-        self._upload_blob(layer_digest, io.BytesIO(compressed_data), layer_size)
+        t0 = time.time()
+        skipped = self._upload_blob(
+            layer_digest, io.BytesIO(compressed_data), layer_size)
+        upload_time = time.time() - t0
+
+        # Accumulate timing stats and record cache (thread-safe)
+        with self._timing_lock:
+            self._total_compress_time += compress_time
+            self._total_upload_time += upload_time
+            self._total_input_bytes += input_size
+            if skipped:
+                self._upload_skipped += 1
+
+            # Record in layer cache for future invocations
+            if self._layer_cache is not None and input_digest:
+                self._layer_cache.record(
+                    input_digest, self._filters_hash,
+                    layer_digest, layer_size, layer_media_type)
 
         # Return metadata for manifest
         return {
@@ -208,7 +262,39 @@ class RegistryWriter(ImageOutput):
         }
 
     def fetch_callback(self, digest):
-        """Always fetch all layers for pushing."""
+        """Determine whether a layer needs to be fetched.
+
+        If a layer cache is configured and the layer has been
+        previously processed with the same filters, check whether
+        the registry still has the compressed blob. If so, skip
+        fetching entirely.
+
+        The original digest is recorded so that
+        process_image_element can map filter-transformed names
+        back to the original input DiffID for cache recording.
+        """
+        self._original_digests.append(digest)
+
+        if self._layer_cache is None:
+            return True
+
+        entry = self._layer_cache.lookup(
+            digest, self._filters_hash)
+        if entry is None:
+            return True
+
+        # Check if registry still has this blob
+        if self._blob_exists(entry['compressed_digest']):
+            LOG.info(
+                'Layer %s cached, registry has %s, skipping',
+                digest[:19], entry['compressed_digest'][:19])
+            self._cached_layers[digest] = entry
+            return False
+
+        LOG.info(
+            'Layer %s cached but registry missing %s, '
+            're-processing',
+            digest[:19], entry['compressed_digest'][:19])
         return True
 
     def process_image_element(self, element_type, name, data):
@@ -240,6 +326,16 @@ class RegistryWriter(ImageOutput):
                 io.BytesIO(config_data), self._config_size)
 
         elif element_type == constants.IMAGE_LAYER and data is not None:
+            # Use the original DiffID for cache recording;
+            # filters may have transformed `name` by
+            # recalculating the hash after modifying content.
+            # Falls back to `name` when fetch_callback was not
+            # called (e.g., in unit tests).
+            if self._original_digests:
+                original_digest = (
+                    self._original_digests.popleft())
+            else:
+                original_digest = name
             LOG.info(f'Processing layer {name}')
 
             data.seek(0)
@@ -248,8 +344,30 @@ class RegistryWriter(ImageOutput):
             # Submit compression + upload to thread pool
             # This allows multiple layers to compress in parallel
             future = self._executor.submit(
-                self._compress_and_upload_layer, layer_data)
+                self._compress_and_upload_layer,
+                layer_data, original_digest)
             self._layer_futures.append(future)
+
+        elif element_type == constants.IMAGE_LAYER and data is None:
+            if self._original_digests:
+                original_digest = (
+                    self._original_digests.popleft())
+            else:
+                original_digest = name
+            # Layer was skipped by fetch_callback - check cache
+            if original_digest in self._cached_layers:
+                entry = self._cached_layers[original_digest]
+                f = Future()
+                f.set_result({
+                    'mediaType': entry['media_type'],
+                    'size': entry['compressed_size'],
+                    'digest': entry['compressed_digest']
+                })
+                self._layer_futures.append(f)
+                # _cache_hits is only updated from the main
+                # thread (process_image_element is not called
+                # from worker threads), so no lock is needed.
+                self._cache_hits += 1
 
     def finalize(self):
         """Push the image manifest to the registry.
@@ -339,9 +457,30 @@ class RegistryWriter(ImageOutput):
         LOG.info(f'Image pushed successfully: {self.registry}/{self.image}'
                  f':{self.tag}')
 
+        # Save layer cache if configured
+        if self._layer_cache is not None:
+            self._layer_cache.save()
+
         # Summary line
-        elapsed = time.time() - self._start_time
-        total_bytes = self._config_size + sum(
+        if self._start_time is not None:
+            elapsed = time.time() - self._start_time
+        else:
+            elapsed = 0.0
+        total_compressed = self._config_size + sum(
             layer['size'] for layer in self._layers)
-        LOG.info(f'Processed {total_bytes} bytes in {len(self._layers)} layers '
-                 f'in {elapsed:.1f} seconds')
+        total_input = (
+            self._total_input_bytes + self._config_size)
+        compressed_mb = total_compressed / 1_000_000
+        input_mb = total_input / 1_000_000
+        ratio = (total_compressed / total_input * 100
+                 if total_input else 0)
+        LOG.info(
+            f'Processed {len(self._layers)} layers in '
+            f'{elapsed:.1f}s '
+            f'(compress: {self._total_compress_time:.1f}s, '
+            f'upload: {self._total_upload_time:.1f}s, '
+            f'upload_skipped: {self._upload_skipped}, '
+            f'cache_hits: {self._cache_hits}), '
+            f'{input_mb:.1f} MB in, '
+            f'{compressed_mb:.1f} MB out '
+            f'({ratio:.0f}%)')
