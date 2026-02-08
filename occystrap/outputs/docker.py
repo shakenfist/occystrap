@@ -44,22 +44,27 @@ class DockerWriter(ImageOutput):
     (SHA256 hashes and small filenames), avoiding PAX extended headers.
     """
 
-    def __init__(self, image, tag, socket_path=DEFAULT_SOCKET_PATH):
+    def __init__(self, image, tag, socket_path=DEFAULT_SOCKET_PATH,
+                 temp_dir=None):
         """Initialize the Docker writer.
 
         Args:
             image: The image name.
             tag: The image tag.
-            socket_path: Path to the Docker socket (default: /var/run/docker.sock).
+            socket_path: Path to the Docker socket
+                (default: /var/run/docker.sock).
+            temp_dir: Directory for temporary files (default:
+                system temp directory).
         """
-        super().__init__()
+        super().__init__(temp_dir=temp_dir)
 
         self.image = image
         self.tag = tag
         self.socket_path = socket_path
         self._session = None
 
-        self._temp_file = tempfile.NamedTemporaryFile(delete=False)
+        self._temp_file = tempfile.NamedTemporaryFile(
+            delete=False, dir=self.temp_dir)
         self._image_tar = tarfile.open(fileobj=self._temp_file, mode='w',
                                        format=tarfile.USTAR_FORMAT)
 

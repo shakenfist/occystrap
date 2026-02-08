@@ -14,11 +14,17 @@ class ImageOutput(ABC):
     OCI bundles, etc.).
     """
 
-    def __init__(self):
-        """Initialize tracking for summary statistics."""
+    def __init__(self, temp_dir=None):
+        """Initialize tracking for summary statistics.
+
+        Args:
+            temp_dir: Directory for temporary files (default:
+                system temp directory).
+        """
         self._start_time = None
         self._total_bytes = 0
         self._layer_count = 0
+        self.temp_dir = temp_dir
 
     def _track_element(self, element_type, size):
         """Track an element for summary statistics.

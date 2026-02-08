@@ -157,7 +157,10 @@ class PipelineBuilder:
 
         elif uri_spec.scheme == 'docker':
             _, _, socket = uri.parse_docker_uri(uri_spec)
-            return output_docker.DockerWriter(image, tag, socket_path=socket)
+            temp_dir = self._get_ctx('TEMP_DIR')
+            return output_docker.DockerWriter(
+                image, tag, socket_path=socket,
+                temp_dir=temp_dir)
 
         elif uri_spec.scheme == 'registry':
             host, dest_image, dest_tag = uri.parse_registry_uri(uri_spec)
@@ -199,10 +202,14 @@ class PipelineBuilder:
         """
         name = filter_spec.name.lower().replace('_', '-')
 
+        temp_dir = self._get_ctx('TEMP_DIR')
+
         if name == 'normalize-timestamps':
             timestamp = filter_spec.options.get(
                 'timestamp', filter_spec.options.get('ts', 0))
-            return TimestampNormalizer(wrapped_output, timestamp=timestamp)
+            return TimestampNormalizer(
+                wrapped_output, timestamp=timestamp,
+                temp_dir=temp_dir)
 
         elif name == 'search':
             pattern = filter_spec.options.get('pattern')
@@ -228,7 +235,9 @@ class PipelineBuilder:
                 raise PipelineError(
                     'exclude filter requires pattern option')
             patterns = [p.strip() for p in pattern_str.split(',')]
-            return ExcludeFilter(wrapped_output, patterns=patterns)
+            return ExcludeFilter(
+                wrapped_output, patterns=patterns,
+                temp_dir=temp_dir)
 
         elif name == 'inspect':
             output_file = filter_spec.options.get('file')

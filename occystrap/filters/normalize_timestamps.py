@@ -26,14 +26,18 @@ class TimestampNormalizer(ImageFilter):
     files were originally created or modified.
     """
 
-    def __init__(self, wrapped_output, timestamp=0):
+    def __init__(self, wrapped_output, timestamp=0, temp_dir=None):
         """Initialize the timestamp normalizer.
 
         Args:
-            wrapped_output: The ImageOutput to pass normalized elements to.
-            timestamp: The Unix timestamp to set for all files (default: 0).
+            wrapped_output: The ImageOutput to pass normalized elements
+                to.
+            timestamp: The Unix timestamp to set for all files
+                (default: 0).
+            temp_dir: Directory for temporary files (default:
+                system temp directory).
         """
-        super().__init__(wrapped_output)
+        super().__init__(wrapped_output, temp_dir=temp_dir)
         self.timestamp = timestamp
 
     def _normalize_layer(self, layer_data):
@@ -58,7 +62,8 @@ class TimestampNormalizer(ImageFilter):
 
         tar_format = select_tar_format_for_layer(layer_data, transform)
 
-        with tempfile.NamedTemporaryFile(delete=False) as normalized_tf:
+        with tempfile.NamedTemporaryFile(
+                delete=False, dir=self.temp_dir) as normalized_tf:
             try:
                 # Create a new tarball with normalized timestamps
                 with tarfile.open(fileobj=normalized_tf, mode='w',
