@@ -206,7 +206,8 @@ class StreamingCompressor:
         if self.compression_type == constants.COMPRESSION_GZIP:
             compressed = io.BytesIO()
             with gzip.GzipFile(fileobj=compressed, mode='wb',
-                               compresslevel=self._level) as gz:
+                               compresslevel=self._level,
+                               mtime=0) as gz:
                 gz.write(data)
             return compressed.getvalue()
         else:

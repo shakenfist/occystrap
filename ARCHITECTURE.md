@@ -293,6 +293,13 @@ formats:
 - **Streaming decompression**: Used by registry input for downloading layers
 - **Streaming compression**: Used by registry output for uploading layers
 - **Configurable output**: `--compression` CLI option (gzip default, zstd optional)
+- **Deterministic output**: gzip uses `mtime=0` to suppress header timestamps;
+  zstd is inherently deterministic (no timestamps in format)
+
+Deterministic compression is important for blob deduplication: the registry
+output checks if a blob already exists before uploading (`HEAD` on the blob
+digest), and this only works when identical input always produces the same
+compressed output with the same SHA256 digest.
 
 Media type constants in `constants.py` define Docker and OCI layer types:
 - `MEDIA_TYPE_DOCKER_LAYER_GZIP` / `MEDIA_TYPE_DOCKER_LAYER_ZSTD`

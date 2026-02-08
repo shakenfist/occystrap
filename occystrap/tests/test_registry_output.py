@@ -243,9 +243,11 @@ class RegistryWriterTestCase(unittest.TestCase):
         # Finalize to collect layer metadata
         writer.finalize()
 
-        # Verify the digest matches gzipped content
+        # Verify the digest matches gzipped content (mtime=0 for
+        # deterministic output)
         compressed = io.BytesIO()
-        with gzip.GzipFile(fileobj=compressed, mode='wb') as gz:
+        with gzip.GzipFile(fileobj=compressed, mode='wb',
+                           mtime=0) as gz:
             gz.write(layer_data)
         compressed.seek(0)
         expected_digest = 'sha256:' + hashlib.sha256(

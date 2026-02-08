@@ -270,6 +270,17 @@ Key design aspects:
 - Default parallelism is 4 threads, configurable via `--parallel` or `-j`,
   or the `max_workers` URI option
 
+**Blob Deduplication:**
+
+Before uploading a layer blob, the registry output checks whether the blob
+already exists in the target registry using `HEAD /v2/<name>/blobs/<digest>`.
+If the blob exists, the upload is skipped. This is particularly effective when
+pushing images that share base layers with images already in the registry.
+
+For this check to work, the compressed blob must have the same SHA256 digest
+as the existing blob. This requires deterministic compression -- see
+[Deterministic Compression](#deterministic-compression) below.
+
 ### Docker Daemon Output
 
 Loads images into local Docker or Podman.
@@ -326,6 +337,36 @@ When downloading multiple images:
 2. Subsequent images check if layers already exist
 3. Shared layers are referenced, not duplicated
 4. `catalog.json` maps images to their layers
+
+### Deterministic Compression
+
+When pushing layers to a registry, Occy Strap compresses them before upload.
+For blob deduplication to work (skipping uploads of layers that already
+exist), the compressed output must be identical for identical input. This
+is called deterministic compression.
+
+**gzip:** The gzip format includes a timestamp in its header by default,
+which means compressing the same data twice produces different output.
+Occy Strap suppresses this by setting `mtime=0` in the gzip header,
+making gzip compression fully deterministic.
+
+**zstd:** The zstd format does not embed timestamps, so it is inherently
+deterministic. Compressing the same data with the same settings always
+produces identical output.
+
+This determinism works together with filters like `normalize-timestamps`
+and `exclude` to maximize layer deduplication:
+
+1. The `normalize-timestamps` filter sets all file modification times in
+   layer tarballs to a consistent value (epoch 0 by default)
+2. The `exclude` filter removes unwanted files from layers
+3. Deterministic compression ensures the compressed output has a stable
+   SHA256 digest
+4. The registry output checks for existing blobs before uploading,
+   skipping any that already exist
+
+This means that if two images share identical layers (after filtering),
+the second push will skip uploading those layers entirely.
 
 ### Hash Recalculation
 
