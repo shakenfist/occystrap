@@ -42,7 +42,7 @@ def always_fetch():
 class Image(ImageInput):
     def __init__(self, registry, image, tag, os='linux', architecture='amd64',
                  variant='', secure=True, username=None, password=None,
-                 max_workers=4):
+                 max_workers=4, temp_dir=None):
         self.registry = registry
         self._image = image
         self._tag = tag
@@ -53,6 +53,7 @@ class Image(ImageInput):
         self.username = username
         self.password = password
         self.max_workers = max_workers
+        self.temp_dir = temp_dir
 
         self._cached_auth = None
         self._auth_lock = threading.Lock()
@@ -154,7 +155,7 @@ class Image(ImageInput):
                 h = hashlib.sha256()
                 d = compression.StreamingDecompressor(compression_type)
 
-                tf = tempfile.NamedTemporaryFile(delete=False)
+                tf = tempfile.NamedTemporaryFile(delete=False, dir=self.temp_dir)
                 LOG.info('Temporary file for layer is %s' % tf.name)
                 for chunk in r.iter_content(8192):
                     tf.write(d.decompress(chunk))

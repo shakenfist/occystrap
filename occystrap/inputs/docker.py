@@ -56,10 +56,12 @@ def always_fetch(digest):
 
 
 class Image(ImageInput):
-    def __init__(self, image, tag='latest', socket_path=DEFAULT_SOCKET_PATH):
+    def __init__(self, image, tag='latest', socket_path=DEFAULT_SOCKET_PATH,
+                 temp_dir=None):
         self._image = image
         self._tag = tag
         self.socket_path = socket_path
+        self.temp_dir = temp_dir
         self._session = None
 
     @property
@@ -105,7 +107,7 @@ class Image(ImageInput):
 
     def _buffer_to_tempfile(self, fileobj, name):
         """Buffer file content to a temporary file and return the path."""
-        tf = tempfile.NamedTemporaryFile(delete=False)
+        tf = tempfile.NamedTemporaryFile(delete=False, dir=self.temp_dir)
         tf.write(fileobj.read())
         tf.close()
         LOG.debug('Buffered %s to %s' % (name, tf.name))

@@ -227,6 +227,7 @@ Key design considerations:
 - Pessimistic case: out-of-order layers buffered to individual temp files
 - For large images with in-order layers, disk usage is near zero
 - Temp files are cleaned up immediately after yielding each layer
+- Temp file location is configurable via `--temp-dir` CLI option
 
 This approach significantly reduces disk usage compared to the original method
 which buffered the entire tarball to a single temp file before processing.
@@ -254,6 +255,7 @@ Key design considerations:
 - Authentication token updates are protected by a threading lock
 - The `max_workers` parameter controls parallelism (default: 4)
 - Temp files are cleaned up after each layer is processed
+- Temp file location is configurable via `--temp-dir` CLI option
 
 ### Parallel Compression and Uploads
 

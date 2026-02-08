@@ -19,6 +19,7 @@ name:
 | `--insecure` | | Use HTTP instead of HTTPS for registries |
 | `--compression TYPE` | `OCCYSTRAP_COMPRESSION` | Layer compression for registry output (gzip, zstd) |
 | `--parallel N`, `-j N` | `OCCYSTRAP_PARALLEL` | Number of parallel download/upload threads (default: 4) |
+| `--temp-dir PATH` | `OCCYSTRAP_TEMP_DIR` | Directory for temporary files (default: system temp) |
 
 Example:
 

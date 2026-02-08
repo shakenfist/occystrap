@@ -99,6 +99,7 @@ Key aspects:
 - Out-of-order layers are buffered to individual temp files
 - Temp files are deleted immediately after yielding
 - For a 26GB image with in-order layers, disk usage is near zero
+- Temp file location is configurable via `--temp-dir` option
 
 ### Tarball Input
 

@@ -75,6 +75,7 @@ class PipelineBuilder:
 
             max_workers = uri_spec.options.get(
                 'max_workers', self._get_ctx('MAX_WORKERS', 4))
+            temp_dir = self._get_ctx('TEMP_DIR')
 
             return input_registry.Image(
                 host, image, tag,
@@ -84,11 +85,14 @@ class PipelineBuilder:
                 secure=(not insecure),
                 username=username,
                 password=password,
-                max_workers=max_workers)
+                max_workers=max_workers,
+                temp_dir=temp_dir)
 
         elif uri_spec.scheme == 'docker':
             image, tag, socket = uri.parse_docker_uri(uri_spec)
-            return input_docker.Image(image, tag, socket_path=socket)
+            temp_dir = self._get_ctx('TEMP_DIR')
+            return input_docker.Image(
+                image, tag, socket_path=socket, temp_dir=temp_dir)
 
         elif uri_spec.scheme == 'tar':
             path = uri_spec.path

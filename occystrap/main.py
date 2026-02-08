@@ -36,10 +36,12 @@ LOG = logs.setup_console(__name__)
 @click.option('--parallel', '-j', default=4, type=int,
               envvar='OCCYSTRAP_PARALLEL',
               help='Number of parallel download/upload threads (default: 4)')
+@click.option('--temp-dir', default=None, envvar='OCCYSTRAP_TEMP_DIR',
+              help='Directory for temporary files (default: system temp)')
 @click.pass_context
 def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
         username=None, password=None, insecure=None, compression=None,
-        parallel=None):
+        parallel=None, temp_dir=None):
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
         LOG.setLevel(logging.DEBUG)
@@ -54,6 +56,7 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
     ctx.obj['INSECURE'] = insecure
     ctx.obj['COMPRESSION'] = compression
     ctx.obj['MAX_WORKERS'] = parallel
+    ctx.obj['TEMP_DIR'] = temp_dir
 
 
 def _fetch(img, output):
