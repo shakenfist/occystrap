@@ -4,6 +4,7 @@ import time
 
 
 LOG = logging.getLogger(__name__)
+LOG.setLevel(logging.INFO)
 
 
 class ImageOutput(ABC):
