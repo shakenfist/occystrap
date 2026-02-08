@@ -73,6 +73,9 @@ class PipelineBuilder:
             insecure = uri_spec.options.get(
                 'insecure', self._get_ctx('INSECURE', False))
 
+            max_workers = uri_spec.options.get(
+                'max_workers', self._get_ctx('MAX_WORKERS', 4))
+
             return input_registry.Image(
                 host, image, tag,
                 os=os_name,
@@ -80,7 +83,8 @@ class PipelineBuilder:
                 variant=variant,
                 secure=(not insecure),
                 username=username,
-                password=password)
+                password=password,
+                max_workers=max_workers)
 
         elif uri_spec.scheme == 'docker':
             image, tag, socket = uri.parse_docker_uri(uri_spec)

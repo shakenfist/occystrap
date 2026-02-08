@@ -8,6 +8,7 @@
 # https://github.com/opencontainers/image-spec/blob/main/media-types.md documents
 # the new OCI mime types.
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import logging
@@ -16,6 +17,7 @@ import re
 from requests.exceptions import ChunkedEncodingError, ConnectionError
 import sys
 import tempfile
+import threading
 import time
 
 from occystrap import compression
@@ -39,7 +41,8 @@ def always_fetch():
 
 class Image(ImageInput):
     def __init__(self, registry, image, tag, os='linux', architecture='amd64',
-                 variant='', secure=True, username=None, password=None):
+                 variant='', secure=True, username=None, password=None,
+                 max_workers=4):
         self.registry = registry
         self._image = image
         self._tag = tag
@@ -49,8 +52,11 @@ class Image(ImageInput):
         self.secure = secure
         self.username = username
         self.password = password
+        self.max_workers = max_workers
 
         self._cached_auth = None
+        self._auth_lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
     @property
     def image(self):
@@ -63,11 +69,16 @@ class Image(ImageInput):
         return self._tag
 
     def request_url(self, method, url, headers=None, data=None, stream=False):
+        """Make an authenticated request to the registry.
+
+        Thread-safe: uses _auth_lock to protect _cached_auth updates.
+        """
         if not headers:
             headers = {}
 
-        if self._cached_auth:
-            headers.update({'Authorization': 'Bearer %s' % self._cached_auth})
+        with self._auth_lock:
+            if self._cached_auth:
+                headers.update({'Authorization': 'Bearer %s' % self._cached_auth})
 
         try:
             return util.request_url(method, url, headers=headers, data=data,
@@ -87,10 +98,106 @@ class Image(ImageInput):
                     r = util.request_url('GET', auth_url)
                 token = r.json().get('token')
                 headers.update({'Authorization': 'Bearer %s' % token})
-                self._cached_auth = token
+                with self._auth_lock:
+                    self._cached_auth = token
 
             return util.request_url(
                 method, url, headers=headers, data=data, stream=stream)
+
+    def _download_layer(self, layer, moniker):
+        """Download a single layer to a temp file.
+
+        This method is designed to be called from a ThreadPoolExecutor for
+        parallel layer downloads. It handles decompression, hash verification,
+        and retry logic.
+
+        Args:
+            layer: Layer metadata dict with 'digest', 'size', 'mediaType'.
+            moniker: URL scheme ('http' or 'https').
+
+        Returns:
+            Tuple of (layer_filename, temp_file_path) on success.
+
+        Raises:
+            Exception on failure after all retries exhausted.
+        """
+        layer_filename = layer['digest'].split(':')[1]
+
+        LOG.info('Fetching layer %s (%d bytes)'
+                 % (layer['digest'], layer['size']))
+
+        # Detect compression from media type (fallback to gzip for compat)
+        layer_media_type = layer.get('mediaType')
+        compression_type = compression.detect_compression_from_media_type(
+            layer_media_type)
+        if compression_type == constants.COMPRESSION_UNKNOWN:
+            compression_type = constants.COMPRESSION_GZIP
+        LOG.info('Layer compression: %s' % compression_type)
+
+        # Retry logic for streaming downloads which can fail mid-transfer
+        last_exception = None
+        for attempt in range(MAX_RETRIES + 1):
+            tf = None
+            try:
+                r = self.request_url(
+                    'GET',
+                    '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
+                    % {
+                        'moniker': moniker,
+                        'registry': self.registry,
+                        'image': self.image,
+                        'layer': layer['digest']
+                    },
+                    stream=True)
+
+                # Use streaming decompressor based on detected compression.
+                h = hashlib.sha256()
+                d = compression.StreamingDecompressor(compression_type)
+
+                tf = tempfile.NamedTemporaryFile(delete=False)
+                LOG.info('Temporary file for layer is %s' % tf.name)
+                for chunk in r.iter_content(8192):
+                    tf.write(d.decompress(chunk))
+                    h.update(chunk)
+                # Flush any remaining data
+                remaining = d.flush()
+                if remaining:
+                    tf.write(remaining)
+                tf.close()
+
+                if h.hexdigest() != layer_filename:
+                    LOG.error('Hash verification failed for layer (%s vs %s)'
+                              % (layer_filename, h.hexdigest()))
+                    os.unlink(tf.name)
+                    raise Exception('Hash verification failed for layer %s'
+                                    % layer_filename)
+
+                return (layer_filename, tf.name)
+
+            except (ChunkedEncodingError, ConnectionError) as e:
+                last_exception = e
+                # Clean up temp file if it exists
+                if tf is not None and tf.name and os.path.exists(tf.name):
+                    try:
+                        tf.close()
+                    except Exception:
+                        pass
+                    os.unlink(tf.name)
+
+                if attempt < MAX_RETRIES:
+                    wait_time = RETRY_BACKOFF_BASE ** attempt
+                    LOG.warning(
+                        'Layer download failed (attempt %d/%d): %s. '
+                        'Retrying in %d seconds...'
+                        % (attempt + 1, MAX_RETRIES + 1, str(e), wait_time))
+                    time.sleep(wait_time)
+                else:
+                    LOG.error('Layer download failed after %d attempts: %s'
+                              % (MAX_RETRIES + 1, str(e)))
+                    raise last_exception
+
+        # Should not reach here, but just in case
+        raise Exception('Layer download failed unexpectedly')
 
     def fetch(self, fetch_callback=always_fetch):
         LOG.info('Fetching manifest')
@@ -186,87 +293,38 @@ class Image(ImageInput):
                io.BytesIO(config))
 
         LOG.info('There are %d image layers' % len(manifest['layers']))
+
+        # Submit all layer downloads in parallel
+        # Each entry is (layer_filename, future_or_none) where None means skip
+        layer_futures = []
         for layer in manifest['layers']:
             layer_filename = layer['digest'].split(':')[1]
             if not fetch_callback(layer_filename):
                 LOG.info('Fetch callback says skip layer %s' % layer['digest'])
+                layer_futures.append((layer_filename, None))
+            else:
+                future = self._executor.submit(
+                    self._download_layer, layer, moniker)
+                layer_futures.append((layer_filename, future))
+
+        # Yield results in order, waiting for each download to complete
+        for layer_filename, future in layer_futures:
+            if future is None:
                 yield (constants.IMAGE_LAYER, layer_filename, None)
-                continue
-
-            LOG.info('Fetching layer %s (%d bytes)'
-                     % (layer['digest'], layer['size']))
-
-            # Detect compression from media type (fallback to gzip for compat)
-            layer_media_type = layer.get('mediaType')
-            compression_type = compression.detect_compression_from_media_type(
-                layer_media_type)
-            if compression_type == constants.COMPRESSION_UNKNOWN:
-                # Default to gzip for backwards compatibility
-                compression_type = constants.COMPRESSION_GZIP
-            LOG.info('Layer compression: %s' % compression_type)
-
-            # Retry logic for streaming downloads which can fail mid-transfer
-            last_exception = None
-            for attempt in range(MAX_RETRIES + 1):
+            else:
+                # Wait for this specific download to complete
                 try:
-                    r = self.request_url(
-                        'GET',
-                        '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
-                        % {
-                            'moniker': moniker,
-                            'registry': self.registry,
-                            'image': self.image,
-                            'layer': layer['digest']
-                        },
-                        stream=True)
-
-                    # Use streaming decompressor based on detected compression.
-                    # Unfortunately tarfile doesn't do streaming writes (and we
-                    # need to know the decompressed size before we can write to
-                    # the tarfile), so we stream to a temporary file on disk.
-                    h = hashlib.sha256()
-                    d = compression.StreamingDecompressor(compression_type)
-
-                    with tempfile.NamedTemporaryFile(delete=False) as tf:
-                        LOG.info('Temporary file for layer is %s' % tf.name)
-                        for chunk in r.iter_content(8192):
-                            tf.write(d.decompress(chunk))
-                            h.update(chunk)
-                        # Flush any remaining data
-                        remaining = d.flush()
-                        if remaining:
-                            tf.write(remaining)
-
-                    if h.hexdigest() != layer_filename:
-                        LOG.error('Hash verification failed for layer (%s vs %s)'
-                                  % (layer_filename, h.hexdigest()))
-                        sys.exit(1)
-
+                    result_filename, temp_file_path = future.result()
                     try:
-                        with open(tf.name, 'rb') as f:
-                            yield (constants.IMAGE_LAYER, layer_filename, f)
+                        with open(temp_file_path, 'rb') as f:
+                            yield (constants.IMAGE_LAYER, result_filename, f)
                     finally:
-                        os.unlink(tf.name)
-
-                    # Success - break out of retry loop
-                    break
-
-                except (ChunkedEncodingError, ConnectionError) as e:
-                    last_exception = e
-                    # Clean up temp file if it exists
-                    if 'tf' in dir() and tf.name and os.path.exists(tf.name):
-                        os.unlink(tf.name)
-
-                    if attempt < MAX_RETRIES:
-                        wait_time = RETRY_BACKOFF_BASE ** attempt
-                        LOG.warning(
-                            'Layer download failed (attempt %d/%d): %s. '
-                            'Retrying in %d seconds...'
-                            % (attempt + 1, MAX_RETRIES + 1, str(e), wait_time))
-                        time.sleep(wait_time)
-                    else:
-                        LOG.error('Layer download failed after %d attempts: %s'
-                                  % (MAX_RETRIES + 1, str(e)))
-                        raise last_exception
+                        os.unlink(temp_file_path)
+                except Exception:
+                    # Clean up any remaining futures on error
+                    for _, remaining_future in layer_futures:
+                        if remaining_future is not None:
+                            remaining_future.cancel()
+                    raise
 
         LOG.info('Done')

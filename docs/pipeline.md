@@ -45,6 +45,24 @@ Capabilities:
 - Multi-architecture image selection
 - Manifest parsing (v1, v2, OCI formats)
 - Individual layer blob fetching
+- Parallel layer downloads for improved throughput
+
+**Parallel Downloads:**
+
+Layer blobs are downloaded in parallel using a thread pool:
+
+```
+fetch() generator
+    └── Yield config file first (synchronous)
+    └── Submit all layer downloads to thread pool
+    └── Yield layers in order as downloads complete
+```
+
+Key aspects:
+- All layers download simultaneously to maximize throughput
+- Layers are yielded in order despite parallel download
+- Authentication is thread-safe
+- Default parallelism is 4 threads, configurable via `--parallel`
 
 ### Docker Daemon Input
 
@@ -227,8 +245,8 @@ Key design aspects:
 - Layer order is preserved by collecting futures in submission order
 - Authentication token updates are thread-safe
 - Progress is reported every 10 seconds during finalize
-- Default parallelism is 4 threads, configurable via `--parallel-uploads` or
-  `max_workers` URI option
+- Default parallelism is 4 threads, configurable via `--parallel` or `-j`,
+  or the `max_workers` URI option
 
 ### Docker Daemon Output
 

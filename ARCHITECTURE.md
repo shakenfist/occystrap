@@ -81,7 +81,8 @@ All input sources inherit from the `ImageInput` abstract base class defined in
 
 Input source implementations:
 - `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket
-- `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API
+- `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API,
+  with parallel layer downloads using ThreadPoolExecutor
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
 
 ### Filters
@@ -203,6 +204,30 @@ layers belong to which images.
 
 The `normalize-timestamps` filter rewrites layer tar mtimes for reproducible
 builds, recalculating layer SHAs.
+
+### Parallel Downloads
+
+The registry input (`inputs/registry.py`) uses `ThreadPoolExecutor` for parallel
+layer downloads:
+
+```
+fetch() generator
+    └── Yield config file first (synchronous)
+    └── Submit all layer downloads to ThreadPoolExecutor
+    └── Yield layers in order as downloads complete
+
+_download_layer() worker
+    └── Fetch layer blob from registry
+    └── Decompress to temp file with hash verification
+    └── Retry on connection failures (exponential backoff)
+```
+
+Key design considerations:
+- All layers are downloaded in parallel to maximize throughput
+- Layers are yielded to the pipeline in order despite parallel download
+- Authentication token updates are protected by a threading lock
+- The `max_workers` parameter controls parallelism (default: 4)
+- Temp files are cleaned up after each layer is processed
 
 ### Parallel Compression and Uploads
 
