@@ -209,12 +209,44 @@ builds, recalculating layer SHAs.
 ### Docker Daemon Hybrid Streaming
 
 The Docker daemon input (`inputs/docker.py`) uses a hybrid streaming approach
-to minimize disk usage when exporting images:
+to minimize disk usage when exporting images. It also uses the Docker Engine
+inspect API to pre-compute manifest information, avoiding the need to wait
+for `manifest.json` (which arrives near the end of the tarball stream).
+
+#### Pre-Computed Manifest
+
+Before streaming begins, `fetch()` calls the inspect API
+(`GET /images/{name}/json`) to extract:
+
+- **Config hash** from `Id` field (e.g., `sha256:abc123...`)
+- **DiffIDs** from `RootFS.Layers` (SHA256 hashes of uncompressed layers)
+
+For Docker 25+ OCI format (detected when tarball entries start with
+`blobs/`), DiffIDs directly correspond to blob paths
+(`blobs/sha256/<diffid>`), so the full manifest can be pre-computed before
+any data arrives. This eliminates buffering entirely.
+
+For Docker 1.10-24.x content-addressable format, the config file can be
+identified early (`<config-hex>.json`) and yielded immediately, but layer
+directory names (v1-compat IDs) cannot be predicted from inspect data.
+Layers are still buffered until `manifest.json` arrives for ordering.
+
+When inspect data is unavailable or the pre-computed manifest differs from
+the actual `manifest.json`, occystrap falls back to buffered processing.
+
+See [docs/docker-tarball-formats.md](docs/docker-tarball-formats.md) for
+detailed documentation on tarball formats, entry ordering, and the inspect
+API.
+
+#### Streaming Pipeline
 
 ```
 fetch() generator
+    └── Call inspect API to get config hash and DiffIDs
     └── Stream tarball sequentially (mode='r|')
-    └── Read manifest.json to get expected layer order
+    └── Detect format from first entry (blobs/ prefix = OCI)
+    └── If OCI: pre-compute manifest from DiffIDs
+    └── If legacy: identify config early from inspect hash
     └── For each file in stream:
         ├── If next expected layer: yield directly (no disk I/O)
         └── If out-of-order: buffer to temp file for later
@@ -223,14 +255,13 @@ fetch() generator
 
 Key design considerations:
 - Uses tarfile streaming mode (`r|`) - files read sequentially as they appear
+- Pre-computed manifest enables zero-buffering for Docker 25+ OCI format
+- Early config identification reduces blocking for Docker 1.10-24.x format
 - Optimistic case: layers in order are streamed directly with no temp files
 - Pessimistic case: out-of-order layers buffered to individual temp files
-- For large images with in-order layers, disk usage is near zero
 - Temp files are cleaned up immediately after yielding each layer
 - Temp file location is configurable via `--temp-dir` CLI option
-
-This approach significantly reduces disk usage compared to the original method
-which buffered the entire tarball to a single temp file before processing.
+- Graceful fallback when inspect data is unavailable or incorrect
 
 ### Parallel Downloads
 

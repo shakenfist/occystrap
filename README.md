@@ -478,3 +478,5 @@ For more detailed documentation, see the [docs/](docs/) directory:
 - [Command Reference](docs/command-reference.md) - Complete CLI reference
 - [Pipeline Architecture](docs/pipeline.md) - How the pipeline works
 - [Use Cases](docs/use-cases.md) - Common scenarios and examples
+- [Docker Tarball Formats](docs/docker-tarball-formats.md) - Docker save
+  tarball format reference, entry ordering, and the Docker Engine inspect API
