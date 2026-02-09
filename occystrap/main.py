@@ -73,8 +73,11 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
 
 
 def _fetch(img, output):
-    for image_element in img.fetch(fetch_callback=output.fetch_callback):
-        output.process_image_element(*image_element)
+    ordered = output.requires_ordered_layers
+    for element in img.fetch(
+            fetch_callback=output.fetch_callback,
+            ordered=ordered):
+        output.process_image_element(element)
     output.finalize()
 
 
@@ -300,8 +303,8 @@ def recreate_image(ctx, path, image, tag, tarfile, normalize_timestamps,
     tar = output_tarfile.TarWriter(image, tag, tarfile)
     if normalize_timestamps:
         tar = TimestampNormalizer(tar, timestamp=timestamp)
-    for image_element in d.fetch():
-        tar.process_image_element(*image_element)
+    for element in d.fetch():
+        tar.process_image_element(element)
     tar.finalize()
 
 

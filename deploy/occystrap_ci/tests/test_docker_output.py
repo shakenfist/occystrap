@@ -65,11 +65,14 @@ class DockerWriterTestCase(unittest.TestCase):
             }).encode('utf-8')
 
             writer.process_image_element(
-                constants.CONFIG_FILE,
-                'config.json',
-                io.BytesIO(config_data))
+                constants.ImageElement(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    io.BytesIO(config_data)))
 
-            self.assertEqual('config.json', writer._tar_manifest[0]['Config'])
+            self.assertEqual(
+                'config.json',
+                writer._tar_manifest[0]['Config'])
         finally:
             writer._image_tar.close()
             os.unlink(writer._temp_file.name)
@@ -90,9 +93,10 @@ class DockerWriterTestCase(unittest.TestCase):
 
                 with open(layer_tf.name, 'rb') as f:
                     writer.process_image_element(
-                        constants.IMAGE_LAYER,
-                        'sha256_abc123',
-                        f)
+                        constants.ImageElement(
+                            constants.IMAGE_LAYER,
+                            'sha256_abc123',
+                            f))
 
                 self.assertEqual(
                     ['sha256_abc123/layer.tar'],
@@ -126,11 +130,13 @@ class DockerWriterTestCase(unittest.TestCase):
         writer = output_docker.DockerWriter('test/image', 'latest')
 
         # Add config
-        config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
+        config_data = json.dumps(
+            {'architecture': 'amd64'}).encode('utf-8')
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            constants.ImageElement(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         # Add layer
         layer_tf = tempfile.NamedTemporaryFile(delete=False)
@@ -144,9 +150,10 @@ class DockerWriterTestCase(unittest.TestCase):
 
             with open(layer_tf.name, 'rb') as f:
                 writer.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256_abc123',
-                    f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256_abc123',
+                        f))
         finally:
             os.unlink(layer_tf.name)
 
@@ -175,9 +182,10 @@ class DockerWriterTestCase(unittest.TestCase):
         # Add minimal content
         config_data = b'{}'
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            constants.ImageElement(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         with self.assertRaises(Exception) as ctx:
             writer.finalize()
@@ -199,9 +207,10 @@ class DockerWriterTestCase(unittest.TestCase):
 
         config_data = b'{}'
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            constants.ImageElement(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         writer.finalize()
 
@@ -222,9 +231,10 @@ class DockerWriterTestCase(unittest.TestCase):
 
         config_data = b'{}'
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            constants.ImageElement(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         try:
             writer.finalize()

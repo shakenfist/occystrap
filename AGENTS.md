@@ -15,7 +15,7 @@ various output formats.
 
 1. Create a new file in `occystrap/filters/` (e.g., `myfilter.py`)
 2. Subclass `ImageFilter` from `occystrap.filters.base`
-3. Implement `process_image_element(element_type, name, data)`
+3. Implement `process_image_element(element)` taking an `ImageElement`
 4. Export from `occystrap/filters/__init__.py`
 5. Register in `PipelineBuilder.build_filter()` in `occystrap/pipeline.py`
 
@@ -30,18 +30,22 @@ class MyFilter(ImageFilter):
         super().__init__(wrapped_output)
         self.option = option
 
-    def process_image_element(self, element_type, name, data):
-        if element_type == constants.IMAGE_LAYER and data is not None:
+    def process_image_element(self, element):
+        if (element.element_type == constants.IMAGE_LAYER
+                and element.data is not None):
             # Process the layer, return modified data and new name
-            new_data, new_name = self._process_layer(data)
+            new_data, new_name = self._process_layer(element.data)
             try:
                 self._wrapped.process_image_element(
-                    element_type, new_name, new_data)
+                    constants.ImageElement(
+                        element.element_type, new_name,
+                        new_data,
+                        layer_index=element.layer_index))
             finally:
                 # Clean up temporary files
                 pass
         else:
-            self._wrapped.process_image_element(element_type, name, data)
+            self._wrapped.process_image_element(element)
 ```
 
 ### Adding a New Input Source

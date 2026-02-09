@@ -88,18 +88,22 @@ class InspectFilterTestCase(unittest.TestCase):
                 },
             ])
             inspect_filter.process_image_element(
-                constants.CONFIG_FILE, 'config.json',
-                config_data)
+                constants.ImageElement(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    config_data))
 
             with open(layer_path, 'rb') as f:
                 inspect_filter.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256:abc123', f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256:abc123', f))
 
             with open(layer_path, 'rb') as f:
                 inspect_filter.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256:def456', f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256:def456', f))
 
             inspect_filter.finalize()
 
@@ -151,13 +155,16 @@ class InspectFilterTestCase(unittest.TestCase):
 
                     config_data = self._create_config_data()
                     inspect_filter.process_image_element(
-                        constants.CONFIG_FILE,
-                        'config.json', config_data)
+                        constants.ImageElement(
+                            constants.CONFIG_FILE,
+                            'config.json',
+                            config_data))
 
                     with open(layer_path, 'rb') as f:
                         inspect_filter.process_image_element(
-                            constants.IMAGE_LAYER,
-                            'sha256:abc123', f)
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                'sha256:abc123', f))
 
                     inspect_filter.finalize()
 
@@ -195,14 +202,16 @@ class InspectFilterTestCase(unittest.TestCase):
             with open(small_layer, 'rb') as f:
                 small_size = os.fstat(f.fileno()).st_size
                 inspect_filter.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256:small', f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256:small', f))
 
             with open(large_layer, 'rb') as f:
                 large_size = os.fstat(f.fileno()).st_size
                 inspect_filter.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256:large', f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256:large', f))
 
             inspect_filter.finalize()
 
@@ -237,8 +246,9 @@ class InspectFilterTestCase(unittest.TestCase):
                 image='image/one', tag='v1')
             with open(layer_path, 'rb') as f:
                 filter1.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256:aaa', f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256:aaa', f))
             filter1.finalize()
 
             # Second image
@@ -247,8 +257,9 @@ class InspectFilterTestCase(unittest.TestCase):
                 image='image/two', tag='v2')
             with open(layer_path, 'rb') as f:
                 filter2.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256:bbb', f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256:bbb', f))
             filter2.finalize()
 
             with open(output_jsonl.name, 'r') as f:
@@ -305,14 +316,17 @@ class InspectFilterTestCase(unittest.TestCase):
                     # Process config
                     config_data = self._create_config_data()
                     inspect_before.process_image_element(
-                        constants.CONFIG_FILE,
-                        'config.json', config_data)
+                        constants.ImageElement(
+                            constants.CONFIG_FILE,
+                            'config.json',
+                            config_data))
 
                     # Process layer
                     with open(layer_path, 'rb') as f:
                         inspect_before.process_image_element(
-                            constants.IMAGE_LAYER,
-                            'sha256:original', f)
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                'sha256:original', f))
 
                     inspect_before.finalize()
 
@@ -395,8 +409,9 @@ class InspectFilterTestCase(unittest.TestCase):
 
                     with open(layer_path, 'rb') as f:
                         inspect_before.process_image_element(
-                            constants.IMAGE_LAYER,
-                            'sha256:original', f)
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                'sha256:original', f))
 
                     inspect_before.finalize()
 
@@ -458,19 +473,23 @@ class InspectFilterTestCase(unittest.TestCase):
                 },
             ])
             inspect_filter.process_image_element(
-                constants.CONFIG_FILE, 'config.json',
-                config_data)
+                constants.ImageElement(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    config_data))
 
             # Two real layers (the ENV is empty_layer)
             with open(layer_path, 'rb') as f:
                 inspect_filter.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256:layer1', f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256:layer1', f))
 
             with open(layer_path, 'rb') as f:
                 inspect_filter.process_image_element(
-                    constants.IMAGE_LAYER,
-                    'sha256:layer2', f)
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        'sha256:layer2', f))
 
             inspect_filter.finalize()
 
@@ -542,8 +561,9 @@ class InspectFilterTestCase(unittest.TestCase):
 
                     with open(layer_path, 'rb') as f:
                         inspect_built.process_image_element(
-                            constants.IMAGE_LAYER,
-                            'sha256:original', f)
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                'sha256:original', f))
 
                     inspect_built.finalize()
 

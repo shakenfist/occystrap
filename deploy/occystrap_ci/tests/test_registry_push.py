@@ -40,7 +40,7 @@ class RegistryPushTestCase(testtools.TestCase):
             secure=False, max_workers=4)
 
         for element in src.fetch(fetch_callback=dst.fetch_callback):
-            dst.process_image_element(*element)
+            dst.process_image_element(element)
         dst.finalize()
 
         # Verify by pulling back
@@ -50,8 +50,10 @@ class RegistryPushTestCase(testtools.TestCase):
 
         # Count layers and verify we got content
         layer_count = 0
-        for element in verify.fetch(fetch_callback=always_fetch):
-            if element[0] == constants.IMAGE_LAYER:
+        for element in verify.fetch(
+                fetch_callback=always_fetch):
+            if element.element_type \
+                    == constants.IMAGE_LAYER:
                 layer_count += 1
         self.assertGreater(layer_count, 0)
 
@@ -71,7 +73,7 @@ class RegistryPushTestCase(testtools.TestCase):
             secure=False, max_workers=1)
 
         for element in src.fetch(fetch_callback=dst_seq.fetch_callback):
-            dst_seq.process_image_element(*element)
+            dst_seq.process_image_element(element)
         dst_seq.finalize()
 
         # Push with parallel (max_workers=4)
@@ -84,7 +86,7 @@ class RegistryPushTestCase(testtools.TestCase):
             secure=False, max_workers=4)
 
         for element in src2.fetch(fetch_callback=dst_par.fetch_callback):
-            dst_par.process_image_element(*element)
+            dst_par.process_image_element(element)
         dst_par.finalize()
 
         # Both should have the same number of layers and identical config
@@ -109,11 +111,15 @@ class RegistryPushTestCase(testtools.TestCase):
             secure=False, max_workers=4)
 
         expected_layer_order = []
-        for element in src.fetch(fetch_callback=dst.fetch_callback):
-            dst.process_image_element(*element)
-            if element[0] == constants.IMAGE_LAYER:
-                # Record layer name/digest as we process them
-                expected_layer_order.append(element[1])
+        for element in src.fetch(
+                fetch_callback=dst.fetch_callback):
+            dst.process_image_element(element)
+            if element.element_type \
+                    == constants.IMAGE_LAYER:
+                # Record layer name/digest as we
+                # process them
+                expected_layer_order.append(
+                    element.name)
         dst.finalize()
 
         # Verify layer order matches
@@ -138,7 +144,7 @@ class RegistryPushTestCase(testtools.TestCase):
             'localhost:5000', dst_image, 'v1',
             secure=False, max_workers=4)
         for element in src1.fetch(fetch_callback=dst1.fetch_callback):
-            dst1.process_image_element(*element)
+            dst1.process_image_element(element)
         dst1.finalize()
 
         first_layer_count = len(dst1._layers)
@@ -151,7 +157,7 @@ class RegistryPushTestCase(testtools.TestCase):
             'localhost:5000', dst_image, 'v2',
             secure=False, max_workers=4)
         for element in src2.fetch(fetch_callback=dst2.fetch_callback):
-            dst2.process_image_element(*element)
+            dst2.process_image_element(element)
         dst2.finalize()
 
         second_layer_count = len(dst2._layers)
@@ -179,17 +185,22 @@ class RegistryPushTestCase(testtools.TestCase):
             'localhost:5000', dst_image, tag,
             secure=False, max_workers=4)
 
-        for element in src.fetch(fetch_callback=dst.fetch_callback):
-            element_type, name, data = element
-            if element_type == constants.CONFIG_FILE and data:
-                data.seek(0)
-                original_config = data.read()
-                data.seek(0)
-            elif element_type == constants.IMAGE_LAYER and data:
-                data.seek(0)
-                original_layer_sizes.append(len(data.read()))
-                data.seek(0)
-            dst.process_image_element(*element)
+        for element in src.fetch(
+                fetch_callback=dst.fetch_callback):
+            if (element.element_type
+                    == constants.CONFIG_FILE
+                    and element.data):
+                element.data.seek(0)
+                original_config = element.data.read()
+                element.data.seek(0)
+            elif (element.element_type
+                    == constants.IMAGE_LAYER
+                    and element.data):
+                element.data.seek(0)
+                original_layer_sizes.append(
+                    len(element.data.read()))
+                element.data.seek(0)
+            dst.process_image_element(element)
         dst.finalize()
 
         # Pull back and verify
@@ -200,12 +211,16 @@ class RegistryPushTestCase(testtools.TestCase):
         verified_config = None
         verified_layer_count = 0
 
-        for element in verify.fetch(fetch_callback=always_fetch):
-            element_type, name, data = element
-            if element_type == constants.CONFIG_FILE and data:
-                data.seek(0)
-                verified_config = data.read()
-            elif element_type == constants.IMAGE_LAYER and data:
+        for element in verify.fetch(
+                fetch_callback=always_fetch):
+            if (element.element_type
+                    == constants.CONFIG_FILE
+                    and element.data):
+                element.data.seek(0)
+                verified_config = element.data.read()
+            elif (element.element_type
+                    == constants.IMAGE_LAYER
+                    and element.data):
                 verified_layer_count += 1
 
         # Config content should be identical

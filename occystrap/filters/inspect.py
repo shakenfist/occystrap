@@ -79,26 +79,27 @@ class InspectFilter(ImageFilter):
             return 'sha256:%s' % name
         return name
 
-    def process_image_element(self, element_type, name, data):
-        """Process an image element, recording layer metadata."""
-        if element_type == constants.CONFIG_FILE and data is not None:
-            self._parse_config(data)
+    def process_image_element(self, element):
+        """Process an image element, recording layer
+        metadata."""
+        if (element.element_type == constants.CONFIG_FILE
+                and element.data is not None):
+            self._parse_config(element.data)
 
-        if element_type == constants.IMAGE_LAYER:
-            if data is not None:
-                data.seek(0, 2)
-                size = data.tell()
-                data.seek(0)
+        if element.element_type == constants.IMAGE_LAYER:
+            if element.data is not None:
+                element.data.seek(0, 2)
+                size = element.data.tell()
+                element.data.seek(0)
             else:
                 size = 0
-            self._layers.append((name, size))
+            self._layers.append((element.name, size))
 
         # Pass through to wrapped output
         if self._wrapped is not None:
-            if data is not None:
-                data.seek(0)
-            self._wrapped.process_image_element(
-                element_type, name, data)
+            if element.data is not None:
+                element.data.seek(0)
+            self._wrapped.process_image_element(element)
 
     def _build_layer_entries(self):
         """Build layer entry dicts by correlating layers with

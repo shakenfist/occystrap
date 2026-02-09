@@ -113,17 +113,19 @@ class SearchFilter(ImageFilter):
         except tarfile.TarError as e:
             LOG.error('Failed to read layer %s: %s' % (name, e))
 
-    def process_image_element(self, element_type, name, data):
-        """Process an image element, searching layers for matches."""
+    def process_image_element(self, element):
+        """Process an image element, searching layers
+        for matches."""
         # Search layers
-        if element_type == constants.IMAGE_LAYER and data is not None:
-            self._search_layer(name, data)
+        if (element.element_type == constants.IMAGE_LAYER
+                and element.data is not None):
+            self._search_layer(element.name, element.data)
 
         # Pass through to wrapped output if present
         if self._wrapped is not None:
-            if data is not None:
-                data.seek(0)  # Reset for next consumer
-            self._wrapped.process_image_element(element_type, name, data)
+            if element.data is not None:
+                element.data.seek(0)
+            self._wrapped.process_image_element(element)
 
     def _print_results(self):
         """Print search results to stdout."""

@@ -35,7 +35,7 @@ LOG.setLevel(logging.INFO)
 DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
 
 
-def always_fetch():
+def always_fetch(digest):
     return True
 
 
@@ -200,7 +200,8 @@ class Image(ImageInput):
         # Should not reach here, but just in case
         raise Exception('Layer download failed unexpectedly')
 
-    def fetch(self, fetch_callback=always_fetch):
+    def fetch(self, fetch_callback=always_fetch,
+              ordered=True):
         LOG.info('Fetching manifest')
         moniker = 'https'
         if not self.secure:
@@ -208,7 +209,8 @@ class Image(ImageInput):
 
         r = self.request_url(
             'GET',
-            '%(moniker)s://%(registry)s/v2/%(image)s/manifests/%(tag)s'
+            '%(moniker)s://%(registry)s/v2/%(image)s'
+            '/manifests/%(tag)s'
             % {
                 'moniker': moniker,
                 'registry': self.registry,
@@ -234,22 +236,31 @@ class Image(ImageInput):
                 constants.MEDIA_TYPE_OCI_INDEX]:
             for m in r.json()['manifests']:
                 if 'variant' in m['platform']:
-                    LOG.info('Found manifest for %s on %s %s'
-                             % (m['platform']['os'],
-                                m['platform']['architecture'],
-                                m['platform']['variant']))
+                    LOG.info(
+                        'Found manifest for %s on %s %s'
+                        % (m['platform']['os'],
+                           m['platform']['architecture'],
+                           m['platform']['variant']))
                 else:
-                    LOG.info('Found manifest for %s on %s'
-                             % (m['platform']['os'],
-                                m['platform']['architecture']))
+                    LOG.info(
+                        'Found manifest for %s on %s'
+                        % (m['platform']['os'],
+                           m['platform'][
+                               'architecture']))
 
-                if (m['platform']['os'] == self.os and
-                    m['platform']['architecture'] == self.architecture and
-                        m['platform'].get('variant', '') == self.variant):
+                if (m['platform']['os'] == self.os
+                        and m['platform'][
+                            'architecture']
+                        == self.architecture
+                        and m['platform'].get(
+                            'variant', '')
+                        == self.variant):
                     LOG.info('Fetching matching manifest')
                     r = self.request_url(
                         'GET',
-                        '%(moniker)s://%(registry)s/v2/%(image)s/manifests/%(tag)s'
+                        '%(moniker)s://%(registry)s'
+                        '/v2/%(image)s/manifests'
+                        '/%(tag)s'
                         % {
                             'moniker': moniker,
                             'registry': self.registry,
@@ -257,24 +268,30 @@ class Image(ImageInput):
                             'tag': m['digest']
                         },
                         headers={
-                            'Accept': ('%s, %s' % (
-                                constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
-                                constants.MEDIA_TYPE_OCI_MANIFEST))
+                            'Accept': (
+                                '%s, %s' % (
+                                    constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                                    constants.MEDIA_TYPE_OCI_MANIFEST))
                         })
                     manifest = r.json()
-                    config_digest = manifest['config']['digest']
+                    config_digest = \
+                        manifest['config']['digest']
 
             if not config_digest:
-                raise Exception('Could not find a matching manifest for this '
-                                'os / architecture / variant')
+                raise Exception(
+                    'Could not find a matching'
+                    ' manifest for this'
+                    ' os / architecture / variant')
         else:
-            raise Exception('Unknown manifest content type %s!' %
-                            r.headers['Content-Type'])
+            raise Exception(
+                'Unknown manifest content type %s!'
+                % r.headers['Content-Type'])
 
         LOG.info('Fetching config file')
         r = self.request_url(
             'GET',
-            '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(config)s'
+            '%(moniker)s://%(registry)s/v2/%(image)s'
+            '/blobs/%(config)s'
             % {
                 'moniker': moniker,
                 'registry': self.registry,
@@ -285,47 +302,117 @@ class Image(ImageInput):
         h = hashlib.sha256()
         h.update(config)
         if h.hexdigest() != config_digest.split(':')[1]:
-            LOG.error('Hash verification failed for image config blob (%s vs %s)'
-                      % (config_digest.split(':')[1], h.hexdigest()))
+            LOG.error(
+                'Hash verification failed for image'
+                ' config blob (%s vs %s)'
+                % (config_digest.split(':')[1],
+                   h.hexdigest()))
             sys.exit(1)
 
-        config_filename = ('%s.json' % config_digest.split(':')[1])
-        yield (constants.CONFIG_FILE, config_filename,
-               io.BytesIO(config))
+        config_filename = (
+            '%s.json' % config_digest.split(':')[1])
+        yield constants.ImageElement(
+            constants.CONFIG_FILE, config_filename,
+            io.BytesIO(config))
 
-        LOG.info('There are %d image layers' % len(manifest['layers']))
+        LOG.info('There are %d image layers'
+                 % len(manifest['layers']))
 
         # Submit all layer downloads in parallel
-        # Each entry is (layer_filename, future_or_none) where None means skip
+        # Each entry is (layer_idx, layer_filename,
+        # future_or_none) where None means skip
         layer_futures = []
-        for layer in manifest['layers']:
-            layer_filename = layer['digest'].split(':')[1]
+        for layer_idx, layer in enumerate(
+                manifest['layers']):
+            layer_filename = \
+                layer['digest'].split(':')[1]
             if not fetch_callback(layer_filename):
-                LOG.info('Fetch callback says skip layer %s' % layer['digest'])
-                layer_futures.append((layer_filename, None))
+                LOG.info(
+                    'Fetch callback says skip'
+                    ' layer %s' % layer['digest'])
+                layer_futures.append(
+                    (layer_idx, layer_filename, None))
             else:
                 future = self._executor.submit(
-                    self._download_layer, layer, moniker)
-                layer_futures.append((layer_filename, future))
+                    self._download_layer, layer,
+                    moniker)
+                layer_futures.append(
+                    (layer_idx, layer_filename,
+                     future))
 
-        # Yield results in order, waiting for each download to complete
-        for layer_filename, future in layer_futures:
-            if future is None:
-                yield (constants.IMAGE_LAYER, layer_filename, None)
-            else:
-                # Wait for this specific download to complete
+        if not ordered:
+            # Yield layers as they complete for
+            # maximum throughput
+            from concurrent.futures import \
+                as_completed
+            # Build future -> (index, filename) map
+            future_map = {}
+            for layer_idx, layer_filename, future \
+                    in layer_futures:
+                if future is None:
+                    # Skipped layers yield immediately
+                    idx = layer_idx
+                    yield constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        layer_filename, None,
+                        layer_index=idx)
+                else:
+                    future_map[future] = (
+                        layer_idx, layer_filename)
+
+            for future in as_completed(future_map):
+                layer_idx, layer_filename = \
+                    future_map[future]
                 try:
-                    result_filename, temp_file_path = future.result()
+                    result_filename, temp_file_path \
+                        = future.result()
                     try:
-                        with open(temp_file_path, 'rb') as f:
-                            yield (constants.IMAGE_LAYER, result_filename, f)
+                        with open(
+                                temp_file_path,
+                                'rb') as f:
+                            yield \
+                                constants.ImageElement(
+                                    constants.IMAGE_LAYER,
+                                    result_filename, f,
+                                    layer_index=layer_idx
+                                )
                     finally:
                         os.unlink(temp_file_path)
                 except Exception:
-                    # Clean up any remaining futures on error
-                    for _, remaining_future in layer_futures:
-                        if remaining_future is not None:
-                            remaining_future.cancel()
+                    for ft in future_map:
+                        ft.cancel()
                     raise
+        else:
+            # Yield results in order, waiting for
+            # each download to complete
+            for layer_idx, layer_filename, future \
+                    in layer_futures:
+                if future is None:
+                    yield constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        layer_filename, None)
+                else:
+                    try:
+                        result_filename, \
+                            temp_file_path = \
+                            future.result()
+                        try:
+                            with open(
+                                    temp_file_path,
+                                    'rb') as f:
+                                yield \
+                                    constants.ImageElement(
+                                        constants.IMAGE_LAYER,
+                                        result_filename,
+                                        f)
+                        finally:
+                            os.unlink(temp_file_path)
+                    except Exception:
+                        for _, _, remaining_future \
+                                in layer_futures:
+                            if remaining_future \
+                                    is not None:
+                                remaining_future.cancel()
+                        raise
 
         LOG.info('Done')

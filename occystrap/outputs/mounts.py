@@ -24,13 +24,22 @@ class MountWriter(ImageOutput):
 
         self.tar_manifest = [{
             'Layers': [],
-            'RepoTags': ['%s:%s' % (self.image.split('/')[-1], self.tag)]
+            'RepoTags': [
+                '%s:%s' % (self.image.split('/')[-1],
+                           self.tag)]
         }]
 
         self.bundle = {}
 
+        # For out-of-order layer delivery
+        self._indexed_layers = []
+
         if not os.path.exists(self.image_path):
             os.makedirs(self.image_path)
+
+    @property
+    def requires_ordered_layers(self):
+        return False
 
     def _manifest_filename(self):
         return 'manifest'
@@ -40,65 +49,110 @@ class MountWriter(ImageOutput):
         LOG.info('Layer file is %s' % layer_file_in_dir)
         return not os.path.exists(layer_file_in_dir)
 
-    def process_image_element(self, element_type, name, data):
-        if element_type == constants.CONFIG_FILE:
-            config_data = data.read()
-            with open(os.path.join(self.image_path, name), 'wb') as f:
+    def process_image_element(self, element):
+        if element.element_type == constants.CONFIG_FILE:
+            config_data = element.data.read()
+            with open(os.path.join(
+                    self.image_path,
+                    element.name), 'wb') as f:
                 d = json.loads(config_data)
-                f.write(json.dumps(d, indent=4, sort_keys=True).encode('ascii'))
-            self.tar_manifest[0]['Config'] = name
-            self._track_element(element_type, len(config_data))
+                f.write(json.dumps(
+                    d, indent=4,
+                    sort_keys=True).encode('ascii'))
+            self.tar_manifest[0]['Config'] = \
+                element.name
+            self._track_element(
+                element.element_type, len(config_data))
 
-        elif element_type == constants.IMAGE_LAYER:
-            layer_dir = os.path.join(self.image_path, name)
+        elif element.element_type == \
+                constants.IMAGE_LAYER:
+            layer_dir = os.path.join(
+                self.image_path, element.name)
             if not os.path.exists(layer_dir):
                 os.makedirs(layer_dir)
 
-            layer_file = os.path.join(name, 'layer.tar')
-            self.tar_manifest[0]['Layers'].append(layer_file)
+            layer_file = os.path.join(
+                element.name, 'layer.tar')
 
-            layer_file_in_dir = os.path.join(self.image_path, layer_file)
+            if element.layer_index is not None:
+                self._indexed_layers.append(
+                    (element.layer_index, layer_file))
+            else:
+                self.tar_manifest[0][
+                    'Layers'].append(layer_file)
+
+            layer_file_in_dir = os.path.join(
+                self.image_path, layer_file)
             layer_size = 0
             if os.path.exists(layer_file_in_dir):
-                LOG.info('Skipping layer already in output directory')
-                layer_size = os.path.getsize(layer_file_in_dir)
+                LOG.info(
+                    'Skipping layer already in'
+                    ' output directory')
+                layer_size = os.path.getsize(
+                    layer_file_in_dir)
             else:
-                with open(layer_file_in_dir, 'wb') as f:
-                    d = data.read(102400)
+                with open(
+                        layer_file_in_dir, 'wb') as f:
+                    d = element.data.read(102400)
                     while d:
                         layer_size += len(d)
                         f.write(d)
-                        d = data.read(102400)
+                        d = element.data.read(102400)
 
-                layer_dir_in_dir = os.path.join(self.image_path, name, 'layer')
+                layer_dir_in_dir = os.path.join(
+                    self.image_path, element.name,
+                    'layer')
                 os.makedirs(layer_dir_in_dir)
-                with tarfile.open(layer_file_in_dir) as layer:
+                with tarfile.open(
+                        layer_file_in_dir) as layer:
                     for mem in layer.getmembers():
-                        dirname, filename = os.path.split(mem.name)
+                        dirname, filename = \
+                            os.path.split(mem.name)
 
-                        # Some light reading on how this works...
+                        # Some light reading on how this
+                        # works...
                         # https://www.madebymikal.com/interpreting-whiteout-files-in-docker-image-layers/
                         # https://github.com/opencontainers/image-spec/blob/main/layer.md#opaque-whiteout
                         if filename == '.wh..wh..opq':
-                            # A deleted directory, but only for layers below
-                            # this one.
-                            os.setxattr(os.path.join(layer_dir_in_dir, dirname),
-                                        'trusted.overlay.opaque', b'y')
+                            # A deleted directory, but
+                            # only for layers below this
+                            # one.
+                            os.setxattr(
+                                os.path.join(
+                                    layer_dir_in_dir,
+                                    dirname),
+                                'trusted.overlay.opaque',
+                                b'y')
 
-                        elif filename.startswith('.wh.'):
-                            # A single deleted element, which might not be a
-                            # file.
-                            os.mknod(os.path.join(layer_dir_in_dir,
-                                     mem.name[4:]),
-                                     mode=stat.S_IFCHR, device=0)
+                        elif filename.startswith(
+                                '.wh.'):
+                            # A single deleted element,
+                            # which might not be a file.
+                            os.mknod(
+                                os.path.join(
+                                    layer_dir_in_dir,
+                                    mem.name[4:]),
+                                mode=stat.S_IFCHR,
+                                device=0)
 
                         else:
                             path = mem.name
-                            layer.extract(path, path=layer_dir_in_dir)
+                            layer.extract(
+                                path,
+                                path=layer_dir_in_dir)
 
-            self._track_element(element_type, layer_size)
+            self._track_element(
+                element.element_type, layer_size)
 
     def finalize(self):
+        # Reconstruct layer order from indices
+        if self._indexed_layers:
+            self._indexed_layers.sort(
+                key=lambda x: x[0])
+            self.tar_manifest[0]['Layers'] = [
+                name for _, name
+                in self._indexed_layers]
+
         manifest_filename = self._manifest_filename() + '.json'
         manifest_path = os.path.join(self.image_path, manifest_filename)
         with open(manifest_path, 'wb') as f:

@@ -4,9 +4,9 @@ from abc import ABC, abstractmethod
 class ImageInput(ABC):
     """Abstract base class for image input sources.
 
-    Input sources are responsible for fetching container images from various
-    sources (registries, local Docker daemon, tarfiles) and yielding image
-    elements (config files and layers) in a standard format.
+    Input sources are responsible for fetching container
+    images from various sources (registries, local Docker
+    daemon, tarfiles) and yielding ImageElement objects.
     """
 
     @property
@@ -22,19 +22,20 @@ class ImageInput(ABC):
         pass
 
     @abstractmethod
-    def fetch(self, fetch_callback=None):
+    def fetch(self, fetch_callback=None, ordered=True):
         """Fetch image elements (config files and layers).
 
         Args:
-            fetch_callback: Optional callable that takes a layer digest and
-                returns True if the layer should be fetched, False to skip.
+            fetch_callback: Optional callable that takes
+                a layer digest and returns True if the
+                layer should be fetched, False to skip.
                 If None, all layers are fetched.
+            ordered: If True, yield layers in manifest
+                order (default). If False, yield layers
+                as they become available and set
+                layer_index on each ImageElement.
 
         Yields:
-            Tuples of (element_type, name, data) where:
-            - element_type is constants.CONFIG_FILE or constants.IMAGE_LAYER
-            - name is the element identifier (config filename or layer digest)
-            - data is a file-like object containing the element data,
-              or None if the layer was skipped by fetch_callback
+            ImageElement instances.
         """
         pass

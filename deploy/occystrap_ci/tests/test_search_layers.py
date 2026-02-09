@@ -24,7 +24,7 @@ class SearchLayersTestCase(testtools.TestCase):
         img = input_registry.Image(
             'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
-            searcher.process_image_element(*image_element)
+            searcher.process_image_element(image_element)
         searcher.finalize()
 
         # busybox should have ash and sh
@@ -43,7 +43,7 @@ class SearchLayersTestCase(testtools.TestCase):
         img = input_registry.Image(
             'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
-            searcher.process_image_element(*image_element)
+            searcher.process_image_element(image_element)
         searcher.finalize()
 
         self.assertEqual(0, len(searcher.results))
@@ -58,7 +58,7 @@ class SearchLayersTestCase(testtools.TestCase):
         img = input_registry.Image(
             'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
-            searcher.process_image_element(*image_element)
+            searcher.process_image_element(image_element)
         searcher.finalize()
 
         # Should find ash and sh
@@ -78,7 +78,7 @@ class SearchLayersScriptFriendlyTestCase(testtools.TestCase):
         img = input_registry.Image(
             'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
-            searcher.process_image_element(*image_element)
+            searcher.process_image_element(image_element)
 
         # Capture stdout during finalize
         old_stdout = sys.stdout
@@ -116,7 +116,7 @@ class SearchLayersScriptFriendlyTestCase(testtools.TestCase):
         img = input_registry.Image(
             'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
         for image_element in img.fetch(fetch_callback=searcher.fetch_callback):
-            searcher.process_image_element(*image_element)
+            searcher.process_image_element(image_element)
 
         # Capture stdout during finalize
         old_stdout = sys.stdout
@@ -144,7 +144,7 @@ class SearchLayersTarfileTestCase(testtools.TestCase):
             img = input_registry.Image(
                 'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
             for image_element in img.fetch(fetch_callback=tar.fetch_callback):
-                tar.process_image_element(*image_element)
+                tar.process_image_element(image_element)
             tar.finalize()
 
             # Now search the tarball
@@ -152,7 +152,7 @@ class SearchLayersTarfileTestCase(testtools.TestCase):
             searcher = SearchFilter(None, '*sh')
             for image_element in tarball_img.fetch(
                     fetch_callback=searcher.fetch_callback):
-                searcher.process_image_element(*image_element)
+                searcher.process_image_element(image_element)
             searcher.finalize()
 
             # Should find shells
@@ -179,7 +179,7 @@ class SearchLayersTarfileTestCase(testtools.TestCase):
             img = input_registry.Image(
                 'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
             for image_element in img.fetch(fetch_callback=tar.fetch_callback):
-                tar.process_image_element(*image_element)
+                tar.process_image_element(image_element)
             tar.finalize()
 
             # Now search the tarball with script-friendly output
@@ -189,7 +189,7 @@ class SearchLayersTarfileTestCase(testtools.TestCase):
                 script_friendly=True)
             for image_element in tarball_img.fetch(
                     fetch_callback=searcher.fetch_callback):
-                searcher.process_image_element(*image_element)
+                searcher.process_image_element(image_element)
 
             # Capture stdout during finalize
             old_stdout = sys.stdout

@@ -224,17 +224,22 @@ class Image(ImageInput):
         except OSError:
             pass
 
-    def fetch(self, fetch_callback=always_fetch):
-        """Fetch image layers from the local Docker daemon.
+    def fetch(self, fetch_callback=always_fetch,
+              ordered=True):
+        """Fetch image layers from the local Docker
+        daemon.
 
-        Uses the inspect API to pre-compute the manifest for
-        Docker 25+ (OCI format), eliminating the need to wait
-        for manifest.json. For older formats (1.10-24.x), the
-        config file is identified early from inspect data.
+        Uses the inspect API to pre-compute the manifest
+        for Docker 25+ (OCI format), eliminating the need
+        to wait for manifest.json. For older formats
+        (1.10-24.x), the config file is identified early
+        from inspect data.
 
-        Uses hybrid streaming: processes layers directly when
-        they arrive in expected order, buffers out-of-order
-        layers to temp files. This minimizes disk usage.
+        Uses hybrid streaming: processes layers directly
+        when they arrive in expected order, buffers
+        out-of-order layers to temp files. When
+        ordered=False, yields layers immediately as they
+        arrive with layer_index set.
         """
         ref = self._get_image_reference()
         LOG.info('Fetching image %s from Docker daemon at %s'
@@ -271,6 +276,7 @@ class Image(ImageInput):
         format_detected = False
         next_layer_idx = 0
         config_yielded = False
+        yielded_indices = set()
 
         # Reference counts for layer paths. When the same
         # blob path appears multiple times in the manifest
@@ -278,6 +284,14 @@ class Image(ImageInput):
         # must keep the temp file alive until all references
         # are consumed.
         layer_refcounts = {}
+
+        # Per-path index queues for duplicate blob paths.
+        # When the same blob appears multiple times in the
+        # manifest (e.g. ['blobA', 'blobB', 'blobA']),
+        # each reference must get a unique layer_index.
+        # expected_layers.index() always returns the first
+        # occurrence, so we use a queue per path instead.
+        layer_index_queues = {}
 
         # Stats for summary
         layers_streamed = 0
@@ -287,20 +301,28 @@ class Image(ImageInput):
         buffered = {}
 
         def _compute_refcounts():
-            """Compute reference counts for layer paths.
+            """Compute reference counts and index queues.
 
             Some manifests reference the same blob path
             multiple times (e.g., empty layers from
             ENV/CMD). We track how many references
             remain so temp files are kept alive until
             the last reference is consumed.
+
+            Also builds per-path index queues so that
+            duplicate blob paths get unique layer_index
+            values in unordered mode.
             """
-            nonlocal layer_refcounts
+            nonlocal layer_refcounts, layer_index_queues
             layer_refcounts = {}
+            layer_index_queues = {}
             if expected_layers:
-                for path in expected_layers:
+                for i, path in enumerate(
+                        expected_layers):
                     layer_refcounts[path] = \
                         layer_refcounts.get(path, 0) + 1
+                    layer_index_queues.setdefault(
+                        path, []).append(i)
                 dupes = {
                     k: v for k, v
                     in layer_refcounts.items()
@@ -374,8 +396,24 @@ class Image(ImageInput):
             layer_refcounts[layer_path] = remaining
             return remaining <= 0
 
-        def _yield_layer(layer_path, from_buffer=False):
-            """Yield a layer from a buffered temp file."""
+        def _layer_index_for(layer_path):
+            """Get layer_index for unordered mode.
+
+            Uses per-path index queues to handle
+            duplicate blob paths correctly. Each call
+            pops the next index for the given path.
+            """
+            if ordered or not expected_layers:
+                return None
+            q = layer_index_queues.get(layer_path)
+            if q:
+                return q.pop(0)
+            return None
+
+        def _yield_layer(layer_path,
+                         from_buffer=False):
+            """Yield a layer from a buffered temp
+            file."""
             layer_digest = self._digest_from_path(
                 layer_path)
             last_ref = _consume_ref(layer_path)
@@ -384,15 +422,19 @@ class Image(ImageInput):
                 buffered.pop(layer_path)
             fh = open(path, 'rb')
             size = os.path.getsize(path)
-            source = 'buffer' if from_buffer else 'temp'
+            source = ('buffer' if from_buffer
+                      else 'temp')
             LOG.info(
                 '%s Yielding layer %s from %s'
                 ' (%d bytes)'
                 % (_layer_progress(), layer_digest,
                    source, size))
             try:
-                yield (constants.IMAGE_LAYER,
-                       layer_digest, fh)
+                yield constants.ImageElement(
+                    constants.IMAGE_LAYER,
+                    layer_digest, fh,
+                    layer_index=_layer_index_for(
+                        layer_path))
             finally:
                 fh.close()
                 if last_ref:
@@ -407,22 +449,29 @@ class Image(ImageInput):
             while (expected_layers
                    and next_layer_idx
                    < len(expected_layers)
-                   and expected_layers[next_layer_idx]
+                   and expected_layers[
+                       next_layer_idx]
                    in buffered):
                 layer_path = \
                     expected_layers[next_layer_idx]
-                layer_digest = self._digest_from_path(
-                    layer_path)
+                layer_digest = \
+                    self._digest_from_path(
+                        layer_path)
 
-                if not fetch_callback(layer_digest):
+                if not fetch_callback(
+                        layer_digest):
                     _consume_ref(layer_path)
                     LOG.info(
                         '%s Skipping layer %s'
                         ' (fetch callback)'
                         % (_layer_progress(),
                            layer_digest))
-                    yield (constants.IMAGE_LAYER,
-                           layer_digest, None)
+                    yield constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        layer_digest, None,
+                        layer_index=(
+                            _layer_index_for(
+                                layer_path)))
                 else:
                     for elem in _yield_layer(
                             layer_path,
@@ -526,7 +575,7 @@ class Image(ImageInput):
                                 config_filename)
                         config_data = fh.read()
                         self._cleanup_file(fh, path)
-                        yield (
+                        yield constants.ImageElement(
                             constants.CONFIG_FILE,
                             config_filename,
                             io.BytesIO(config_data))
@@ -552,7 +601,7 @@ class Image(ImageInput):
                             ' (%d bytes)'
                             % (config_filename,
                                len(config_data)))
-                        yield (
+                        yield constants.ImageElement(
                             constants.CONFIG_FILE,
                             config_filename,
                             io.BytesIO(config_data))
@@ -579,28 +628,37 @@ class Image(ImageInput):
                         ' (%d bytes)'
                         % (config_filename,
                            len(config_data)))
-                    yield (constants.CONFIG_FILE,
-                           config_filename,
-                           io.BytesIO(config_data))
+                    yield constants.ImageElement(
+                        constants.CONFIG_FILE,
+                        config_filename,
+                        io.BytesIO(config_data))
                     config_yielded = True
 
                     for elem in flush_ready_layers():
                         yield elem
                     continue
 
-                # --- Next expected layer ---
+                # --- Known layer (any order) ---
                 if (config_yielded
-                        and next_layer_idx
-                        < len(expected_layers)
+                        and expected_layers
                         and member.name
-                        == expected_layers[
-                            next_layer_idx]):
+                        in expected_layers):
                     layer_path = member.name
                     layer_digest = \
                         self._digest_from_path(
                             layer_path)
+                    idx = _layer_index_for(
+                        layer_path)
 
-                    if not fetch_callback(
+                    # In ordered mode, only handle
+                    # the next expected layer here;
+                    # out-of-order layers fall through
+                    # to the buffering section below.
+                    if ordered and member.name \
+                            != expected_layers[
+                                next_layer_idx]:
+                        pass  # fall through
+                    elif not fetch_callback(
                             layer_digest):
                         _consume_ref(layer_path)
                         LOG.info(
@@ -608,8 +666,18 @@ class Image(ImageInput):
                             ' (fetch callback)'
                             % (_layer_progress(),
                                layer_digest))
-                        yield (constants.IMAGE_LAYER,
-                               layer_digest, None)
+                        yield constants.ImageElement(
+                            constants.IMAGE_LAYER,
+                            layer_digest, None,
+                            layer_index=idx)
+                        if ordered:
+                            next_layer_idx += 1
+                            for elem in \
+                                    flush_ready_layers():
+                                yield elem
+                        elif idx is not None:
+                            yielded_indices.add(idx)
+                        continue
                     else:
                         # Buffer to temp file using
                         # chunked I/O, then yield
@@ -628,9 +696,11 @@ class Image(ImageInput):
                             % (_layer_progress(),
                                layer_digest, size))
                         try:
-                            yield (
-                                constants.IMAGE_LAYER,
-                                layer_digest, fh)
+                            yield \
+                                constants.ImageElement(
+                                    constants.IMAGE_LAYER,
+                                    layer_digest, fh,
+                                    layer_index=idx)
                         finally:
                             fh.close()
                             if last_ref:
@@ -645,11 +715,14 @@ class Image(ImageInput):
                                     layer_path
                                 ] = temp_path
                         layers_streamed += 1
-                    next_layer_idx += 1
-
-                    for elem in flush_ready_layers():
-                        yield elem
-                    continue
+                        if ordered:
+                            next_layer_idx += 1
+                            for elem in \
+                                    flush_ready_layers():
+                                yield elem
+                        elif idx is not None:
+                            yielded_indices.add(idx)
+                        continue
 
                 # --- Out-of-order or unknown file ---
                 if member.isfile():
@@ -675,12 +748,13 @@ class Image(ImageInput):
                     buffered, config_filename)
                 config_data = fh.read()
                 self._cleanup_file(fh, path)
-                yield (constants.CONFIG_FILE,
-                       config_filename,
-                       io.BytesIO(config_data))
+                yield constants.ImageElement(
+                    constants.CONFIG_FILE,
+                    config_filename,
+                    io.BytesIO(config_data))
                 config_yielded = True
 
-            # Yield remaining buffered layers in order
+            # Yield remaining buffered layers
             if expected_layers \
                     and next_layer_idx \
                     < len(expected_layers):
@@ -688,31 +762,43 @@ class Image(ImageInput):
                     len(expected_layers)
                     - next_layer_idx)
                 LOG.info(
-                    '%d layer(s) remaining in buffer,'
-                    ' yielding in order' % remaining)
+                    '%d layer(s) remaining in'
+                    ' buffer' % remaining)
 
             while expected_layers \
                     and next_layer_idx \
                     < len(expected_layers):
+                # Skip layers already yielded during
+                # streaming (unordered mode)
+                if next_layer_idx in yielded_indices:
+                    next_layer_idx += 1
+                    continue
+
                 layer_path = \
                     expected_layers[next_layer_idx]
                 layer_digest = \
-                    self._digest_from_path(layer_path)
+                    self._digest_from_path(
+                        layer_path)
 
                 if layer_path not in buffered:
                     raise Exception(
                         'Layer %s not found in'
                         ' tarball' % layer_path)
 
-                if not fetch_callback(layer_digest):
+                if not fetch_callback(
+                        layer_digest):
                     _consume_ref(layer_path)
                     LOG.info(
                         '%s Skipping layer %s'
                         ' (fetch callback)'
                         % (_layer_progress(),
                            layer_digest))
-                    yield (constants.IMAGE_LAYER,
-                           layer_digest, None)
+                    yield constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        layer_digest, None,
+                        layer_index=(
+                            _layer_index_for(
+                                layer_path)))
                 else:
                     for elem in _yield_layer(
                             layer_path,
