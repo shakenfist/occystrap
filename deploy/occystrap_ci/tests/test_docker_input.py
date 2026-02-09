@@ -695,6 +695,281 @@ class DockerInputTestCase(unittest.TestCase):
         finally:
             os.unlink(tarball_path)
 
+    @mock.patch(
+        'occystrap.inputs.docker'
+        '.requests_unixsocket.Session')
+    def test_fetch_oci_unordered(
+            self, mock_session_class):
+        """Test OCI format with ordered=False.
+
+        Layers should be yielded with layer_index set,
+        allowing outputs to reconstruct manifest order.
+        """
+        config_hex = 'cfgunord1'
+        diff_ids = ['diffaaa', 'diffbbb', 'diffccc']
+
+        tarball_path = self._create_oci_tarball(
+            config_data={
+                'architecture': 'amd64',
+                'os': 'linux'},
+            layers=[
+                {'file1.txt': 'content1'},
+                {'file2.txt': 'content2'},
+                {'file3.txt': 'content3'},
+            ],
+            config_hex=config_hex,
+            diff_ids=diff_ids)
+
+        try:
+            self._make_mock_session(
+                {
+                    'Id': 'sha256:%s' % config_hex,
+                    'RootFS': {
+                        'Type': 'layers',
+                        'Layers': [
+                            'sha256:%s' % d
+                            for d in diff_ids
+                        ]
+                    }
+                },
+                tarball_path,
+                mock_session_class)
+
+            img = input_docker.Image(
+                'myimage', 'v1.0')
+            elements = list(
+                img.fetch(ordered=False))
+
+            # Should yield config + 3 layers
+            self.assertEqual(4, len(elements))
+
+            # Config has no layer_index
+            self.assertEqual(
+                constants.CONFIG_FILE,
+                elements[0].element_type)
+            self.assertIsNone(
+                elements[0].layer_index)
+
+            # Layers have layer_index set
+            layer_elements = [
+                e for e in elements
+                if e.element_type
+                == constants.IMAGE_LAYER]
+            self.assertEqual(3, len(layer_elements))
+
+            # All layers should have data
+            for elem in layer_elements:
+                self.assertIsNotNone(elem.data)
+
+            # Collect indices
+            indices = [
+                e.layer_index
+                for e in layer_elements]
+            # All indices should be set
+            for idx in indices:
+                self.assertIsNotNone(idx)
+            # Should be a permutation of [0, 1, 2]
+            self.assertEqual(
+                sorted(indices), [0, 1, 2])
+
+        finally:
+            os.unlink(tarball_path)
+
+    @mock.patch(
+        'occystrap.inputs.docker'
+        '.requests_unixsocket.Session')
+    def test_fetch_oci_unordered_duplicate_layers(
+            self, mock_session_class):
+        """Test ordered=False with duplicate blob paths.
+
+        Each reference to the same blob must get a
+        unique layer_index.
+        """
+        config_hex = 'cfgdupunord'
+        empty_id = 'emptydup'
+        diff_ids = [
+            'diffa', empty_id, 'diffb', empty_id]
+
+        tarball_path = self._create_oci_tarball(
+            config_data={
+                'architecture': 'amd64',
+                'os': 'linux'},
+            layers=[
+                {'file1.txt': 'content1'},
+                {},
+                {'file3.txt': 'content3'},
+            ],
+            config_hex=config_hex,
+            diff_ids=diff_ids)
+
+        try:
+            self._make_mock_session(
+                {
+                    'Id': 'sha256:%s' % config_hex,
+                    'RootFS': {
+                        'Type': 'layers',
+                        'Layers': [
+                            'sha256:%s' % d
+                            for d in diff_ids
+                        ]
+                    }
+                },
+                tarball_path,
+                mock_session_class)
+
+            img = input_docker.Image(
+                'myimage', 'v1.0')
+            elements = list(
+                img.fetch(ordered=False))
+
+            # Should yield config + 4 layers
+            self.assertEqual(5, len(elements))
+
+            layer_elements = [
+                e for e in elements
+                if e.element_type
+                == constants.IMAGE_LAYER]
+            self.assertEqual(4, len(layer_elements))
+
+            # All layers should have data
+            for elem in layer_elements:
+                self.assertIsNotNone(elem.data)
+
+            # All layer_index values should be unique
+            indices = [
+                e.layer_index
+                for e in layer_elements]
+            self.assertEqual(
+                sorted(indices), [0, 1, 2, 3])
+
+        finally:
+            os.unlink(tarball_path)
+
+    @mock.patch(
+        'occystrap.inputs.docker'
+        '.requests_unixsocket.Session')
+    def test_fetch_oci_unordered_with_callback(
+            self, mock_session_class):
+        """Test ordered=False respects fetch_callback.
+
+        Skipped layers should get layer_index and
+        data=None.
+        """
+        config_hex = 'cfgcbunord'
+        diff_ids = ['diffskip', 'diffkeep']
+
+        tarball_path = self._create_oci_tarball(
+            config_data={
+                'architecture': 'amd64',
+                'os': 'linux'},
+            layers=[
+                {'file1.txt': 'content1'},
+                {'file2.txt': 'content2'},
+            ],
+            config_hex=config_hex,
+            diff_ids=diff_ids)
+
+        try:
+            self._make_mock_session(
+                {
+                    'Id': 'sha256:%s' % config_hex,
+                    'RootFS': {
+                        'Type': 'layers',
+                        'Layers': [
+                            'sha256:%s' % d
+                            for d in diff_ids
+                        ]
+                    }
+                },
+                tarball_path,
+                mock_session_class)
+
+            img = input_docker.Image(
+                'myimage', 'v1.0')
+
+            def skip_first(digest):
+                return digest != 'diffskip'
+
+            elements = list(
+                img.fetch(
+                    fetch_callback=skip_first,
+                    ordered=False))
+
+            self.assertEqual(3, len(elements))
+
+            layer_elements = [
+                e for e in elements
+                if e.element_type
+                == constants.IMAGE_LAYER]
+
+            # Skipped layer has None data and index
+            skipped = [
+                e for e in layer_elements
+                if e.name == 'diffskip'][0]
+            self.assertIsNone(skipped.data)
+            self.assertEqual(0, skipped.layer_index)
+
+            # Kept layer has data and index
+            kept = [
+                e for e in layer_elements
+                if e.name == 'diffkeep'][0]
+            self.assertIsNotNone(kept.data)
+            self.assertEqual(1, kept.layer_index)
+
+        finally:
+            os.unlink(tarball_path)
+
+    @mock.patch(
+        'occystrap.inputs.docker'
+        '.requests_unixsocket.Session')
+    def test_fetch_legacy_unordered(
+            self, mock_session_class):
+        """Test legacy format with ordered=False.
+
+        Legacy format buffers layers until manifest
+        arrives, then yields with layer_index set.
+        """
+        tarball_path = self._create_docker_save_tarball(
+            config_data={
+                'architecture': 'amd64',
+                'os': 'linux'},
+            layers=[
+                ('layer1', {'f1.txt': 'c1'}),
+                ('layer2', {'f2.txt': 'c2'}),
+            ])
+
+        try:
+            self._make_mock_session(
+                {'Id': 'sha256:abc123'},
+                tarball_path,
+                mock_session_class)
+
+            img = input_docker.Image(
+                'myimage', 'v1.0')
+            elements = list(
+                img.fetch(ordered=False))
+
+            # Should yield config + 2 layers
+            self.assertEqual(3, len(elements))
+
+            layer_elements = [
+                e for e in elements
+                if e.element_type
+                == constants.IMAGE_LAYER]
+            self.assertEqual(2, len(layer_elements))
+
+            # Layers should have layer_index set
+            indices = [
+                e.layer_index
+                for e in layer_elements]
+            for idx in indices:
+                self.assertIsNotNone(idx)
+            self.assertEqual(
+                sorted(indices), [0, 1])
+
+        finally:
+            os.unlink(tarball_path)
+
     def test_always_fetch_returns_true(self):
         """Test the always_fetch helper function."""
         self.assertTrue(

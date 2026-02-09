@@ -276,6 +276,7 @@ class Image(ImageInput):
         format_detected = False
         next_layer_idx = 0
         config_yielded = False
+        yielded_indices = set()
 
         # Reference counts for layer paths. When the same
         # blob path appears multiple times in the manifest
@@ -283,6 +284,14 @@ class Image(ImageInput):
         # must keep the temp file alive until all references
         # are consumed.
         layer_refcounts = {}
+
+        # Per-path index queues for duplicate blob paths.
+        # When the same blob appears multiple times in the
+        # manifest (e.g. ['blobA', 'blobB', 'blobA']),
+        # each reference must get a unique layer_index.
+        # expected_layers.index() always returns the first
+        # occurrence, so we use a queue per path instead.
+        layer_index_queues = {}
 
         # Stats for summary
         layers_streamed = 0
@@ -292,20 +301,28 @@ class Image(ImageInput):
         buffered = {}
 
         def _compute_refcounts():
-            """Compute reference counts for layer paths.
+            """Compute reference counts and index queues.
 
             Some manifests reference the same blob path
             multiple times (e.g., empty layers from
             ENV/CMD). We track how many references
             remain so temp files are kept alive until
             the last reference is consumed.
+
+            Also builds per-path index queues so that
+            duplicate blob paths get unique layer_index
+            values in unordered mode.
             """
-            nonlocal layer_refcounts
+            nonlocal layer_refcounts, layer_index_queues
             layer_refcounts = {}
+            layer_index_queues = {}
             if expected_layers:
-                for path in expected_layers:
+                for i, path in enumerate(
+                        expected_layers):
                     layer_refcounts[path] = \
                         layer_refcounts.get(path, 0) + 1
+                    layer_index_queues.setdefault(
+                        path, []).append(i)
                 dupes = {
                     k: v for k, v
                     in layer_refcounts.items()
@@ -380,14 +397,18 @@ class Image(ImageInput):
             return remaining <= 0
 
         def _layer_index_for(layer_path):
-            """Get layer_index for unordered mode."""
+            """Get layer_index for unordered mode.
+
+            Uses per-path index queues to handle
+            duplicate blob paths correctly. Each call
+            pops the next index for the given path.
+            """
             if ordered or not expected_layers:
                 return None
-            try:
-                return expected_layers.index(
-                    layer_path)
-            except ValueError:
-                return None
+            q = layer_index_queues.get(layer_path)
+            if q:
+                return q.pop(0)
+            return None
 
         def _yield_layer(layer_path,
                          from_buffer=False):
@@ -654,6 +675,8 @@ class Image(ImageInput):
                             for elem in \
                                     flush_ready_layers():
                                 yield elem
+                        elif idx is not None:
+                            yielded_indices.add(idx)
                         continue
                     else:
                         # Buffer to temp file using
@@ -697,6 +720,8 @@ class Image(ImageInput):
                             for elem in \
                                     flush_ready_layers():
                                 yield elem
+                        elif idx is not None:
+                            yielded_indices.add(idx)
                         continue
 
                 # --- Out-of-order or unknown file ---
@@ -743,6 +768,12 @@ class Image(ImageInput):
             while expected_layers \
                     and next_layer_idx \
                     < len(expected_layers):
+                # Skip layers already yielded during
+                # streaming (unordered mode)
+                if next_layer_idx in yielded_indices:
+                    next_layer_idx += 1
+                    continue
+
                 layer_path = \
                     expected_layers[next_layer_idx]
                 layer_digest = \

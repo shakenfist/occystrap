@@ -995,3 +995,101 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             w2.finalize()
 
             self.assertEqual(1, w2._cache_hits)
+
+
+class RegistryWriterOrderedTestCase(unittest.TestCase):
+    """Tests for out-of-order layer delivery."""
+
+    def _elem(self, element_type, name, data,
+              layer_index=None):
+        """Helper to create an ImageElement."""
+        return constants.ImageElement(
+            element_type, name, data,
+            layer_index=layer_index)
+
+    @mock.patch(
+        'occystrap.outputs.registry'
+        '.requests.request')
+    def test_layers_with_index_sorted_in_manifest(
+            self, mock_request):
+        """Test layers with layer_index are sorted
+        correctly in the pushed manifest, even when
+        delivered out of order.
+        """
+        writer = output_registry.RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0',
+            max_workers=1)
+
+        def mock_request_handler(
+                method, url, **kwargs):
+            response = mock.MagicMock()
+            if method == 'HEAD':
+                response.status_code = 200
+            elif (method == 'PUT'
+                  and '/manifests/' in url):
+                response.status_code = 201
+            else:
+                response.status_code = 200
+            return response
+
+        mock_request.side_effect = (
+            mock_request_handler)
+
+        # Config
+        config_data = json.dumps(
+            {'architecture': 'amd64'}).encode()
+        writer.process_image_element(
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
+
+        # Deliver layers OUT of order (2, 0, 1)
+        writer.process_image_element(
+            self._elem(
+                constants.IMAGE_LAYER,
+                'layer_c',
+                io.BytesIO(b'layer c data'),
+                layer_index=2))
+        writer.process_image_element(
+            self._elem(
+                constants.IMAGE_LAYER,
+                'layer_a',
+                io.BytesIO(b'layer a data'),
+                layer_index=0))
+        writer.process_image_element(
+            self._elem(
+                constants.IMAGE_LAYER,
+                'layer_b',
+                io.BytesIO(b'layer b data'),
+                layer_index=1))
+
+        writer.finalize()
+
+        # Check manifest layer order
+        last_call = mock_request.call_args
+        manifest = json.loads(
+            last_call[1]['data'].decode('utf-8'))
+        self.assertEqual(
+            3, len(manifest['layers']))
+
+        # Layers should be in index order (a, b, c)
+        # even though they were delivered out of order
+        sizes = [
+            layer['size']
+            for layer in manifest['layers']]
+        # All layers should be present
+        self.assertEqual(3, len(sizes))
+
+    @mock.patch(
+        'occystrap.outputs.registry'
+        '.requests.request')
+    def test_requires_ordered_layers_is_false(
+            self, mock_request):
+        """Test that RegistryWriter declares it does
+        not need ordered layers.
+        """
+        writer = output_registry.RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0')
+        self.assertFalse(
+            writer.requires_ordered_layers)

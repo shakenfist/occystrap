@@ -35,7 +35,7 @@ LOG.setLevel(logging.INFO)
 DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
 
 
-def always_fetch():
+def always_fetch(digest):
     return True
 
 

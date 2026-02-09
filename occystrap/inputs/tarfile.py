@@ -73,6 +73,10 @@ class Image(ImageInput):
 
     def fetch(self, fetch_callback=always_fetch,
               ordered=True):
+        # Note: ordered=False provides no throughput
+        # benefit here since the tarball is read
+        # sequentially. We still set layer_index so
+        # that outputs can reconstruct manifest order.
         LOG.info('Reading image from tarball %s'
                  % self.tarfile_path)
 
