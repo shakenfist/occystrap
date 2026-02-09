@@ -10,30 +10,47 @@ LOG.setLevel(logging.INFO)
 class ImageOutput(ABC):
     """Abstract base class for image output writers.
 
-    Output writers receive image elements (config files and layers) from input
-    sources and write them to various destinations (tarballs, directories,
-    OCI bundles, etc.).
+    Output writers receive image elements (config files
+    and layers) from input sources and write them to
+    various destinations (tarballs, directories, OCI
+    bundles, etc.).
     """
 
     def __init__(self, temp_dir=None):
         """Initialize tracking for summary statistics.
 
         Args:
-            temp_dir: Directory for temporary files (default:
-                system temp directory).
+            temp_dir: Directory for temporary files
+                (default: system temp directory).
         """
         self._start_time = None
         self._total_bytes = 0
         self._layer_count = 0
         self.temp_dir = temp_dir
 
+    @property
+    def requires_ordered_layers(self):
+        """Whether this output needs layers in manifest
+        order.
+
+        If False, the input may deliver layers out of
+        order for performance, and will set layer_index
+        on each ImageElement so the output can
+        reconstruct the correct manifest order.
+
+        Default is True for backward compatibility.
+        """
+        return True
+
     def _track_element(self, element_type, size):
         """Track an element for summary statistics.
 
-        Call this from process_image_element() to track bytes and layers.
+        Call this from process_image_element() to track
+        bytes and layers.
 
         Args:
-            element_type: The element type (CONFIG_FILE or IMAGE_LAYER)
+            element_type: The element type
+                (CONFIG_FILE or IMAGE_LAYER)
             size: Size of the element in bytes
         """
         if self._start_time is None:
@@ -48,39 +65,44 @@ class ImageOutput(ABC):
     def _log_summary(self):
         """Log a summary of the processing.
 
-        Call this at the end of finalize() to print the summary line.
+        Call this at the end of finalize() to print
+        the summary line.
         """
         if self._start_time is None:
             return
 
         elapsed = time.time() - self._start_time
-        LOG.info(f'Processed {self._total_bytes} bytes in '
-                 f'{self._layer_count} layers in {elapsed:.1f} seconds')
+        LOG.info(
+            f'Processed {self._total_bytes} bytes in '
+            f'{self._layer_count} layers in '
+            f'{elapsed:.1f} seconds')
 
     @abstractmethod
     def fetch_callback(self, digest):
         """Determine whether a layer should be fetched.
 
-        This is called by input sources before fetching each layer, allowing
-        output writers to skip layers that already exist in the destination.
+        This is called by input sources before fetching
+        each layer, allowing output writers to skip
+        layers that already exist in the destination.
 
         Args:
             digest: The layer digest/identifier.
 
         Returns:
-            True if the layer should be fetched, False to skip.
+            True if the layer should be fetched, False
+            to skip.
         """
         pass
 
     @abstractmethod
-    def process_image_element(self, element_type, name, data):
-        """Process a single image element (config or layer).
+    def process_image_element(self, element):
+        """Process a single image element (config or
+        layer).
 
         Args:
-            element_type: constants.CONFIG_FILE or constants.IMAGE_LAYER
-            name: The element identifier (config filename or layer digest)
-            data: A file-like object containing the element data,
-                or None if the layer was skipped by fetch_callback
+            element: An ImageElement instance containing
+                element_type, name, data, and optionally
+                layer_index.
         """
         pass
 
@@ -88,7 +110,8 @@ class ImageOutput(ABC):
     def finalize(self):
         """Complete the output operation.
 
-        This is called after all image elements have been processed. Use this
-        to write manifests, close files, or perform any final cleanup.
+        This is called after all image elements have
+        been processed. Use this to write manifests,
+        close files, or perform any final cleanup.
         """
         pass

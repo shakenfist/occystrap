@@ -96,7 +96,8 @@ TARFILE_TYPE_MAP = {
 
 
 class DirWriter(ImageOutput):
-    def __init__(self, image, tag, image_path, unique_names=False, expand=False):
+    def __init__(self, image, tag, image_path,
+                 unique_names=False, expand=False):
         super().__init__()
 
         self.image = image
@@ -107,13 +108,25 @@ class DirWriter(ImageOutput):
 
         self.tar_manifest = [{
             'Layers': [],
-            'RepoTags': ['%s:%s' % (self.image.split('/')[-1], self.tag)]
+            'RepoTags': [
+                '%s:%s' % (self.image.split('/')[-1],
+                           self.tag)]
         }]
         if self.unique_names:
-            self.tar_manifest[0]['ImageName'] = self.image
+            self.tar_manifest[0]['ImageName'] = \
+                self.image
 
         self.bundle = {}
         os.makedirs(self.image_path, exist_ok=True)
+
+        # For out-of-order layer delivery
+        self._indexed_layers = []
+
+    @property
+    def requires_ordered_layers(self):
+        # expand=True needs ordered layers for
+        # whiteout file handling
+        return self.expand
 
     def _manifest_filename(self):
         if not self.unique_names:
@@ -135,77 +148,121 @@ class DirWriter(ImageOutput):
         LOG.info('Layer file is %s' % layer_file_in_dir)
         return not os.path.exists(layer_file_in_dir)
 
-    def process_image_element(self, element_type, name, data):
-        if element_type == constants.CONFIG_FILE:
-            config_file = os.path.join(self.image_path, name)
+    def process_image_element(self, element):
+        if element.element_type == constants.CONFIG_FILE:
+            config_file = os.path.join(
+                self.image_path, element.name)
             config_dir = os.path.dirname(config_file)
             os.makedirs(config_dir, exist_ok=True)
 
-            config_data = data.read()
+            config_data = element.data.read()
             with open(config_file, 'wb') as f:
                 d = json.loads(config_data)
-                f.write(json.dumps(d, indent=4, sort_keys=True).encode('ascii'))
-            self.tar_manifest[0]['Config'] = name
-            self._track_element(element_type, len(config_data))
+                f.write(json.dumps(
+                    d, indent=4,
+                    sort_keys=True).encode('ascii'))
+            self.tar_manifest[0]['Config'] = element.name
+            self._track_element(
+                element.element_type, len(config_data))
 
-        elif element_type == constants.IMAGE_LAYER:
-            layer_dir = os.path.join(self.image_path, name)
+        elif element.element_type == constants.IMAGE_LAYER:
+            layer_dir = os.path.join(
+                self.image_path, element.name)
             os.makedirs(layer_dir, exist_ok=True)
 
-            layer_file = os.path.join(name, 'layer.tar')
-            self.tar_manifest[0]['Layers'].append(layer_file)
+            layer_file = os.path.join(
+                element.name, 'layer.tar')
 
-            layer_file_in_dir = os.path.join(self.image_path, layer_file)
+            if element.layer_index is not None:
+                self._indexed_layers.append(
+                    (element.layer_index, layer_file))
+            else:
+                self.tar_manifest[0][
+                    'Layers'].append(layer_file)
+
+            layer_file_in_dir = os.path.join(
+                self.image_path, layer_file)
             layer_size = 0
             if os.path.exists(layer_file_in_dir):
-                LOG.info('Skipping layer already in output directory')
-                layer_size = os.path.getsize(layer_file_in_dir)
+                LOG.info(
+                    'Skipping layer already in'
+                    ' output directory')
+                layer_size = os.path.getsize(
+                    layer_file_in_dir)
             else:
                 with open(layer_file_in_dir, 'wb') as f:
-                    d = data.read(102400)
+                    d = element.data.read(102400)
                     while d:
                         layer_size += len(d)
                         f.write(d)
-                        d = data.read(102400)
-            self._track_element(element_type, layer_size)
+                        d = element.data.read(102400)
+            self._track_element(
+                element.element_type, layer_size)
 
             if self.expand:
-                # Build a in-memory map of the layout of the final image bundle
-                with tarfile.open(layer_file_in_dir) as layer:
+                # Build an in-memory map of the layout
+                # of the final image bundle
+                with tarfile.open(
+                        layer_file_in_dir) as layer:
                     for mem in layer.getmembers():
                         path = mem.name
-                        dirname, filename = os.path.split(mem.name)
+                        dirname, filename = \
+                            os.path.split(mem.name)
 
-                        # Some light reading on how this works...
+                        # Some light reading on how this
+                        # works...
                         # https://github.com/opencontainers/image-spec/blob/main/layer.md#opaque-whiteout
                         if filename == '.wh..wh..opq':
-                            # A deleted directory, but only for layers below
-                            # this one.
+                            # A deleted directory, but
+                            # only for layers below this
+                            # one.
                             for ent in self.bundle:
-                                if (ent.startswith(dirname) and
-                                        self.bundle[ent][-1].tarpath != layer_file):
-                                    self.bundle[ent].append(
-                                        BundleDeletedFile(ent, layer_file, mem))
+                                if (
+                                    ent.startswith(dirname)
+                                    and self.bundle[
+                                        ent][-1].tarpath
+                                    != layer_file
+                                ):
+                                    self.bundle[
+                                        ent].append(
+                                        BundleDeletedFile(
+                                            ent,
+                                            layer_file,
+                                            mem))
                             continue
 
                         elif filename.startswith('.wh.'):
-                            # A single deleted element, which might not be a
-                            # file.
-                            path = os.path.join(dirname, filename[4:])
-                            if type(self.bundle[path][-1]) is BundleDirectory:
+                            # A single deleted element,
+                            # which might not be a file.
+                            path = os.path.join(
+                                dirname, filename[4:])
+                            if type(
+                                self.bundle[path][-1]
+                            ) is BundleDirectory:
                                 for ent in self.bundle:
-                                    if ent.startswith(path):
-                                        self.bundle[ent].append(
-                                            BundleDeletedFile(ent, layer_file, mem))
+                                    if ent.startswith(
+                                            path):
+                                        self.bundle[
+                                            ent].append(
+                                            BundleDeletedFile(
+                                                ent,
+                                                layer_file,
+                                                mem))
 
-                            serialized = BundleDeletedFile(
-                                path, layer_file, mem)
+                            serialized = \
+                                BundleDeletedFile(
+                                    path, layer_file,
+                                    mem)
                         else:
-                            serialized = TARFILE_TYPE_MAP[mem.type](
-                                mem.name, layer_file, mem)
+                            serialized = \
+                                TARFILE_TYPE_MAP[
+                                    mem.type](
+                                    mem.name,
+                                    layer_file, mem)
 
                         self.bundle.setdefault(path, [])
-                        self.bundle[path].append(serialized)
+                        self.bundle[path].append(
+                            serialized)
 
     def _log_bundle(self):
         savings = 0
@@ -226,6 +283,14 @@ class DirWriter(ImageOutput):
         LOG.info('Flattening image would save %d bytes' % savings)
 
     def finalize(self):
+        # Reconstruct layer order from indices
+        if self._indexed_layers:
+            self._indexed_layers.sort(
+                key=lambda x: x[0])
+            self.tar_manifest[0]['Layers'] = [
+                name for _, name
+                in self._indexed_layers]
+
         if self.expand:
             self._log_bundle()
 
@@ -317,13 +382,20 @@ class DirReader(object):
         self.manifest_filename = c[self.image][self.tag]
 
     def fetch(self):
-        with open(os.path.join(self.path, self.manifest_filename)) as f:
+        with open(os.path.join(
+                self.path,
+                self.manifest_filename)) as f:
             manifest = json.loads(f.read())
 
         config_filename = manifest[0]['Config']
-        with open(os.path.join(self.path, config_filename), 'rb') as f:
-            yield (constants.CONFIG_FILE, config_filename, f)
+        with open(os.path.join(
+                self.path, config_filename), 'rb') as f:
+            yield constants.ImageElement(
+                constants.CONFIG_FILE,
+                config_filename, f)
 
         for layer in manifest[0]['Layers']:
-            with open(os.path.join(self.path, layer), 'rb') as f:
-                yield (constants.IMAGE_LAYER, layer, f)
+            with open(os.path.join(
+                    self.path, layer), 'rb') as f:
+                yield constants.ImageElement(
+                    constants.IMAGE_LAYER, layer, f)

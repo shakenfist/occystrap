@@ -80,7 +80,9 @@ All input sources inherit from the `ImageInput` abstract base class defined in
 
 - `image` (property) - Returns the image name
 - `tag` (property) - Returns the image tag
-- `fetch(fetch_callback)` - Yields image elements (config files and layers)
+- `fetch(fetch_callback, ordered)` - Yields `ImageElement` objects (config
+  files and layers). When `ordered=False`, layers may arrive out of manifest
+  order with `layer_index` set for reordering at finalize time.
 
 Input source implementations:
 - `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket,
@@ -117,8 +119,11 @@ Filter implementations:
 All output writers inherit from the `ImageOutput` abstract base class defined in
 `outputs/base.py`. This ABC defines the interface:
 
+- `requires_ordered_layers` (property) - Whether layers must arrive in
+  manifest order (default `True`)
 - `fetch_callback(digest)` - Returns whether a layer should be fetched
-- `process_image_element(type, name, data)` - Handles CONFIG_FILE or IMAGE_LAYER
+- `process_image_element(element)` - Handles an `ImageElement` (config or
+  layer)
 - `finalize()` - Writes manifest and completes output
 
 The base class also provides summary statistics tracking. All output writers log
@@ -148,9 +153,26 @@ Output writer implementations:
 
 ### Element Types
 
-Defined in `constants.py`:
+Pipeline elements are represented as `ImageElement` dataclass instances
+(defined in `constants.py`):
+
+```python
+@dataclasses.dataclass
+class ImageElement:
+    element_type: str   # CONFIG_FILE or IMAGE_LAYER
+    name: str           # Filename or digest hash
+    data: object        # File-like object or None (skipped)
+    layer_index: int | None = None  # Manifest position
+```
+
+Element types:
 - `CONFIG_FILE` - Image configuration JSON
 - `IMAGE_LAYER` - Tarball containing filesystem layer
+
+The `layer_index` field is set when layers are delivered out of order
+(i.e., when the output's `requires_ordered_layers` is `False`). Outputs
+use this index to reconstruct the correct manifest layer order at
+`finalize()` time.
 
 ## URI-Style Command Line
 
@@ -258,9 +280,12 @@ fetch() generator
     └── If OCI: pre-compute manifest from DiffIDs
     └── If legacy: identify config early from inspect hash
     └── For each file in stream:
-        ├── If next expected layer: yield directly (no disk I/O)
-        └── If out-of-order: buffer to temp file for later
-    └── After stream ends: yield remaining buffered layers in order
+        ├── If ordered=True:
+        │   ├── If next expected layer: yield directly (no disk I/O)
+        │   └── If out-of-order: buffer to temp file for later
+        └── If ordered=False:
+            └── Any known layer: yield immediately with layer_index
+    └── After stream ends: yield remaining buffered layers
 ```
 
 Key design considerations:
@@ -282,7 +307,9 @@ layer downloads:
 fetch() generator
     └── Yield config file first (synchronous)
     └── Submit all layer downloads to ThreadPoolExecutor
-    └── Yield layers in order as downloads complete
+    └── If ordered=True: yield layers in manifest order
+    └── If ordered=False: yield layers as downloads complete
+        (each with layer_index for reordering)
 
 _download_layer() worker
     └── Fetch layer blob from registry
@@ -292,7 +319,10 @@ _download_layer() worker
 
 Key design considerations:
 - All layers are downloaded in parallel to maximize throughput
-- Layers are yielded to the pipeline in order despite parallel download
+- When `ordered=True`, layers are yielded in manifest order despite
+  parallel download
+- When `ordered=False`, layers are yielded as downloads complete via
+  `as_completed()`, with `layer_index` set for manifest reconstruction
 - Authentication token updates are protected by a threading lock
 - The `max_workers` parameter controls parallelism (default: 4)
 - Temp files are cleaned up after each layer is processed
@@ -319,7 +349,8 @@ finalize()
 Key design considerations:
 - Both compression and upload run in the thread pool, allowing multiple layers
   to compress simultaneously on multi-core systems
-- Layer order is preserved by collecting futures in submission order at finalize
+- Layer order is preserved by tracking `layer_index` on each future and
+  sorting at finalize time
 - Progress is reported every 10 seconds during the wait phase
 - Authentication token updates are protected by a threading lock for
   thread-safety
@@ -330,6 +361,37 @@ Key design considerations:
 - Cross-invocation layer cache (`--layer-cache`) skips layers that were
   previously processed with the same filter configuration and whose
   compressed blobs still exist in the target registry
+
+### Out-of-Order Layer Delivery
+
+The pipeline supports out-of-order layer delivery to maximize throughput.
+Outputs declare whether they need layers in manifest order via the
+`requires_ordered_layers` property:
+
+| Output | `requires_ordered_layers` | Reason |
+|--------|---------------------------|--------|
+| `dir` (expand=True) | `True` | Whiteout processing needs order |
+| `oci` | `True` | Inherits from DirWriter with expand |
+| `dir` (expand=False) | `False` | Just writes files |
+| `tar` | `False` | Manifest built at finalize |
+| `docker` | `False` | Manifest built at finalize |
+| `registry` | `False` | Manifest built at finalize |
+| `mounts` | `False` | Just writes files |
+
+When the output declares `requires_ordered_layers = False`:
+1. `_fetch()` in `main.py` passes `ordered=False` to the input's
+   `fetch()` method
+2. The input yields `ImageElement` objects with `layer_index` set to the
+   layer's position in the manifest
+3. The output stores layers with their indices and reconstructs the
+   correct manifest order in `finalize()`
+
+This eliminates unnecessary waiting in the registry input (layers are
+yielded via `as_completed()` instead of waiting for each in sequence)
+and reduces temp file buffering in the Docker input.
+
+Filters propagate `requires_ordered_layers` from their wrapped output,
+so the entire filter chain respects the final output's ordering needs.
 
 ### Cross-Invocation Layer Cache
 
@@ -396,10 +458,22 @@ Media type constants in `constants.py` define Docker and OCI layer types:
 Input URI  -->  Input Source  -->  | Filter Chain    |  -->  Output Writer  -->  Files
                      |              | (optional)      |            |
                    fetch()          +-----------------+        finalize()
+                     |                     |                 (reorder by
+               yields ImageElement  process_image_element()  layer_index)
                      |                     |
                      +---------------------+
-                       process_image_element()
-                              |
                         fetch_callback
                        (skip/include)
+```
+
+The `_fetch()` function in `main.py` connects the pipeline:
+
+```python
+def _fetch(img, output):
+    ordered = output.requires_ordered_layers
+    for element in img.fetch(
+            fetch_callback=output.fetch_callback,
+            ordered=ordered):
+        output.process_image_element(element)
+    output.finalize()
 ```

@@ -212,8 +212,10 @@ class ExcludeFilterTestCase(unittest.TestCase):
                         tw, patterns=['*__pycache__*'])
 
                     exclude_filter.process_image_element(
-                        constants.IMAGE_LAYER, 'originalhash',
-                        open(layer_path, 'rb'))
+                        constants.ImageElement(
+                            constants.IMAGE_LAYER,
+                            'originalhash',
+                            open(layer_path, 'rb')))
 
                     exclude_filter.finalize()
 

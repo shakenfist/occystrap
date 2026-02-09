@@ -102,27 +102,34 @@ class TimestampNormalizer(ImageFilter):
                 os.unlink(normalized_tf.name)
                 raise
 
-    def process_image_element(self, element_type, name, data):
-        """Process an image element, normalizing layer timestamps.
+    def process_image_element(self, element):
+        """Process an image element, normalizing layer
+        timestamps.
 
-        Config files are passed through unchanged. Layers have their
-        timestamps normalized and their names updated to reflect the
-        new SHA256 hash.
+        Config files are passed through unchanged. Layers
+        have their timestamps normalized and their names
+        updated to reflect the new SHA256 hash.
         """
-        if element_type == constants.IMAGE_LAYER and data is not None:
-            LOG.info('Normalizing timestamps in layer %s' % name)
-            normalized_data, new_name = self._normalize_layer(data)
+        if (element.element_type == constants.IMAGE_LAYER
+                and element.data is not None):
+            LOG.info(
+                'Normalizing timestamps in layer %s'
+                % element.name)
+            normalized_data, new_name = \
+                self._normalize_layer(element.data)
 
             try:
                 self._wrapped.process_image_element(
-                    element_type, new_name, normalized_data)
+                    constants.ImageElement(
+                        element.element_type,
+                        new_name,
+                        normalized_data,
+                        layer_index=element.layer_index))
             finally:
-                # Clean up the temporary file
                 try:
                     normalized_data.close()
                     os.unlink(normalized_data.name)
                 except Exception:
                     pass
         else:
-            # Pass through unchanged (config files, skipped layers)
-            self._wrapped.process_image_element(element_type, name, data)
+            self._wrapped.process_image_element(element)

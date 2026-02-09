@@ -79,9 +79,11 @@ class RegistryWriter(ImageOutput):
         self._moniker = 'https' if secure else 'http'
         self._auth_lock = threading.Lock()
 
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers)
         self._config_future = None
-        self._layer_futures = []  # List of futures that return layer metadata
+        # List of (layer_index, future) tuples
+        self._layer_futures = []
 
         self._config_digest = None
         self._config_size = None
@@ -99,12 +101,16 @@ class RegistryWriter(ImageOutput):
         self._cached_layers = {}  # digest -> cached metadata
         self._cache_hits = 0
 
-        # Original DiffIDs from fetch_callback, consumed in
-        # process_image_element order.  Needed because filters
-        # may transform layer names (recalculating SHA256 after
-        # modifying content), but the cache must be keyed by
-        # the original input DiffID.
+        # Original DiffIDs from fetch_callback, consumed
+        # in process_image_element order.  Needed because
+        # filters may transform layer names (recalculating
+        # SHA256 after modifying content), but the cache
+        # must be keyed by the original input DiffID.
         self._original_digests = deque()
+
+    @property
+    def requires_ordered_layers(self):
+        return False
 
     def _request(self, method, url, headers=None, data=None, stream=False):
         """Make an authenticated request to the registry.
@@ -297,88 +303,113 @@ class RegistryWriter(ImageOutput):
             digest[:19], entry['compressed_digest'][:19])
         return True
 
-    def process_image_element(self, element_type, name, data):
-        """Process an image element, uploading it to the registry.
+    def process_image_element(self, element):
+        """Process an image element, uploading it to
+        the registry.
 
-        Both compression and uploads are submitted to a thread pool for
-        parallel execution. This allows multiple layers to compress and
-        upload simultaneously.
+        Both compression and uploads are submitted to
+        a thread pool for parallel execution. This
+        allows multiple layers to compress and upload
+        simultaneously.
         """
-        # Track start time (can't use _track_element because we track
-        # compressed sizes which are only known after compression)
+        # Track start time (can't use _track_element
+        # because we track compressed sizes which are
+        # only known after compression)
         if self._start_time is None:
             self._start_time = time.time()
 
-        if element_type == constants.CONFIG_FILE and data is not None:
+        if (element.element_type == constants.CONFIG_FILE
+                and element.data is not None):
             LOG.info('Processing config file')
 
-            data.seek(0)
-            config_data = data.read()
+            element.data.seek(0)
+            config_data = element.data.read()
 
             h = hashlib.sha256()
             h.update(config_data)
-            self._config_digest = f'sha256:{h.hexdigest()}'
+            self._config_digest = \
+                f'sha256:{h.hexdigest()}'
             self._config_size = len(config_data)
 
             # Submit config upload to thread pool
-            self._config_future = self._executor.submit(
-                self._upload_blob, self._config_digest,
-                io.BytesIO(config_data), self._config_size)
+            self._config_future = \
+                self._executor.submit(
+                    self._upload_blob,
+                    self._config_digest,
+                    io.BytesIO(config_data),
+                    self._config_size)
 
-        elif element_type == constants.IMAGE_LAYER and data is not None:
-            # Use the original DiffID for cache recording;
-            # filters may have transformed `name` by
-            # recalculating the hash after modifying content.
-            # Falls back to `name` when fetch_callback was not
+        elif (element.element_type
+                == constants.IMAGE_LAYER
+                and element.data is not None):
+            # Use the original DiffID for cache
+            # recording; filters may have transformed
+            # `name` by recalculating the hash after
+            # modifying content. Falls back to
+            # element.name when fetch_callback was not
             # called (e.g., in unit tests).
             if self._original_digests:
                 original_digest = (
                     self._original_digests.popleft())
             else:
-                original_digest = name
-            LOG.info(f'Processing layer {name}')
+                original_digest = element.name
+            LOG.info(
+                'Processing layer %s'
+                % element.name)
 
-            data.seek(0)
-            layer_data = data.read()
+            element.data.seek(0)
+            layer_data = element.data.read()
 
-            # Submit compression + upload to thread pool
-            # This allows multiple layers to compress in parallel
+            # Submit compression + upload to thread
+            # pool for parallel compression
             future = self._executor.submit(
                 self._compress_and_upload_layer,
                 layer_data, original_digest)
-            self._layer_futures.append(future)
+            self._layer_futures.append(
+                (element.layer_index, future))
 
-        elif element_type == constants.IMAGE_LAYER and data is None:
+        elif (element.element_type
+                == constants.IMAGE_LAYER
+                and element.data is None):
             if self._original_digests:
                 original_digest = (
                     self._original_digests.popleft())
             else:
-                original_digest = name
-            # Layer was skipped by fetch_callback - check cache
+                original_digest = element.name
+            # Layer was skipped by fetch_callback -
+            # check cache
             if original_digest in self._cached_layers:
-                entry = self._cached_layers[original_digest]
+                entry = \
+                    self._cached_layers[original_digest]
                 f = Future()
                 f.set_result({
                     'mediaType': entry['media_type'],
                     'size': entry['compressed_size'],
-                    'digest': entry['compressed_digest']
+                    'digest': entry[
+                        'compressed_digest']
                 })
-                self._layer_futures.append(f)
-                # _cache_hits is only updated from the main
-                # thread (process_image_element is not called
-                # from worker threads), so no lock is needed.
+                self._layer_futures.append(
+                    (element.layer_index, f))
+                # _cache_hits is only updated from the
+                # main thread (process_image_element is
+                # not called from worker threads), so
+                # no lock is needed.
                 self._cache_hits += 1
 
     def finalize(self):
         """Push the image manifest to the registry.
 
-        Waits for all parallel compression/uploads to complete before
-        pushing the manifest. Layer metadata is collected from futures
-        in order to build the manifest.
+        Waits for all parallel compression/uploads to
+        complete before pushing the manifest. Layer
+        metadata is collected from futures and sorted
+        by layer_index to build the manifest in correct
+        order.
         """
         total_layers = len(self._layer_futures)
-        LOG.info(f'Waiting for {total_layers} layer compression/uploads '
-                 'to complete...')
+        LOG.info(
+            'Waiting for %d layer'
+            ' compression/uploads to complete...'
+            % total_layers)
 
         errors = []
 
@@ -388,33 +419,54 @@ class RegistryWriter(ImageOutput):
                 self._config_future.result()
                 LOG.info('Config uploaded')
             except Exception as e:
-                errors.append(f'Config upload: {e}')
+                errors.append('Config upload: %s' % e)
 
-        # Collect layer metadata from futures, preserving order
-        # Report progress on a wall clock cadence (every 10 seconds)
-        layers = []
+        # Collect layer metadata from futures
+        # Each entry is (layer_index, future)
+        indexed_layers = []
+        unindexed_layers = []
         completed = 0
         last_report_time = time.time()
         progress_interval = 10  # seconds
 
-        for i, future in enumerate(self._layer_futures):
+        for i, (layer_index, future) in enumerate(
+                self._layer_futures):
             try:
                 layer_metadata = future.result()
-                layers.append(layer_metadata)
+                if layer_index is not None:
+                    indexed_layers.append(
+                        (layer_index, layer_metadata))
+                else:
+                    unindexed_layers.append(
+                        layer_metadata)
                 completed += 1
 
                 # Report progress every 10 seconds
                 now = time.time()
-                if now - last_report_time >= progress_interval:
-                    remaining = total_layers - completed
-                    LOG.info(f'Progress: {completed}/{total_layers} layers '
-                             f'complete, {remaining} remaining')
+                if (now - last_report_time
+                        >= progress_interval):
+                    remaining = (
+                        total_layers - completed)
+                    LOG.info(
+                        'Progress: %d/%d layers'
+                        ' complete, %d remaining'
+                        % (completed, total_layers,
+                           remaining))
                     last_report_time = now
 
             except Exception as e:
-                errors.append(f'Layer {i}: {e}')
+                errors.append('Layer %d: %s' % (i, e))
 
         self._executor.shutdown(wait=True)
+
+        # Reconstruct layer order from indices
+        if indexed_layers:
+            indexed_layers.sort(
+                key=lambda x: x[0])
+            layers = [
+                meta for _, meta in indexed_layers]
+        else:
+            layers = unindexed_layers
 
         if errors:
             raise Exception(f'Upload failed: {"; ".join(errors)}')

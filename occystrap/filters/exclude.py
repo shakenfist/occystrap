@@ -115,20 +115,27 @@ class ExcludeFilter(ImageFilter):
                 os.unlink(filtered_tf.name)
                 raise
 
-    def process_image_element(self, element_type, name, data):
-        """Process an image element, filtering layer contents.
+    def process_image_element(self, element):
+        """Process an image element, filtering layer
+        contents.
 
-        Config files are passed through unchanged. Layers have matching
-        entries excluded and their names updated to reflect the new
-        SHA256 hash.
+        Config files are passed through unchanged. Layers
+        have matching entries excluded and their names
+        updated to reflect the new SHA256 hash.
         """
-        if element_type == constants.IMAGE_LAYER and data is not None:
-            LOG.info('Filtering layer %s' % name)
-            filtered_data, new_name = self._filter_layer(data)
+        if (element.element_type == constants.IMAGE_LAYER
+                and element.data is not None):
+            LOG.info('Filtering layer %s' % element.name)
+            filtered_data, new_name = \
+                self._filter_layer(element.data)
 
             try:
                 self._wrapped.process_image_element(
-                    element_type, new_name, filtered_data)
+                    constants.ImageElement(
+                        element.element_type,
+                        new_name,
+                        filtered_data,
+                        layer_index=element.layer_index))
             finally:
                 try:
                     filtered_data.close()
@@ -136,4 +143,4 @@ class ExcludeFilter(ImageFilter):
                 except Exception:
                     pass
         else:
-            self._wrapped.process_image_element(element_type, name, data)
+            self._wrapped.process_image_element(element)

@@ -1,5 +1,31 @@
+import dataclasses
+
+
 CONFIG_FILE = 'config_file'
 IMAGE_LAYER = 'image_layer'
+
+
+@dataclasses.dataclass
+class ImageElement:
+    """A single element (config or layer) flowing through
+    the pipeline.
+
+    Attributes:
+        element_type: CONFIG_FILE or IMAGE_LAYER.
+        name: Config filename or layer digest.
+        data: File-like object, or None if the layer was
+            skipped by fetch_callback.
+        layer_index: The layer's position in the manifest
+            (0-based). Set by inputs when the output does
+            not require ordered delivery. None for config
+            elements or when ordering is preserved.
+    """
+
+    element_type: str
+    name: str
+    data: object
+    layer_index: int | None = None
+
 
 # Compression type constants
 COMPRESSION_GZIP = 'gzip'

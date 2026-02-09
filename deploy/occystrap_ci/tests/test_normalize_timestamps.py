@@ -138,8 +138,10 @@ class NormalizeTimestampsTestCase(unittest.TestCase):
 
                         # Process the layer through the filter
                         normalizer.process_image_element(
-                            constants.IMAGE_LAYER, 'originalhash',
-                            open(layer_tf.name, 'rb'))
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                'originalhash',
+                                open(layer_tf.name, 'rb')))
 
                         # Finalize
                         normalizer.finalize()

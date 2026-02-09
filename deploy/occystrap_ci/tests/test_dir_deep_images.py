@@ -23,7 +23,7 @@ class DirDeepImageTestCase(testtools.TestCase):
             img = input_registry.Image(
                 'localhost:5000', image, tag, 'linux', 'amd64', '', secure=False)
             for image_element in img.fetch(fetch_callback=oci.fetch_callback):
-                oci.process_image_element(*image_element)
+                oci.process_image_element(image_element)
             oci.finalize()
             oci.write_bundle()
 

@@ -13,6 +13,11 @@ from occystrap.outputs import registry as output_registry
 
 
 class RegistryWriterTestCase(unittest.TestCase):
+    def _elem(self, element_type, name, data):
+        """Helper to create an ImageElement."""
+        return constants.ImageElement(
+            element_type, name, data)
+
     def test_initialization(self):
         """Test RegistryWriter initializes with correct attributes."""
         writer = output_registry.RegistryWriter(
@@ -148,9 +153,10 @@ class RegistryWriterTestCase(unittest.TestCase):
         }).encode('utf-8')
 
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         self.assertIsNotNone(writer._config_digest)
         self.assertTrue(writer._config_digest.startswith('sha256:'))
@@ -176,17 +182,20 @@ class RegistryWriterTestCase(unittest.TestCase):
         mock_request.side_effect = mock_request_handler
 
         # Add config (required for finalize)
-        config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
+        config_data = json.dumps(
+            {'architecture': 'amd64'}).encode('utf-8')
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         layer_data = b'test layer content'
         writer.process_image_element(
-            constants.IMAGE_LAYER,
-            'sha256_original',
-            io.BytesIO(layer_data))
+            self._elem(
+                constants.IMAGE_LAYER,
+                'sha256_original',
+                io.BytesIO(layer_data)))
 
         # Finalize to collect layer metadata from futures
         writer.finalize()
@@ -218,7 +227,8 @@ class RegistryWriterTestCase(unittest.TestCase):
             elif method == 'POST':
                 response.status_code = 202
                 response.headers = {
-                    'Location': '/v2/myuser/myimage/blobs/uploads/uuid123'
+                    'Location':
+                        '/v2/myuser/myimage/blobs/uploads/uuid123'
                 }
             elif method == 'PUT' and '/manifests/' in url:
                 response.status_code = 201
@@ -231,17 +241,20 @@ class RegistryWriterTestCase(unittest.TestCase):
         mock_request.side_effect = mock_request_handler
 
         # Add config (required for finalize)
-        config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
+        config_data = json.dumps(
+            {'architecture': 'amd64'}).encode('utf-8')
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         layer_data = b'test layer content'
         writer.process_image_element(
-            constants.IMAGE_LAYER,
-            'sha256_original',
-            io.BytesIO(layer_data))
+            self._elem(
+                constants.IMAGE_LAYER,
+                'sha256_original',
+                io.BytesIO(layer_data)))
 
         # Finalize to collect layer metadata
         writer.finalize()
@@ -261,12 +274,14 @@ class RegistryWriterTestCase(unittest.TestCase):
         manifest_data = last_call[1]['data']
         manifest = json.loads(manifest_data.decode('utf-8'))
 
-        self.assertEqual(expected_digest, manifest['layers'][0]['digest'])
+        self.assertEqual(
+            expected_digest, manifest['layers'][0]['digest'])
 
     @mock.patch('occystrap.outputs.registry.requests.request')
     def test_finalize_pushes_manifest(self, mock_request):
         """Test that finalize pushes the manifest."""
-        # Use max_workers=1 for predictable call ordering with mocks
+        # Use max_workers=1 for predictable call ordering
+        # with mocks
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
 
@@ -286,18 +301,21 @@ class RegistryWriterTestCase(unittest.TestCase):
         mock_request.side_effect = mock_request_handler
 
         # Add config
-        config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
+        config_data = json.dumps(
+            {'architecture': 'amd64'}).encode('utf-8')
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         # Add layer
         layer_data = b'test layer'
         writer.process_image_element(
-            constants.IMAGE_LAYER,
-            'sha256_layer',
-            io.BytesIO(layer_data))
+            self._elem(
+                constants.IMAGE_LAYER,
+                'sha256_layer',
+                io.BytesIO(layer_data)))
 
         writer.finalize()
 
@@ -306,11 +324,13 @@ class RegistryWriterTestCase(unittest.TestCase):
         self.assertEqual('PUT', last_call[0][0])
         self.assertIn('/manifests/v1.0', last_call[0][1])
         self.assertEqual(
-            'application/vnd.docker.distribution.manifest.v2+json',
+            'application/vnd.docker.distribution.'
+            'manifest.v2+json',
             last_call[1]['headers']['Content-Type'])
 
     @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_finalize_without_config_raises_error(self, mock_request):
+    def test_finalize_without_config_raises_error(
+            self, mock_request):
         """Test that finalize raises error if no config was processed."""
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0')
@@ -333,32 +353,39 @@ class RegistryWriterTestCase(unittest.TestCase):
         auth_response.status_code = 401
         auth_response.headers = {
             'Www-Authenticate':
-                'Bearer realm="https://ghcr.io/token",service="ghcr.io"'
+                'Bearer realm="https://ghcr.io/token"'
+                ',service="ghcr.io"'
         }
 
         # Token request
         token_response = mock.MagicMock()
         token_response.status_code = 200
-        token_response.json.return_value = {'token': 'test_token'}
+        token_response.json.return_value = {
+            'token': 'test_token'
+        }
         mock_get.return_value = token_response
 
         # Retry after auth succeeds
         success_response = mock.MagicMock()
         success_response.status_code = 200
 
-        mock_request.side_effect = [auth_response, success_response]
+        mock_request.side_effect = [
+            auth_response, success_response
+        ]
 
         writer._blob_exists('sha256:abc123')
 
         # Verify token was requested with auth
         mock_get.assert_called_once()
         call_kwargs = mock_get.call_args[1]
-        self.assertEqual(('user', 'token'), call_kwargs['auth'])
+        self.assertEqual(
+            ('user', 'token'), call_kwargs['auth'])
 
     @mock.patch('occystrap.outputs.registry.requests.request')
     def test_manifest_format(self, mock_request):
         """Test that manifest has correct format."""
-        # Use max_workers=1 for predictable call ordering with mocks
+        # Use max_workers=1 for predictable call ordering
+        # with mocks
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
 
@@ -378,17 +405,20 @@ class RegistryWriterTestCase(unittest.TestCase):
         mock_request.side_effect = mock_request_handler
 
         # Process config and layer
-        config_data = json.dumps({'architecture': 'amd64'}).encode('utf-8')
+        config_data = json.dumps(
+            {'architecture': 'amd64'}).encode('utf-8')
         writer.process_image_element(
-            constants.CONFIG_FILE,
-            'config.json',
-            io.BytesIO(config_data))
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         layer_data = b'test layer'
         writer.process_image_element(
-            constants.IMAGE_LAYER,
-            'sha256_layer',
-            io.BytesIO(layer_data))
+            self._elem(
+                constants.IMAGE_LAYER,
+                'sha256_layer',
+                io.BytesIO(layer_data)))
 
         writer.finalize()
 
@@ -399,11 +429,14 @@ class RegistryWriterTestCase(unittest.TestCase):
 
         self.assertEqual(2, manifest['schemaVersion'])
         self.assertEqual(
-            'application/vnd.docker.distribution.manifest.v2+json',
+            'application/vnd.docker.distribution.'
+            'manifest.v2+json',
             manifest['mediaType'])
         self.assertIn('config', manifest)
         self.assertIn('layers', manifest)
-        self.assertEqual(writer._config_digest, manifest['config']['digest'])
+        self.assertEqual(
+            writer._config_digest,
+            manifest['config']['digest'])
         self.assertEqual(1, len(manifest['layers']))
 
     def test_timing_fields_initialized(self):
@@ -416,7 +449,8 @@ class RegistryWriterTestCase(unittest.TestCase):
         self.assertEqual(0, writer._upload_skipped)
 
     @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_timing_fields_populated_after_finalize(self, mock_request):
+    def test_timing_fields_populated_after_finalize(
+            self, mock_request):
         """Test that timing fields are populated after processing."""
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
@@ -433,26 +467,35 @@ class RegistryWriterTestCase(unittest.TestCase):
 
         mock_request.side_effect = mock_request_handler
 
-        config_data = json.dumps({'architecture': 'amd64'}).encode()
+        config_data = json.dumps(
+            {'architecture': 'amd64'}).encode()
         writer.process_image_element(
-            constants.CONFIG_FILE, 'config.json',
-            io.BytesIO(config_data))
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         layer_data = b'test layer content for timing'
         writer.process_image_element(
-            constants.IMAGE_LAYER, 'sha256_layer',
-            io.BytesIO(layer_data))
+            self._elem(
+                constants.IMAGE_LAYER,
+                'sha256_layer',
+                io.BytesIO(layer_data)))
 
         writer.finalize()
 
-        self.assertGreater(writer._total_compress_time, 0.0)
-        self.assertGreater(writer._total_upload_time, 0.0)
-        self.assertEqual(len(layer_data), writer._total_input_bytes)
+        self.assertGreater(
+            writer._total_compress_time, 0.0)
+        self.assertGreater(
+            writer._total_upload_time, 0.0)
+        self.assertEqual(
+            len(layer_data), writer._total_input_bytes)
         # Blob existed, so upload was skipped
         self.assertEqual(1, writer._upload_skipped)
 
     @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_upload_blob_returns_true_when_exists(self, mock_request):
+    def test_upload_blob_returns_true_when_exists(
+            self, mock_request):
         """Test _upload_blob returns True when blob already exists."""
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0')
@@ -466,7 +509,8 @@ class RegistryWriterTestCase(unittest.TestCase):
         self.assertTrue(result)
 
     @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_upload_blob_returns_false_when_uploaded(self, mock_request):
+    def test_upload_blob_returns_false_when_uploaded(
+            self, mock_request):
         """Test _upload_blob returns False when blob is uploaded."""
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0')
@@ -477,7 +521,8 @@ class RegistryWriterTestCase(unittest.TestCase):
         post_response = mock.MagicMock()
         post_response.status_code = 202
         post_response.headers = {
-            'Location': '/v2/myuser/myimage/blobs/uploads/uuid123'
+            'Location':
+                '/v2/myuser/myimage/blobs/uploads/uuid123'
         }
 
         put_response = mock.MagicMock()
@@ -496,7 +541,8 @@ class RegistryWriterTestCase(unittest.TestCase):
             self, mock_request):
         """Test upload_skipped counts correctly with multiple layers."""
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+            'ghcr.io', 'myuser/myimage', 'v1.0',
+            max_workers=1)
 
         call_count = [0]
 
@@ -505,7 +551,8 @@ class RegistryWriterTestCase(unittest.TestCase):
             if method == 'HEAD':
                 call_count[0] += 1
                 # First two HEAD checks: blob exists (skip)
-                # Third HEAD check: blob doesn't exist (upload)
+                # Third HEAD check: blob doesn't exist
+                # (upload)
                 if call_count[0] <= 3:
                     response.status_code = 200
                 else:
@@ -525,22 +572,28 @@ class RegistryWriterTestCase(unittest.TestCase):
 
         mock_request.side_effect = mock_request_handler
 
-        config_data = json.dumps({'architecture': 'amd64'}).encode()
+        config_data = json.dumps(
+            {'architecture': 'amd64'}).encode()
         writer.process_image_element(
-            constants.CONFIG_FILE, 'config.json',
-            io.BytesIO(config_data))
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         # Two layers where blob exists (skipped uploads)
         for i in range(2):
             writer.process_image_element(
-                constants.IMAGE_LAYER, f'sha256_layer{i}',
-                io.BytesIO(b'layer data'))
+                self._elem(
+                    constants.IMAGE_LAYER,
+                    f'sha256_layer{i}',
+                    io.BytesIO(b'layer data')))
 
         writer.finalize()
 
         self.assertEqual(2, writer._upload_skipped)
-        self.assertEqual(2 * len(b'layer data'),
-                         writer._total_input_bytes)
+        self.assertEqual(
+            2 * len(b'layer data'),
+            writer._total_input_bytes)
 
 
 class RegistryWriterCacheTestCase(unittest.TestCase):
@@ -550,6 +603,11 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
     runtime behaviour -- input sources strip the prefix before
     calling fetch_callback.
     """
+
+    def _elem(self, element_type, name, data):
+        """Helper to create an ImageElement."""
+        return constants.ImageElement(
+            element_type, name, data)
 
     @mock.patch('occystrap.outputs.registry.requests.request')
     def test_fetch_callback_without_cache(self, mock_request):
@@ -629,17 +687,20 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                 '.diff.tar.gzip')
 
             # Registry has the cached blob
-            def mock_request_handler(method, url, **kwargs):
+            def mock_request_handler(
+                    method, url, **kwargs):
                 response = mock.MagicMock()
                 if method == 'HEAD':
                     response.status_code = 200
-                elif method == 'PUT' and '/manifests/' in url:
+                elif (method == 'PUT'
+                      and '/manifests/' in url):
                     response.status_code = 201
                 else:
                     response.status_code = 200
                 return response
 
-            mock_request.side_effect = mock_request_handler
+            mock_request.side_effect = (
+                mock_request_handler)
 
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
@@ -653,12 +714,17 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             config_data = json.dumps(
                 {'architecture': 'amd64'}).encode()
             writer.process_image_element(
-                constants.CONFIG_FILE, 'config.json',
-                io.BytesIO(config_data))
+                self._elem(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    io.BytesIO(config_data)))
 
             # Process cached layer (data=None)
             writer.process_image_element(
-                constants.IMAGE_LAYER, 'layer1hex', None)
+                self._elem(
+                    constants.IMAGE_LAYER,
+                    'layer1hex',
+                    None))
 
             writer.finalize()
 
@@ -681,17 +747,20 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             cache_path = os.path.join(d, 'cache.json')
             cache = LayerCache(cache_path)
 
-            def mock_request_handler(method, url, **kwargs):
+            def mock_request_handler(
+                    method, url, **kwargs):
                 response = mock.MagicMock()
                 if method == 'HEAD':
                     response.status_code = 200
-                elif method == 'PUT' and '/manifests/' in url:
+                elif (method == 'PUT'
+                      and '/manifests/' in url):
                     response.status_code = 201
                 else:
                     response.status_code = 200
                 return response
 
-            mock_request.side_effect = mock_request_handler
+            mock_request.side_effect = (
+                mock_request_handler)
 
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
@@ -700,12 +769,16 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             config_data = json.dumps(
                 {'architecture': 'amd64'}).encode()
             writer.process_image_element(
-                constants.CONFIG_FILE, 'config.json',
-                io.BytesIO(config_data))
+                self._elem(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    io.BytesIO(config_data)))
 
             writer.process_image_element(
-                constants.IMAGE_LAYER, 'input_layer_hex',
-                io.BytesIO(b'layer data'))
+                self._elem(
+                    constants.IMAGE_LAYER,
+                    'input_layer_hex',
+                    io.BytesIO(b'layer data')))
 
             writer.finalize()
 
@@ -722,16 +795,19 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                     'sha256:'))
 
     @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_no_cache_backward_compatibility(self, mock_request):
+    def test_no_cache_backward_compatibility(
+            self, mock_request):
         """Test that registry push works without cache."""
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+            'ghcr.io', 'myuser/myimage', 'v1.0',
+            max_workers=1)
 
         def mock_request_handler(method, url, **kwargs):
             response = mock.MagicMock()
             if method == 'HEAD':
                 response.status_code = 200
-            elif method == 'PUT' and '/manifests/' in url:
+            elif (method == 'PUT'
+                  and '/manifests/' in url):
                 response.status_code = 201
             else:
                 response.status_code = 200
@@ -742,12 +818,16 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
         config_data = json.dumps(
             {'architecture': 'amd64'}).encode()
         writer.process_image_element(
-            constants.CONFIG_FILE, 'config.json',
-            io.BytesIO(config_data))
+            self._elem(
+                constants.CONFIG_FILE,
+                'config.json',
+                io.BytesIO(config_data)))
 
         writer.process_image_element(
-            constants.IMAGE_LAYER, 'sha256_layer',
-            io.BytesIO(b'layer data'))
+            self._elem(
+                constants.IMAGE_LAYER,
+                'sha256_layer',
+                io.BytesIO(b'layer data')))
 
         # Should complete without error
         writer.finalize()
@@ -770,17 +850,20 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             cache_path = os.path.join(d, 'cache.json')
             cache = LayerCache(cache_path)
 
-            def mock_request_handler(method, url, **kwargs):
+            def mock_request_handler(
+                    method, url, **kwargs):
                 response = mock.MagicMock()
                 if method == 'HEAD':
                     response.status_code = 200
-                elif method == 'PUT' and '/manifests/' in url:
+                elif (method == 'PUT'
+                      and '/manifests/' in url):
                     response.status_code = 201
                 else:
                     response.status_code = 200
                 return response
 
-            mock_request.side_effect = mock_request_handler
+            mock_request.side_effect = (
+                mock_request_handler)
 
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
@@ -793,21 +876,25 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             config_data = json.dumps(
                 {'architecture': 'amd64'}).encode()
             writer.process_image_element(
-                constants.CONFIG_FILE, 'config.json',
-                io.BytesIO(config_data))
+                self._elem(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    io.BytesIO(config_data)))
 
             # Filter transformed the name before it
             # reached the writer
             writer.process_image_element(
-                constants.IMAGE_LAYER,
-                'filter_transformed_hex',
-                io.BytesIO(b'filtered layer data'))
+                self._elem(
+                    constants.IMAGE_LAYER,
+                    'filter_transformed_hex',
+                    io.BytesIO(b'filtered layer data')))
 
             writer.finalize()
 
             # Cache should record under original DiffID
             cache2 = LayerCache(cache_path)
-            entry = cache2.lookup('original_hex', 'none')
+            entry = cache2.lookup(
+                'original_hex', 'none')
             self.assertIsNotNone(
                 entry,
                 'Cache should have entry for original '
@@ -837,17 +924,20 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cache_path = os.path.join(d, 'cache.json')
 
-            def mock_request_handler(method, url, **kwargs):
+            def mock_request_handler(
+                    method, url, **kwargs):
                 response = mock.MagicMock()
                 if method == 'HEAD':
                     response.status_code = 200
-                elif method == 'PUT' and '/manifests/' in url:
+                elif (method == 'PUT'
+                      and '/manifests/' in url):
                     response.status_code = 201
                 else:
                     response.status_code = 200
                 return response
 
-            mock_request.side_effect = mock_request_handler
+            mock_request.side_effect = (
+                mock_request_handler)
 
             # --- First push: record cache entry ---
             cache1 = LayerCache(cache_path)
@@ -860,13 +950,17 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             config_data = json.dumps(
                 {'architecture': 'amd64'}).encode()
             w1.process_image_element(
-                constants.CONFIG_FILE, 'config.json',
-                io.BytesIO(config_data))
+                self._elem(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    io.BytesIO(config_data)))
 
             w1.process_image_element(
-                constants.IMAGE_LAYER,
-                'filter_transformed_hex',
-                io.BytesIO(b'filtered layer data'))
+                self._elem(
+                    constants.IMAGE_LAYER,
+                    'filter_transformed_hex',
+                    io.BytesIO(
+                        b'filtered layer data')))
 
             w1.finalize()
 
@@ -886,13 +980,17 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             config_data = json.dumps(
                 {'architecture': 'amd64'}).encode()
             w2.process_image_element(
-                constants.CONFIG_FILE, 'config.json',
-                io.BytesIO(config_data))
+                self._elem(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    io.BytesIO(config_data)))
 
             # Layer arrives with data=None (skipped)
             w2.process_image_element(
-                constants.IMAGE_LAYER,
-                'original_hex', None)
+                self._elem(
+                    constants.IMAGE_LAYER,
+                    'original_hex',
+                    None))
 
             w2.finalize()
 

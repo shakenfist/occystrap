@@ -157,7 +157,9 @@ class FilterChainingTestCase(unittest.TestCase):
                     # Process layer
                     with open(layer_path, 'rb') as f:
                         search_filter.process_image_element(
-                            constants.IMAGE_LAYER, 'originalhash', f)
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                'originalhash', f))
 
                     # Search should find .py files (not filtered by exclude)
                     self.assertEqual(1, len(search_filter.results))
@@ -203,13 +205,17 @@ class FilterChainingTestCase(unittest.TestCase):
                         'os': 'linux'
                     }).encode('utf-8')
                     search_filter.process_image_element(
-                        constants.CONFIG_FILE, 'config.json',
-                        io.BytesIO(config_data))
+                        constants.ImageElement(
+                            constants.CONFIG_FILE,
+                            'config.json',
+                            io.BytesIO(config_data)))
 
                     # Process layer
                     with open(layer_path, 'rb') as f:
                         search_filter.process_image_element(
-                            constants.IMAGE_LAYER, 'originalhash', f)
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                'originalhash', f))
 
                     search_filter.finalize()
 
@@ -393,7 +399,9 @@ class FilterChainingTestCase(unittest.TestCase):
                     with open(layer_path, 'rb') as f:
                         # Read original for comparison
                         search_filter.process_image_element(
-                            constants.IMAGE_LAYER, original_sha, f)
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                original_sha, f))
 
                     # Search should find both files
                     self.assertEqual(2, len(search_filter.results))

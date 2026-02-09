@@ -371,19 +371,24 @@ class DockerInputTestCase(unittest.TestCase):
 
             # First element is config
             self.assertEqual(
-                constants.CONFIG_FILE, elements[0][0])
-            self.assertIn('.json', elements[0][1])
+                constants.CONFIG_FILE,
+                elements[0].element_type)
+            self.assertIn('.json', elements[0].name)
 
             # Next two are layers
             self.assertEqual(
-                constants.IMAGE_LAYER, elements[1][0])
-            self.assertEqual('layer1', elements[1][1])
-            self.assertIsNotNone(elements[1][2])
+                constants.IMAGE_LAYER,
+                elements[1].element_type)
+            self.assertEqual(
+                'layer1', elements[1].name)
+            self.assertIsNotNone(elements[1].data)
 
             self.assertEqual(
-                constants.IMAGE_LAYER, elements[2][0])
-            self.assertEqual('layer2', elements[2][1])
-            self.assertIsNotNone(elements[2][2])
+                constants.IMAGE_LAYER,
+                elements[2].element_type)
+            self.assertEqual(
+                'layer2', elements[2].name)
+            self.assertIsNotNone(elements[2].data)
 
         finally:
             os.unlink(tarball_path)
@@ -428,9 +433,11 @@ class DockerInputTestCase(unittest.TestCase):
 
             # Config is first
             self.assertEqual(
-                constants.CONFIG_FILE, elements[0][0])
+                constants.CONFIG_FILE,
+                elements[0].element_type)
             self.assertEqual(
-                '%s.json' % config_hex, elements[0][1])
+                '%s.json' % config_hex,
+                elements[0].name)
 
         finally:
             os.unlink(tarball_path)
@@ -483,21 +490,26 @@ class DockerInputTestCase(unittest.TestCase):
 
             # Config is first
             self.assertEqual(
-                constants.CONFIG_FILE, elements[0][0])
+                constants.CONFIG_FILE,
+                elements[0].element_type)
             self.assertEqual(
                 'blobs/sha256/%s' % config_hex,
-                elements[0][1])
+                elements[0].name)
 
             # Layers in order
             self.assertEqual(
-                constants.IMAGE_LAYER, elements[1][0])
-            self.assertEqual('diff111', elements[1][1])
-            self.assertIsNotNone(elements[1][2])
+                constants.IMAGE_LAYER,
+                elements[1].element_type)
+            self.assertEqual(
+                'diff111', elements[1].name)
+            self.assertIsNotNone(elements[1].data)
 
             self.assertEqual(
-                constants.IMAGE_LAYER, elements[2][0])
-            self.assertEqual('diff222', elements[2][1])
-            self.assertIsNotNone(elements[2][2])
+                constants.IMAGE_LAYER,
+                elements[2].element_type)
+            self.assertEqual(
+                'diff222', elements[2].name)
+            self.assertIsNotNone(elements[2].data)
 
         finally:
             os.unlink(tarball_path)
@@ -535,14 +547,14 @@ class DockerInputTestCase(unittest.TestCase):
             # Layer1 should have None data (skipped)
             layer1_element = [
                 e for e in elements
-                if e[1] == 'layer1'][0]
-            self.assertIsNone(layer1_element[2])
+                if e.name == 'layer1'][0]
+            self.assertIsNone(layer1_element.data)
 
             # Layer2 should have data
             layer2_element = [
                 e for e in elements
-                if e[1] == 'layer2'][0]
-            self.assertIsNotNone(layer2_element[2])
+                if e.name == 'layer2'][0]
+            self.assertIsNotNone(layer2_element.data)
 
         finally:
             os.unlink(tarball_path)
@@ -593,14 +605,14 @@ class DockerInputTestCase(unittest.TestCase):
             # First layer skipped (None data)
             layer1 = [
                 e for e in elements
-                if e[1] == 'diff333'][0]
-            self.assertIsNone(layer1[2])
+                if e.name == 'diff333'][0]
+            self.assertIsNone(layer1.data)
 
             # Second layer has data
             layer2 = [
                 e for e in elements
-                if e[1] == 'diff444'][0]
-            self.assertIsNotNone(layer2[2])
+                if e.name == 'diff444'][0]
+            self.assertIsNotNone(layer2.data)
 
         finally:
             os.unlink(tarball_path)
@@ -657,24 +669,26 @@ class DockerInputTestCase(unittest.TestCase):
 
             # Config is first
             self.assertEqual(
-                constants.CONFIG_FILE, elements[0][0])
+                constants.CONFIG_FILE,
+                elements[0].element_type)
 
             # All 4 layers yielded with data
             layer_elements = [
                 e for e in elements
-                if e[0] == constants.IMAGE_LAYER]
+                if e.element_type
+                == constants.IMAGE_LAYER]
             self.assertEqual(4, len(layer_elements))
 
             # Verify each layer has data
             for elem in layer_elements:
-                self.assertIsNotNone(elem[2])
+                self.assertIsNotNone(elem.data)
 
             # Verify layer order matches DiffIDs
             expected_digests = [
                 'diff555', empty_id,
                 'diff666', empty_id]
             actual_digests = [
-                e[1] for e in layer_elements]
+                e.name for e in layer_elements]
             self.assertEqual(
                 expected_digests, actual_digests)
 
