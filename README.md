@@ -37,6 +37,7 @@ occystrap process SOURCE DESTINATION [-f FILTER]...
 
 - `registry://HOST/IMAGE:TAG` - Docker/OCI registry
 - `docker://IMAGE:TAG` - Local Docker daemon
+- `dockerpush://IMAGE:TAG` - Local Docker via push (fast, see below)
 - `tar:///path/to/file.tar` - Docker-save format tarball
 
 ### Output URI Schemes
@@ -293,6 +294,20 @@ occystrap docker-to-tarfile library/busybox latest busybox.tar
 ```
 occystrap process docker://library/busybox:latest tar://busybox.tar
 ```
+
+For faster local Docker image processing, use the `dockerpush://` input:
+```
+occystrap process dockerpush://library/busybox:latest tar://busybox.tar
+```
+
+The `dockerpush://` input starts an embedded Docker Registry V2 server on
+localhost and has Docker push the image to it. This is significantly faster
+than `docker://` for multi-layer images because Docker's push mechanism
+transfers layers individually and in parallel, whereas the Docker Engine API
+(`docker://`) exports the entire image as a single sequential tarball.
+
+Since Docker 1.3.2, the entire `127.0.0.0/8` range is implicitly trusted as
+insecure, so no daemon.json changes or TLS certificates are needed.
 
 For Podman:
 ```
