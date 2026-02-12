@@ -465,9 +465,20 @@ class TestImageFetch(unittest.TestCase):
             img._start_server = fake_start
             img._stop_server = fake_stop
 
-            elements = list(img.fetch())
+            # Consume elements one at a time so
+            # file handles stay open (the generator
+            # closes them on resume, matching
+            # registry.py's pattern)
+            elements = []
+            layer_data = None
+            for elem in img.fetch():
+                if elem.element_type == \
+                        constants.IMAGE_LAYER \
+                        and elem.data is not None:
+                    layer_data = elem.data.read()
+                elements.append(elem)
 
-            # Should have config + 1 layer = 2 elements
+            # Should have config + 1 layer
             self.assertEqual(len(elements), 2)
             self.assertEqual(
                 elements[0].element_type,
@@ -482,8 +493,7 @@ class TestImageFetch(unittest.TestCase):
                 elements[1].name, uncomp_hash)
             # Layer data should be decompressed
             self.assertEqual(
-                elements[1].data.read(),
-                layer_content)
+                layer_data, layer_content)
         finally:
             server.shutdown()
 

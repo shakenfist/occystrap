@@ -435,10 +435,9 @@ class Image(ImageInput):
       Docker pushes a manifest list (fat manifest) for a
       multi-arch image, parsing will fail. Use the
       registry:// input for multi-arch images.
-    - Reads each layer blob entirely into memory for
-      decompression. For very large layers (several GB),
-      this may use significant memory. Future improvement:
-      use streaming decompression.
+    - Layer decompression uses streaming with constant
+      memory (1MB buffer), but blob data is received to
+      temp files on disk during the push.
     """
 
     def __init__(self, image, tag='latest',
@@ -898,11 +897,7 @@ class Image(ImageInput):
                     blob_path = state.blobs[
                         compressed_hex]
 
-                    # Detect and decompress.
-                    # NOTE: reads entire blob into
-                    # memory. Future improvement:
-                    # use streaming decompression
-                    # for large layers.
+                    # Detect compression type
                     media_type = layer_meta.get(
                         'mediaType')
                     comp_type = (
@@ -917,17 +912,49 @@ class Image(ImageInput):
                                 compression
                                 .detect_compression(f))
 
-                    with open(blob_path, 'rb') as f:
-                        blob_data = f.read()
+                    # Treat unknown as passthrough
+                    if comp_type == unknown:
+                        comp_type = (
+                            constants.COMPRESSION_NONE)
 
-                    GZIP = constants.COMPRESSION_GZIP
-                    ZSTD = constants.COMPRESSION_ZSTD
-                    if comp_type in (GZIP, ZSTD):
-                        decompressed = (
-                            compression.decompress_data(
-                                blob_data, comp_type))
-                    else:
-                        decompressed = blob_data
+                    # Stream decompress to temp file
+                    # (constant memory regardless of
+                    # layer size)
+                    d = compression.StreamingDecompressor(
+                        comp_type)
+                    tf = tempfile.NamedTemporaryFile(
+                        delete=False,
+                        dir=self.temp_dir)
+                    compressed_size = 0
+                    try:
+                        with open(
+                                blob_path, 'rb') as f:
+                            while True:
+                                chunk = f.read(
+                                    COPY_BUFSIZE)
+                                if not chunk:
+                                    break
+                                compressed_size += (
+                                    len(chunk))
+                                tf.write(
+                                    d.decompress(chunk))
+                        remaining = d.flush()
+                        if remaining:
+                            tf.write(remaining)
+                        decompressed_size = tf.tell()
+                        tf.close()
+                    except BaseException:
+                        tf.close()
+                        os.unlink(tf.name)
+                        raise
+
+                    # Delete compressed blob now that
+                    # we have the decompressed copy
+                    try:
+                        os.unlink(blob_path)
+                    except OSError:
+                        pass
+                    del state.blobs[compressed_hex]
 
                     LOG.info(
                         '[%d/%d] Layer %s...'
@@ -936,14 +963,21 @@ class Image(ImageInput):
                         % (layer_idx + 1,
                            len(layers),
                            diff_id[:12],
-                           len(blob_data),
-                           len(decompressed)))
+                           compressed_size,
+                           decompressed_size))
 
-                    yield constants.ImageElement(
-                        constants.IMAGE_LAYER,
-                        diff_id,
-                        io.BytesIO(decompressed),
-                        layer_index=idx)
+                    try:
+                        with open(
+                                tf.name, 'rb') as fh:
+                            yield constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                diff_id, fh,
+                                layer_index=idx)
+                    finally:
+                        try:
+                            os.unlink(tf.name)
+                        except OSError:
+                            pass
                     layers_fetched += 1
 
                 # Save updated digest mapping
