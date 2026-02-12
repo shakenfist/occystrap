@@ -500,6 +500,135 @@ class TestImageFetch(unittest.TestCase):
     @mock.patch(
         'occystrap.inputs.dockerpush'
         '.requests_unixsocket.Session')
+    def test_fetch_multi_layer(self, mock_session_cls):
+        """Test fetching an image with three layers."""
+        layer_contents = [
+            b'base layer data',
+            b'middle layer data here',
+            b'top layer with more stuff',
+        ]
+        layers_info = []
+        uncomp_hashes = []
+        for content in layer_contents:
+            compressed, comp_hash, uncomp_hash = \
+                self._make_gzip_layer(content)
+            layers_info.append(
+                (compressed, comp_hash,
+                 len(compressed)))
+            uncomp_hashes.append(uncomp_hash)
+
+        config_bytes, config_hash = self._make_config(
+            uncomp_hashes)
+        manifest = self._make_manifest(
+            config_hash, len(config_bytes),
+            [(info[1], info[2])
+             for info in layers_info])
+
+        mock_session = mock.MagicMock()
+
+        def mock_request(method, url, stream=False,
+                         headers=None, data=None):
+            resp = mock.MagicMock()
+            if method == 'POST' and '/tag' in url:
+                resp.status_code = 201
+            elif method == 'POST' and '/push' in url:
+                resp.status_code = 200
+                resp.iter_lines.return_value = [
+                    json.dumps(
+                        {'status': 'Pushing'}
+                    ).encode(),
+                ]
+            elif method == 'DELETE':
+                resp.status_code = 200
+            else:
+                resp.status_code = 404
+            return resp
+
+        mock_session.request.side_effect = \
+            mock_request
+        mock_session_cls.return_value = mock_session
+
+        img = Image('test', tag='latest')
+        state = _RegistryState()
+        server = http.server.ThreadingHTTPServer(
+            ('127.0.0.1', 0),
+            EmbeddedRegistryHandler)
+        server.registry_state = state
+        thread = threading.Thread(
+            target=server.serve_forever, daemon=True)
+        thread.start()
+        port = server.server_address[1]
+        base = 'http://127.0.0.1:%d' % port
+        sess = _no_proxy_session()
+
+        try:
+            # Upload config blob
+            self._upload_blob_to_server(
+                sess, base,
+                config_bytes, config_hash)
+
+            # Upload all layer blobs
+            for compressed, comp_hash, _ \
+                    in layers_info:
+                self._upload_blob_to_server(
+                    sess, base,
+                    compressed, comp_hash)
+
+            # Upload manifest
+            sess.put(
+                '%s/v2/test/manifests/latest'
+                % base,
+                data=manifest)
+
+            def fake_start(s):
+                server.registry_state = s
+                s.blobs.update(state.blobs)
+                s.manifest_data = \
+                    state.manifest_data
+                s.manifest_event.set()
+                return server
+
+            img._start_server = fake_start
+            img._stop_server = lambda s: None
+
+            # Consume elements one at a time
+            elements = []
+            layer_data_list = []
+            for elem in img.fetch():
+                if elem.element_type == \
+                        constants.IMAGE_LAYER \
+                        and elem.data is not None:
+                    layer_data_list.append(
+                        elem.data.read())
+                elements.append(elem)
+
+            # Should have config + 3 layers
+            self.assertEqual(len(elements), 4)
+            self.assertEqual(
+                elements[0].element_type,
+                constants.CONFIG_FILE)
+
+            # Verify each layer
+            for i in range(3):
+                self.assertEqual(
+                    elements[i + 1].element_type,
+                    constants.IMAGE_LAYER)
+                self.assertEqual(
+                    elements[i + 1].name,
+                    uncomp_hashes[i])
+
+            # Verify decompressed layer data
+            self.assertEqual(len(layer_data_list), 3)
+            for i, content in \
+                    enumerate(layer_contents):
+                self.assertEqual(
+                    layer_data_list[i], content)
+        finally:
+            server.shutdown()
+
+    @mock.patch(
+        'occystrap.inputs.dockerpush'
+        '.requests_unixsocket.Session')
     def test_fetch_callback_skip(self, mock_session_cls):
         """Test that fetch_callback=False skips layers."""
         layer_content = b'layer data'

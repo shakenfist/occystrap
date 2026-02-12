@@ -23,7 +23,7 @@ import time
 from occystrap import compression
 from occystrap import constants
 from occystrap import util
-from occystrap.inputs.base import ImageInput
+from occystrap.inputs.base import ImageInput, always_fetch
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -33,10 +33,6 @@ LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
 
 DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
-
-
-def always_fetch(digest):
-    return True
 
 
 class Image(ImageInput):

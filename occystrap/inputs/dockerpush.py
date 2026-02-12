@@ -30,13 +30,14 @@ import os
 import tempfile
 import threading
 import uuid
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import (
+    urlparse, parse_qs, quote, urlencode)
 
 import requests_unixsocket
 
 from occystrap import compression
 from occystrap import constants
-from occystrap.inputs.base import ImageInput
+from occystrap.inputs.base import ImageInput, always_fetch
 
 
 LOG = logging.getLogger(__name__)
@@ -50,10 +51,6 @@ COPY_BUFSIZE = 1024 * 1024  # 1MB chunks
 # after the push API call completes. Large images on
 # slow systems may need more time.
 MANIFEST_TIMEOUT = 300
-
-
-def always_fetch(digest):
-    return True
 
 
 class _RegistryState:
@@ -97,6 +94,10 @@ class EmbeddedRegistryHandler(
     All received blobs are stored as temp files. The manifest
     is stored in memory.
     """
+
+    # Close idle connections after 30 seconds to
+    # prevent stale handler threads from lingering.
+    timeout = 30
 
     @property
     def state(self):
@@ -498,8 +499,9 @@ class Image(ImageInput):
         pointing to the same image.
         """
         ref = self._get_image_reference()
-        path = '/images/%s/tag?repo=%s&tag=%s' % (
-            ref, repo, tag)
+        params = urlencode({'repo': repo, 'tag': tag})
+        path = '/images/%s/tag?%s' % (
+            quote(ref, safe=''), params)
         r = self._request('POST', path)
         if r.status_code == 404:
             raise Exception(
@@ -517,7 +519,8 @@ class Image(ImageInput):
         Consumes the stream and checks for errors.
         """
         push_ref = '%s:%s' % (repo, tag)
-        path = '/images/%s/push' % push_ref
+        path = '/images/%s/push' % quote(
+            push_ref, safe='')
         auth_header = base64.b64encode(
             b'{}').decode('ascii')
         r = self._request(
@@ -561,7 +564,8 @@ class Image(ImageInput):
         only the tag without deleting underlying layers.
         """
         ref = '%s:%s' % (repo, tag)
-        path = '/images/%s?noprune=true' % ref
+        path = '/images/%s?noprune=true' % quote(
+            ref, safe='')
         r = self._request('DELETE', path)
         if r.status_code in (200, 404):
             LOG.info('Untagged %s' % ref)
@@ -773,6 +777,23 @@ class Image(ImageInput):
                 # Parse manifest
                 manifest = json.loads(
                     state.manifest_data)
+
+                # Detect manifest list (multi-arch)
+                # which we don't support - Docker
+                # should always push a single-platform
+                # manifest, but check just in case.
+                if 'manifests' in manifest:
+                    raise Exception(
+                        'Received a manifest list'
+                        ' (multi-arch) instead of a'
+                        ' single image manifest.'
+                        ' This is unexpected for a'
+                        ' Docker push. Please ensure'
+                        ' the image is single-platform'
+                        ' or use registry:// input'
+                        ' which supports manifest'
+                        ' list resolution.')
+
                 LOG.info(
                     'Manifest received: %d layers'
                     % len(manifest.get('layers', [])))
@@ -954,7 +975,8 @@ class Image(ImageInput):
                         os.unlink(blob_path)
                     except OSError:
                         pass
-                    del state.blobs[compressed_hex]
+                    with state.lock:
+                        del state.blobs[compressed_hex]
 
                     LOG.info(
                         '[%d/%d] Layer %s...'
