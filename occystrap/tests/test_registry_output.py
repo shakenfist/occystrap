@@ -112,21 +112,25 @@ class RegistryWriterTestCase(unittest.TestCase):
     def test_upload_blob_new(self, mock_request):
         """Test uploading a new blob."""
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+            'ghcr.io', 'myuser/myimage', 'v1.0',
+            max_workers=1)
 
-        head_response = mock.MagicMock()
-        head_response.status_code = 404
+        def handler(method, url, **kwargs):
+            resp = mock.MagicMock()
+            if method == 'HEAD':
+                resp.status_code = 404
+            elif method == 'POST':
+                resp.status_code = 202
+                resp.headers = {
+                    'Location':
+                        '/v2/myuser/myimage/blobs'
+                        '/uploads/uuid123'
+                }
+            elif method == 'PUT':
+                resp.status_code = 201
+            return resp
 
-        post_response = mock.MagicMock()
-        post_response.status_code = 202
-        post_response.headers = {
-            'Location': '/v2/myuser/myimage/blobs/uploads/uuid123'
-        }
-
-        put_response = mock.MagicMock()
-        put_response.status_code = 201
-
-        mock_request.side_effect = [head_response, post_response, put_response]
+        mock_request.side_effect = handler
 
         data = io.BytesIO(b'test data')
         writer._upload_blob('sha256:abc123', data, 9)
@@ -515,22 +519,22 @@ class RegistryWriterTestCase(unittest.TestCase):
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0')
 
-        head_response = mock.MagicMock()
-        head_response.status_code = 404
+        def handler(method, url, **kwargs):
+            resp = mock.MagicMock()
+            if method == 'HEAD':
+                resp.status_code = 404
+            elif method == 'POST':
+                resp.status_code = 202
+                resp.headers = {
+                    'Location':
+                        '/v2/myuser/myimage/blobs'
+                        '/uploads/uuid123'
+                }
+            elif method == 'PUT':
+                resp.status_code = 201
+            return resp
 
-        post_response = mock.MagicMock()
-        post_response.status_code = 202
-        post_response.headers = {
-            'Location':
-                '/v2/myuser/myimage/blobs/uploads/uuid123'
-        }
-
-        put_response = mock.MagicMock()
-        put_response.status_code = 201
-
-        mock_request.side_effect = [
-            head_response, post_response, put_response
-        ]
+        mock_request.side_effect = handler
 
         result = writer._upload_blob(
             'sha256:abc123', io.BytesIO(b'data'), 4)
