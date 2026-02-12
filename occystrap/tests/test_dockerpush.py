@@ -32,29 +32,41 @@ def _start_test_server(state=None):
     return server, server.server_address[1]
 
 
+def _no_proxy_session():
+    """Create a requests session that bypasses proxy settings.
+
+    CI runners may have HTTP_PROXY set, which would route
+    localhost requests through the proxy and break tests.
+    """
+    s = requests.Session()
+    s.trust_env = False
+    return s
+
+
 class TestEmbeddedRegistryV2Check(unittest.TestCase):
     """Tests for GET /v2/ version check."""
 
     def setUp(self):
         self.server, self.port = _start_test_server()
         self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
 
     def tearDown(self):
         self.server.shutdown()
 
     def test_v2_returns_200(self):
-        r = requests.get('%s/v2/' % self.base)
+        r = self.sess.get('%s/v2/' % self.base)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {})
 
     def test_v2_has_api_version_header(self):
-        r = requests.get('%s/v2/' % self.base)
+        r = self.sess.get('%s/v2/' % self.base)
         self.assertEqual(
             r.headers.get('Docker-Distribution-API-Version'),
             'registry/2.0')
 
     def test_unknown_get_returns_404(self):
-        r = requests.get('%s/v2/unknown' % self.base)
+        r = self.sess.get('%s/v2/unknown' % self.base)
         self.assertEqual(r.status_code, 404)
 
 
@@ -64,13 +76,14 @@ class TestEmbeddedRegistryHEAD(unittest.TestCase):
     def setUp(self):
         self.server, self.port = _start_test_server()
         self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
 
     def tearDown(self):
         self.server.shutdown()
 
     def test_head_returns_404_not_cached(self):
         """HEAD returns 404 for unknown digests."""
-        r = requests.head(
+        r = self.sess.head(
             '%s/v2/test/blobs/sha256:abc123' % self.base)
         self.assertEqual(r.status_code, 404)
 
@@ -78,7 +91,7 @@ class TestEmbeddedRegistryHEAD(unittest.TestCase):
         """HEAD returns 200 for digests in skip_digests."""
         state = self.server.registry_state
         state.skip_digests.add('abc123')
-        r = requests.head(
+        r = self.sess.head(
             '%s/v2/test/blobs/sha256:abc123' % self.base)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(
@@ -89,7 +102,7 @@ class TestEmbeddedRegistryHEAD(unittest.TestCase):
         """HEAD returns 404 for digests NOT in skip set."""
         state = self.server.registry_state
         state.skip_digests.add('abc123')
-        r = requests.head(
+        r = self.sess.head(
             '%s/v2/test/blobs/sha256:def456' % self.base)
         self.assertEqual(r.status_code, 404)
 
@@ -102,6 +115,7 @@ class TestEmbeddedRegistryBlobUpload(unittest.TestCase):
         self.server, self.port = _start_test_server(
             self.state)
         self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
 
     def tearDown(self):
         self.server.shutdown()
@@ -118,7 +132,7 @@ class TestEmbeddedRegistryBlobUpload(unittest.TestCase):
                 pass
 
     def test_post_creates_upload(self):
-        r = requests.post(
+        r = self.sess.post(
             '%s/v2/test/blobs/uploads/' % self.base)
         self.assertEqual(r.status_code, 202)
         self.assertIn(
@@ -131,13 +145,13 @@ class TestEmbeddedRegistryBlobUpload(unittest.TestCase):
         blob_hash = hashlib.sha256(blob_data).hexdigest()
 
         # POST to start upload
-        r = requests.post(
+        r = self.sess.post(
             '%s/v2/test/blobs/uploads/' % self.base)
         self.assertEqual(r.status_code, 202)
         location = r.headers['Location']
 
         # PATCH to send data
-        r = requests.patch(
+        r = self.sess.patch(
             '%s%s' % (self.base, location),
             data=blob_data,
             headers={
@@ -147,7 +161,7 @@ class TestEmbeddedRegistryBlobUpload(unittest.TestCase):
         self.assertEqual(r.status_code, 202)
 
         # PUT to complete with digest
-        r = requests.put(
+        r = self.sess.put(
             '%s%s?digest=sha256:%s'
             % (self.base, location, blob_hash))
         self.assertEqual(r.status_code, 201)
@@ -159,12 +173,12 @@ class TestEmbeddedRegistryBlobUpload(unittest.TestCase):
         blob_hash = hashlib.sha256(blob_data).hexdigest()
 
         # POST to start upload
-        r = requests.post(
+        r = self.sess.post(
             '%s/v2/test/blobs/uploads/' % self.base)
         location = r.headers['Location']
 
         # PUT with all data and digest
-        r = requests.put(
+        r = self.sess.put(
             '%s%s?digest=sha256:%s'
             % (self.base, location, blob_hash),
             data=blob_data,
@@ -180,11 +194,11 @@ class TestEmbeddedRegistryBlobUpload(unittest.TestCase):
         blob_data = b'some blob data'
         wrong_hash = 'a' * 64
 
-        r = requests.post(
+        r = self.sess.post(
             '%s/v2/test/blobs/uploads/' % self.base)
         location = r.headers['Location']
 
-        r = requests.put(
+        r = self.sess.put(
             '%s%s?digest=sha256:%s'
             % (self.base, location, wrong_hash),
             data=blob_data)
@@ -200,6 +214,7 @@ class TestEmbeddedRegistryManifest(unittest.TestCase):
         self.server, self.port = _start_test_server(
             self.state)
         self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
 
     def tearDown(self):
         self.server.shutdown()
@@ -214,7 +229,7 @@ class TestEmbeddedRegistryManifest(unittest.TestCase):
             'layers': [],
         }).encode()
 
-        r = requests.put(
+        r = self.sess.put(
             '%s/v2/test/manifests/latest' % self.base,
             data=manifest,
             headers={
@@ -230,7 +245,7 @@ class TestEmbeddedRegistryManifest(unittest.TestCase):
     def test_manifest_put_signals_event(self):
         manifest = b'{"schemaVersion": 2}'
 
-        requests.put(
+        self.sess.put(
             '%s/v2/test/manifests/latest' % self.base,
             data=manifest)
         self.assertTrue(
@@ -358,13 +373,13 @@ class TestImageFetch(unittest.TestCase):
         }
         return json.dumps(manifest).encode()
 
-    def _upload_blob_to_server(self, base, data,
+    def _upload_blob_to_server(self, sess, base, data,
                                digest_hex):
         """Upload a blob to the test server."""
-        r = requests.post(
+        r = sess.post(
             '%s/v2/test/blobs/uploads/' % base)
         location = r.headers['Location']
-        requests.put(
+        sess.put(
             '%s%s?digest=sha256:%s'
             % (base, location, digest_hex),
             data=data)
@@ -421,16 +436,17 @@ class TestImageFetch(unittest.TestCase):
         thread.start()
         port = server.server_address[1]
         base = 'http://127.0.0.1:%d' % port
+        sess = _no_proxy_session()
 
         try:
             # Upload blobs to the test server
             self._upload_blob_to_server(
-                base, config_bytes, config_hash)
+                sess, base, config_bytes, config_hash)
             self._upload_blob_to_server(
-                base, compressed, comp_hash)
+                sess, base, compressed, comp_hash)
 
             # Upload manifest
-            requests.put(
+            sess.put(
                 '%s/v2/test/manifests/latest' % base,
                 data=manifest)
 
@@ -514,13 +530,14 @@ class TestImageFetch(unittest.TestCase):
         thread.start()
         base = 'http://127.0.0.1:%d' \
             % server.server_address[1]
+        sess = _no_proxy_session()
 
         try:
             self._upload_blob_to_server(
-                base, config_bytes, config_hash)
+                sess, base, config_bytes, config_hash)
             self._upload_blob_to_server(
-                base, compressed, comp_hash)
-            requests.put(
+                sess, base, compressed, comp_hash)
+            sess.put(
                 '%s/v2/test/manifests/latest' % base,
                 data=manifest)
 
