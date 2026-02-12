@@ -48,11 +48,17 @@ class PipelineBuilder:
         """Get a value from the context object."""
         return self._ctx_obj.get(key, default)
 
-    def build_input(self, uri_spec):
+    def build_input(self, uri_spec, layer_cache=None,
+                    filters_hash='none'):
         """Create an ImageInput from a URI spec.
 
         Args:
             uri_spec: A URISpec from uri.parse_uri()
+            layer_cache: Optional LayerCache instance.
+                Only used by dockerpush:// for the HEAD
+                optimization that skips cached layers.
+            filters_hash: Hash of the pipeline config,
+                used with layer_cache (default: 'none').
 
         Returns:
             An ImageInput instance.
@@ -104,7 +110,9 @@ class PipelineBuilder:
             temp_dir = self._get_ctx('TEMP_DIR')
             return input_dockerpush.Image(
                 image, tag, socket_path=socket,
-                temp_dir=temp_dir)
+                temp_dir=temp_dir,
+                layer_cache=layer_cache,
+                filters_hash=filters_hash)
 
         elif uri_spec.scheme == 'tar':
             path = uri_spec.path
@@ -346,20 +354,12 @@ class PipelineBuilder:
                 filter_strs, compression_type)
             layer_cache = LayerCache(cache_path)
 
-        # Build input (pass cache to dockerpush for
-        # HEAD optimization)
-        if source_spec.scheme == 'dockerpush' \
-                and layer_cache is not None:
-            image, tag, socket = \
-                uri.parse_dockerpush_uri(source_spec)
-            temp_dir = self._get_ctx('TEMP_DIR')
-            input_source = input_dockerpush.Image(
-                image, tag, socket_path=socket,
-                temp_dir=temp_dir,
-                layer_cache=layer_cache,
-                filters_hash=filters_hash)
-        else:
-            input_source = self.build_input(source_spec)
+        # Build input (layer_cache and filters_hash are
+        # passed through to dockerpush for the HEAD
+        # optimization; other inputs ignore them)
+        input_source = self.build_input(
+            source_spec, layer_cache=layer_cache,
+            filters_hash=filters_hash)
 
         # Build output
         output = self.build_output(

@@ -180,6 +180,17 @@ The digest mapping is stored alongside the layer cache as
 the uncompressed DiffIDs used as cache keys. It is updated automatically
 after each push.
 
+**Limitations:**
+
+- Only supports single-platform V2 manifests. If Docker pushes a manifest
+  list (fat manifest) for a multi-arch image, parsing will fail. Use the
+  `registry://` input for multi-arch images.
+- Reads each layer blob entirely into memory for decompression. For very
+  large layers (several GB), this may use significant memory.
+- The manifest wait timeout defaults to 300 seconds (`MANIFEST_TIMEOUT`
+  constant in `dockerpush.py`). Very large images on slow systems may
+  need this value increased.
+
 **When to use:**
 
 - Use `dockerpush://` when the source image is in a local Docker daemon

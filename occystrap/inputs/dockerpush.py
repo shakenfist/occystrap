@@ -46,6 +46,11 @@ DEFAULT_SOCKET_PATH = '/var/run/docker.sock'
 
 COPY_BUFSIZE = 1024 * 1024  # 1MB chunks
 
+# Seconds to wait for Docker to push the manifest
+# after the push API call completes. Large images on
+# slow systems may need more time.
+MANIFEST_TIMEOUT = 300
+
 
 def always_fetch(digest):
     return True
@@ -101,12 +106,41 @@ class EmbeddedRegistryHandler(
         LOG.debug('Registry: %s' % (format % args))
 
     def _read_body(self):
-        """Read the full request body."""
+        """Read the full request body.
+
+        Handles both Content-Length and chunked
+        Transfer-Encoding. Falls back to empty body
+        if neither is present.
+        """
+        transfer_enc = self.headers.get(
+            'Transfer-Encoding', '').lower()
+        if 'chunked' in transfer_enc:
+            return self._read_chunked_body()
+
         length = int(
             self.headers.get('Content-Length', 0))
         if length > 0:
             return self.rfile.read(length)
         return b''
+
+    def _read_chunked_body(self):
+        """Read a chunked transfer-encoded body."""
+        body = io.BytesIO()
+        while True:
+            line = self.rfile.readline()
+            # Chunk size is hex, may have extensions
+            # after a semicolon
+            chunk_size = int(
+                line.strip().split(b';')[0], 16)
+            if chunk_size == 0:
+                # Read trailing CRLF after final chunk
+                self.rfile.readline()
+                break
+            body.write(
+                self.rfile.read(chunk_size))
+            # Read trailing CRLF after chunk data
+            self.rfile.readline()
+        return body.getvalue()
 
     def _parse_path(self):
         """Parse the request path and query string."""
@@ -218,20 +252,22 @@ class EmbeddedRegistryHandler(
 
         upload_uuid = parts[1].strip('/')
 
+        # Read body outside the lock to avoid
+        # blocking other handler threads during I/O
+        data = self._read_body()
+
         with self.state.lock:
             upload = self.state.uploads.get(upload_uuid)
+            if not upload:
+                self.send_response(404)
+                self.end_headers()
+                return
 
-        if not upload:
-            self.send_response(404)
-            self.end_headers()
-            return
-
-        # Read and write data
-        data = self._read_body()
-        with open(upload['path'], 'ab') as f:
-            f.write(data)
-
-        with self.state.lock:
+            # Write and update offset under the lock
+            # so _handle_blob_put cannot delete the
+            # upload between our lookup and write
+            with open(upload['path'], 'ab') as f:
+                f.write(data)
             upload['offset'] += len(data)
             new_offset = upload['offset']
 
@@ -386,13 +422,23 @@ class EmbeddedRegistryHandler(
 
 
 class Image(ImageInput):
-    """Fetch images from Docker/Podman by pushing to an embedded
-    registry.
+    """Fetch images from Docker/Podman by pushing to an
+    embedded registry.
 
     Instead of using Docker's /images/{name}/get API (which
     returns a single sequential tarball), this input starts a
     minimal HTTP server on localhost and uses Docker's push
     mechanism to transfer layers in parallel.
+
+    Limitations:
+    - Only supports single-platform V2 manifests. If
+      Docker pushes a manifest list (fat manifest) for a
+      multi-arch image, parsing will fail. Use the
+      registry:// input for multi-arch images.
+    - Reads each layer blob entirely into memory for
+      decompression. For very large layers (several GB),
+      this may use significant memory. Future improvement:
+      use streaming decompression.
     """
 
     def __init__(self, image, tag='latest',
@@ -558,7 +604,7 @@ class Image(ImageInput):
         """
         if self.layer_cache is None:
             return None
-        return self.layer_cache._path + '.digests'
+        return self.layer_cache.path + '.digests'
 
     def _load_digest_mapping(self):
         """Load the Docker compressed digest -> DiffID
@@ -636,6 +682,16 @@ class Image(ImageInput):
         checks the layer cache to see which DiffIDs are
         cached.
 
+        The fetch_callback follows the convention from
+        ImageInput.fetch(): it returns True if the layer
+        should be fetched, False if it can be skipped.
+        For RegistryWriter, False means the remote
+        registry already has the blob. This method is
+        called before the push starts, but fetch_callback
+        is already usable at that point because it only
+        queries the layer cache and remote registry
+        (both initialized before fetch() is called).
+
         Returns:
             Tuple of (skip_digests_set,
                       digest_to_diffid_mapping).
@@ -708,10 +764,12 @@ class Image(ImageInput):
 
                 # Wait for manifest
                 if not state.manifest_event.wait(
-                        timeout=300):
+                        timeout=MANIFEST_TIMEOUT):
                     raise Exception(
                         'Timed out waiting for'
-                        ' manifest from Docker push')
+                        ' manifest from Docker push'
+                        ' (timeout=%ds)'
+                        % MANIFEST_TIMEOUT)
 
                 # Parse manifest
                 manifest = json.loads(
@@ -810,24 +868,26 @@ class Image(ImageInput):
                     # If Docker skipped upload (blob
                     # not in state.blobs), the layer
                     # was cached and HEAD returned 200
-                    if compressed_hex \
-                            not in state.blobs:
-                        if compressed_hex \
-                                in state.skip_digests:
+                    blob_missing = (
+                        compressed_hex not in state.blobs)
+                    was_skipped = (
+                        compressed_hex
+                        in state.skip_digests)
+
+                    if blob_missing:
+                        if was_skipped:
                             LOG.info(
                                 '[%d/%d] Skipping'
                                 ' layer %s...'
-                                ' (cached, HEAD'
-                                ' skip)'
+                                ' (cached, HEAD skip)'
                                 % (layer_idx + 1,
                                    len(layers),
                                    diff_id[:12]))
-                            yield constants\
-                                .ImageElement(
-                                    constants
-                                    .IMAGE_LAYER,
-                                    diff_id, None,
-                                    layer_index=idx)
+                            elem = constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                diff_id, None,
+                                layer_index=idx)
+                            yield elem
                             layers_skipped += 1
                             continue
                         raise Exception(
@@ -838,29 +898,34 @@ class Image(ImageInput):
                     blob_path = state.blobs[
                         compressed_hex]
 
-                    # Detect and decompress
+                    # Detect and decompress.
+                    # NOTE: reads entire blob into
+                    # memory. Future improvement:
+                    # use streaming decompression
+                    # for large layers.
                     media_type = layer_meta.get(
                         'mediaType')
-                    comp_type = compression\
+                    comp_type = (
+                        compression
                         .detect_compression_from_media_type(
-                            media_type)
-                    if comp_type == constants\
-                            .COMPRESSION_UNKNOWN:
+                            media_type))
+                    unknown = constants.COMPRESSION_UNKNOWN
+                    if comp_type == unknown:
                         with open(
                                 blob_path, 'rb') as f:
-                            comp_type = compression\
-                                .detect_compression(f)
+                            comp_type = (
+                                compression
+                                .detect_compression(f))
 
                     with open(blob_path, 'rb') as f:
                         blob_data = f.read()
 
-                    if comp_type in (
-                            constants.COMPRESSION_GZIP,
-                            constants
-                            .COMPRESSION_ZSTD):
-                        decompressed = compression\
-                            .decompress_data(
-                                blob_data, comp_type)
+                    GZIP = constants.COMPRESSION_GZIP
+                    ZSTD = constants.COMPRESSION_ZSTD
+                    if comp_type in (GZIP, ZSTD):
+                        decompressed = (
+                            compression.decompress_data(
+                                blob_data, comp_type))
                     else:
                         decompressed = blob_data
 
