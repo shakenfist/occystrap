@@ -141,6 +141,11 @@ class LayerCache:
         except OSError as e:
             LOG.warning('Could not save layer cache: %s', e)
 
+    @property
+    def path(self):
+        """Return the cache file path."""
+        return self._path
+
     def __len__(self):
         """Return the number of cached entries."""
         return len(self._data['layers'])

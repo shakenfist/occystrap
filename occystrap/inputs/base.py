@@ -1,6 +1,11 @@
 from abc import ABC, abstractmethod
 
 
+def always_fetch(digest):
+    """Default fetch callback that fetches all layers."""
+    return True
+
+
 class ImageInput(ABC):
     """Abstract base class for image input sources.
 

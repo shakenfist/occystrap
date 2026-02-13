@@ -6,15 +6,11 @@ import tarfile
 
 from occystrap import compression
 from occystrap import constants
-from occystrap.inputs.base import ImageInput
+from occystrap.inputs.base import ImageInput, always_fetch
 
 
 LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
-
-
-def always_fetch(digest):
-    return True
 
 
 class Image(ImageInput):

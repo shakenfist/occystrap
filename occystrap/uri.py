@@ -35,7 +35,9 @@ FilterSpec = namedtuple('FilterSpec', ['name', 'options'])
 
 
 # Scheme classifications
-INPUT_SCHEMES = {'registry', 'docker', 'tar', 'file'}
+INPUT_SCHEMES = {
+    'registry', 'docker', 'dockerpush', 'tar', 'file'
+}
 OUTPUT_SCHEMES = {'tar', 'dir', 'directory', 'oci', 'mounts', 'docker', 'registry'}
 
 # Scheme aliases
@@ -198,19 +200,22 @@ def parse_registry_uri(uri_spec):
     return (host, image, tag)
 
 
-def parse_docker_uri(uri_spec):
-    """Parse docker URI into (image, tag, socket) tuple.
+def _parse_docker_style_uri(uri_spec, expected_scheme):
+    """Parse a docker-style URI into (image, tag, socket) tuple.
 
-    Handles formats like:
-        docker://busybox:latest
-        docker://busybox:latest?socket=/run/podman/podman.sock
-        docker://library/busybox:v1
+    Shared logic for docker:// and dockerpush:// URIs.
+
+    Args:
+        uri_spec: Parsed URISpec.
+        expected_scheme: Expected URI scheme name.
 
     Returns:
         Tuple of (image, tag, socket_path)
     """
-    if uri_spec.scheme != 'docker':
-        raise URIParseError('Expected docker:// URI, got %s' % uri_spec.scheme)
+    if uri_spec.scheme != expected_scheme:
+        raise URIParseError(
+            'Expected %s:// URI, got %s'
+            % (expected_scheme, uri_spec.scheme))
 
     # The image:tag is in the host+path
     image_tag = uri_spec.host
@@ -226,6 +231,36 @@ def parse_docker_uri(uri_spec):
         image = image_tag
         tag = 'latest'
 
-    socket = uri_spec.options.get('socket', '/var/run/docker.sock')
+    socket = uri_spec.options.get(
+        'socket', '/var/run/docker.sock')
 
     return (image, tag, socket)
+
+
+def parse_docker_uri(uri_spec):
+    """Parse docker URI into (image, tag, socket) tuple.
+
+    Handles formats like:
+        docker://busybox:latest
+        docker://busybox:latest?socket=/run/podman/podman.sock
+        docker://library/busybox:v1
+
+    Returns:
+        Tuple of (image, tag, socket_path)
+    """
+    return _parse_docker_style_uri(uri_spec, 'docker')
+
+
+def parse_dockerpush_uri(uri_spec):
+    """Parse dockerpush URI into (image, tag, socket) tuple.
+
+    Handles formats like:
+        dockerpush://busybox:latest
+        dockerpush://busybox:latest?socket=/run/podman/podman.sock
+        dockerpush://library/busybox:v1
+
+    Returns:
+        Tuple of (image, tag, socket_path)
+    """
+    return _parse_docker_style_uri(
+        uri_spec, 'dockerpush')

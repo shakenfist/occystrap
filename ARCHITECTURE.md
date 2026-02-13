@@ -21,6 +21,7 @@ occystrap/
         __init__.py
         base.py          # ImageInput abstract base class
         docker.py        # Fetches images from local Docker daemon
+        dockerpush.py    # Fetches via embedded registry + Docker push
         registry.py      # Fetches images from Docker/OCI registries
         tarfile.py       # Reads from docker-save tarballs
     filters/             # Filter modules (transform/inspect pipeline)
@@ -45,6 +46,7 @@ occystrap/
         test_inspect.py
         test_registry_output.py
         test_layer_cache.py
+        test_dockerpush.py
         test_tarformat.py
 
 deploy/
@@ -87,6 +89,9 @@ All input sources inherit from the `ImageInput` abstract base class defined in
 Input source implementations:
 - `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket,
   using hybrid streaming to minimize disk usage
+- `inputs/dockerpush.py` - Starts an embedded V2 registry on localhost and uses
+  Docker's push mechanism to receive layers in parallel; faster than docker.py
+  for multi-layer images
 - `inputs/registry.py` - Fetches images from Docker/OCI registries via HTTP API,
   with parallel layer downloads using ThreadPoolExecutor
 - `inputs/tarfile.py` - Reads from existing docker-save tarballs
@@ -187,6 +192,7 @@ occystrap process SOURCE DESTINATION [-f FILTER]...
 ```
 registry://[user:pass@]host/image:tag[?arch=X&os=Y&variant=Z]
 docker://image:tag[?socket=/path/to/socket]
+dockerpush://image:tag[?socket=/path/to/socket]
 tar:///path/to/file.tar
 ```
 
@@ -297,6 +303,53 @@ Key design considerations:
 - Temp files are cleaned up immediately after yielding each layer
 - Temp file location is configurable via `--temp-dir` CLI option
 - Graceful fallback when inspect data is unavailable or incorrect
+
+### Docker Push via Embedded Registry
+
+The `dockerpush` input (`inputs/dockerpush.py`) takes a fundamentally different
+approach to fetching images from a local Docker daemon. Instead of using the
+Docker Engine API's `/images/{name}/get` endpoint (which returns a single
+sequential tarball), it starts an embedded HTTP server implementing the Docker
+Registry V2 push-path API, then uses Docker's own push mechanism to transfer
+layers.
+
+```
+fetch() generator
+    └── Start ThreadingHTTPServer on 127.0.0.1:0 (ephemeral port)
+    └── Tag image for localhost push
+    └── POST /images/{name}/push (Docker pushes in parallel)
+    └── Wait for manifest event from registry handler
+    └── Parse manifest and config
+    └── For each layer:
+        ├── If fetch_callback returns False: yield with data=None
+        └── If True: read blob, decompress, yield ImageElement
+    └── Cleanup: untag, stop server, delete temp files
+```
+
+The embedded registry implements six V2 push-path endpoints:
+- `GET /v2/` - Version check
+- `HEAD /v2/{name}/blobs/{digest}` - Blob existence check
+- `POST /v2/{name}/blobs/uploads/` - Start upload
+- `PATCH /v2/{name}/blobs/uploads/{uuid}` - Receive chunks
+- `PUT /v2/{name}/blobs/uploads/{uuid}?digest=...` - Complete upload
+- `PUT /v2/{name}/manifests/{tag}` - Receive manifest
+
+Key design considerations:
+- Docker push uploads layers in parallel using the V2 protocol, providing
+  significantly better throughput than the sequential tarball export
+- Since Docker 1.3.2, `127.0.0.0/8` is implicitly trusted as insecure,
+  so no daemon.json changes or TLS certificates are needed
+- Blobs are stored as temp files during the push, then read and decompressed
+  when yielding elements
+- Thread-safe shared state (`_RegistryState`) coordinates between the HTTP
+  handler threads and the main fetch() thread
+- Cleanup is robust: untag, stop server, and delete temp files all happen
+  in nested try/finally blocks
+- When `--layer-cache` is used with a `registry://` output, the embedded
+  registry returns `200` for HEAD checks on cached layers, causing Docker
+  to skip their upload entirely. A persistent digest mapping file
+  (`{cache_path}.digests`) translates between Docker's compressed digests
+  and the DiffIDs used as cache keys
 
 ### Parallel Downloads
 

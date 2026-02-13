@@ -9,6 +9,7 @@ import json
 import os
 
 from occystrap.inputs import docker as input_docker
+from occystrap.inputs import dockerpush as input_dockerpush
 from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
 from occystrap.layer_cache import LayerCache
@@ -47,11 +48,17 @@ class PipelineBuilder:
         """Get a value from the context object."""
         return self._ctx_obj.get(key, default)
 
-    def build_input(self, uri_spec):
+    def build_input(self, uri_spec, layer_cache=None,
+                    filters_hash='none'):
         """Create an ImageInput from a URI spec.
 
         Args:
             uri_spec: A URISpec from uri.parse_uri()
+            layer_cache: Optional LayerCache instance.
+                Only used by dockerpush:// for the HEAD
+                optimization that skips cached layers.
+            filters_hash: Hash of the pipeline config,
+                used with layer_cache (default: 'none').
 
         Returns:
             An ImageInput instance.
@@ -96,6 +103,16 @@ class PipelineBuilder:
             temp_dir = self._get_ctx('TEMP_DIR')
             return input_docker.Image(
                 image, tag, socket_path=socket, temp_dir=temp_dir)
+
+        elif uri_spec.scheme == 'dockerpush':
+            image, tag, socket = \
+                uri.parse_dockerpush_uri(uri_spec)
+            temp_dir = self._get_ctx('TEMP_DIR')
+            return input_dockerpush.Image(
+                image, tag, socket_path=socket,
+                temp_dir=temp_dir,
+                layer_cache=layer_cache,
+                filters_hash=filters_hash)
 
         elif uri_spec.scheme == 'tar':
             path = uri_spec.path
@@ -322,10 +339,10 @@ class PipelineBuilder:
         dest_spec = uri.parse_uri(dest_uri_str)
         filter_specs = [uri.parse_filter(f) for f in filter_strs]
 
-        # Build input
-        input_source = self.build_input(source_spec)
-
-        # Set up layer cache for registry outputs
+        # Set up layer cache for registry outputs.
+        # Compute early so dockerpush input can use it
+        # for the HEAD optimization (skipping cached
+        # layers before Docker even uploads them).
         layer_cache = None
         filters_hash = 'none'
         cache_path = self._get_ctx('LAYER_CACHE')
@@ -336,6 +353,13 @@ class PipelineBuilder:
             filters_hash = self._compute_filters_hash(
                 filter_strs, compression_type)
             layer_cache = LayerCache(cache_path)
+
+        # Build input (layer_cache and filters_hash are
+        # passed through to dockerpush for the HEAD
+        # optimization; other inputs ignore them)
+        input_source = self.build_input(
+            source_spec, layer_cache=layer_cache,
+            filters_hash=filters_hash)
 
         # Build output
         output = self.build_output(

@@ -101,6 +101,7 @@ def process_cmd(ctx, source, destination, filters):
     Input URI schemes:
       registry://HOST/IMAGE:TAG    - Docker/OCI registry
       docker://IMAGE:TAG           - Local Docker daemon
+      dockerpush://IMAGE:TAG       - Local Docker via push (fast)
       tar://PATH                   - Docker-save tarball
 
     \b
@@ -163,6 +164,7 @@ def search_cmd(ctx, source, pattern, regex, script_friendly):
     SOURCE is a URI specifying where to read the image from:
       registry://HOST/IMAGE:TAG    - Docker/OCI registry
       docker://IMAGE:TAG           - Local Docker daemon
+      dockerpush://IMAGE:TAG       - Local Docker via push (fast)
       tar://PATH                   - Docker-save tarball
 
     PATTERN is a glob pattern (or regex with --regex).

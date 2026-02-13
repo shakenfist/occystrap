@@ -70,7 +70,7 @@ import tempfile
 import requests_unixsocket
 
 from occystrap import constants
-from occystrap.inputs.base import ImageInput
+from occystrap.inputs.base import ImageInput, always_fetch
 
 COPY_BUFSIZE = 1024 * 1024  # 1MB chunks for streaming copies
 
@@ -79,10 +79,6 @@ LOG = logging.getLogger(__name__)
 LOG.setLevel(logging.INFO)
 
 DEFAULT_SOCKET_PATH = '/var/run/docker.sock'
-
-
-def always_fetch(digest):
-    return True
 
 
 class Image(ImageInput):
