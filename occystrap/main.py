@@ -48,10 +48,14 @@ logging.getLogger(__name__).propagate = False
               help='Directory for temporary files (default: system temp)')
 @click.option('--layer-cache', default=None, envvar='OCCYSTRAP_LAYER_CACHE',
               help='JSON file for cross-invocation layer caching')
+@click.option('--output-format', '-O', default='text',
+              type=click.Choice(['text', 'json']),
+              help='Output format for info/check commands (default: text)')
 @click.pass_context
 def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
         username=None, password=None, insecure=None, compression=None,
-        parallel=None, temp_dir=None, layer_cache=None):
+        parallel=None, temp_dir=None, layer_cache=None,
+        output_format=None):
     if verbose:
         logging.root.setLevel(logging.DEBUG)
         for handler in logging.root.handlers:
@@ -70,6 +74,7 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
     ctx.obj['MAX_WORKERS'] = parallel
     ctx.obj['TEMP_DIR'] = temp_dir
     ctx.obj['LAYER_CACHE'] = layer_cache
+    ctx.obj['OUTPUT_FORMAT'] = output_format
 
 
 def _fetch(img, output):

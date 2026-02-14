@@ -197,7 +197,7 @@ need to extend to renaming `process`.
 
 ## Execution
 
-### Shared prerequisite: output formatting
+### Shared prerequisite: output formatting (done)
 
 Both `info` and `check` need human-readable and JSON output
 modes. The `search` command already has `--script-friendly` but
@@ -218,6 +218,11 @@ No need for a class hierarchy.
 
 **Files touched:** `occystrap/main.py` (add option to `cli`
 group).
+
+**Status:** Implemented. The `-O`/`--output-format` option is on
+the `cli` group, stored in `ctx.obj['OUTPUT_FORMAT']`. No
+existing commands use it yet -- `info` will be the first
+consumer.
 
 ### Implementation plan for `info`
 
@@ -382,6 +387,15 @@ chosen to defer to here so that we don't forget them.
   compression, format conversion). Its output could be used as
   a reference in tests to verify occystrap produces equivalent
   results.
+
+### Bugs fixed during this work
+
+* **Flaky `test_upload_blob_new`:** `test_process_config_file`
+  submitted config upload to a `ThreadPoolExecutor` but never
+  called `finalize()` or shut down the executor. Under certain
+  timing, the upload thread outlived its mock scope and inflated
+  call counts in subsequent tests. Fixed by adding
+  `writer._executor.shutdown(wait=True)` to the test.
 
 ### Back brief
 
