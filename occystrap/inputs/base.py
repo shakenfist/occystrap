@@ -44,3 +44,34 @@ class ImageInput(ABC):
             ImageElement instances.
         """
         pass
+
+    def get_manifest(self):
+        """Return the distribution manifest dict.
+
+        Returns the OCI or Docker v2 distribution
+        manifest for this image. This is the manifest
+        with schemaVersion, config descriptor, and
+        layer descriptors (including compressed sizes
+        and media types).
+
+        Returns None if the input source does not have
+        access to a distribution manifest (e.g. docker
+        daemon inputs).
+
+        Does not download layer blobs.
+        """
+        return None
+
+    def get_config(self):
+        """Return the parsed OCI image config dict.
+
+        Returns the image configuration JSON containing
+        architecture, os, rootfs.diff_ids, history,
+        config (env, cmd, entrypoint, labels), etc.
+
+        Returns None if the input source cannot provide
+        the config without downloading all layers.
+
+        Does not download layer blobs.
+        """
+        return None

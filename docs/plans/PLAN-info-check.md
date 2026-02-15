@@ -224,46 +224,59 @@ the `cli` group, stored in `ctx.obj['OUTPUT_FORMAT']`. No
 existing commands use it yet -- `info` will be the first
 consumer.
 
-### Implementation plan for `info`
+### Implementation plan for `info` (done)
 
 **Step 1:** Add `info` command to `main.py`. It takes a single
 `SOURCE` argument (URI string) using the same pattern as
-`process`. Reuse `uri.parse_source()` and `pipeline.py`'s input
-selection logic to construct an `ImageInput`.
+`process`. Reuse `uri.parse_uri()` and `pipeline.py`'s
+`build_input()` to construct an `ImageInput`.
 
-**Step 2:** Call `input.fetch(ordered=True)` and consume only
-the `CONFIG_FILE` element. Parse the config JSON to extract
-image metadata. For registry inputs, we also have access to the
-manifest via the input object's internals -- we may need to
-expose a `manifest()` method or property on `ImageInput`
-(currently the manifest is fetched internally but not exposed).
+**Step 2:** Add `get_manifest()` and `get_config()` methods to
+the `ImageInput` base class (default: return `None`). These
+fetch metadata without downloading layer blobs.
 
-**Step 3:** For layer-level detail (compressed sizes, compression
-format), we need the manifest's layer descriptors. For registry
-inputs this is straightforward (the manifest is already fetched).
-For tarball and docker inputs, the manifest is parsed internally.
-We should expose a `get_manifest()` method on the base
-`ImageInput` class that returns the parsed manifest dict, with
-each input implementation providing it.
+**Step 3:** Implement `get_manifest()` and `get_config()` in
+each input source:
 
-**Step 4:** Format and display the output using the shared output
-formatting helper. Human-readable output should use `prettytable`
-for the per-layer table and plain text for the summary fields.
-JSON output should be a single dict with all fields.
+* **Registry:** `get_manifest()` fetches the distribution
+  manifest via HTTP (resolving multi-arch manifest lists).
+  `get_config()` fetches the config blob using the digest
+  from the manifest. Both are cached on the input object.
+* **Tarfile:** `get_config()` reads the config blob from
+  the tarball without extracting layers. `get_manifest()`
+  returns `None` (docker-save format has no distribution
+  manifest).
+* **Docker:** `get_config()` calls the Docker inspect API
+  and transforms the result to OCI config format.
+  `get_manifest()` returns `None`.
+* **Dockerpush:** Both return `None` (not meaningful
+  without performing a full push).
 
-**Files touched:** `occystrap/main.py` (new command),
-`occystrap/inputs/base.py` (expose manifest),
-`occystrap/inputs/registry.py`, `occystrap/inputs/docker.py`,
-`occystrap/inputs/dockerpush.py`, `occystrap/inputs/tarfile.py`
-(implement `get_manifest()`).
+**Step 4:** Format and display the output using the shared
+output formatting helper. Human-readable output uses
+`prettytable` for the per-layer table and plain text for
+summary fields. JSON output is a single dict with all fields.
 
-**Scope decision:** `info` should not need to download layer
-blobs. It should work from the manifest and config alone. This
-means it will report compressed sizes from manifest descriptors
-but cannot report uncompressed sizes (those would require
-downloading and decompressing every layer). This is the same
-trade-off `crane validate --fast` makes and is the right default
-for an info command.
+**Files touched:** `occystrap/main.py` (new command,
+`_build_info`, `_format_size`, `_print_info_text` helpers),
+`occystrap/inputs/base.py` (add `get_manifest()` and
+`get_config()`), `occystrap/inputs/registry.py` (implement
+both), `occystrap/inputs/docker.py` (implement `get_config()`),
+`occystrap/inputs/tarfile.py` (implement `get_config()`).
+
+**Scope decision:** `info` does not download layer blobs. It
+works from the manifest and config alone. This means it reports
+compressed sizes from manifest descriptors but cannot report
+uncompressed sizes (those would require downloading and
+decompressing every layer). This is the same trade-off
+`crane validate --fast` makes.
+
+**Status:** Implemented. The `info` command works with
+`registry://`, `docker://`, and `tar://` sources. Registry
+sources show full detail (compressed sizes, mediaTypes,
+compression format). Docker and tarball sources show
+config-derived info (architecture, OS, diff_ids, history,
+labels, env, etc.). 19 unit tests cover the implementation.
 
 ### Implementation plan for `check`
 

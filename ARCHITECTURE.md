@@ -43,6 +43,7 @@ occystrap/
     tests/               # Unit tests (run with tox -epy3)
         __init__.py
         test_compression.py
+        test_info.py
         test_inspect.py
         test_registry_output.py
         test_layer_cache.py
@@ -85,6 +86,12 @@ All input sources inherit from the `ImageInput` abstract base class defined in
 - `fetch(fetch_callback, ordered)` - Yields `ImageElement` objects (config
   files and layers). When `ordered=False`, layers may arrive out of manifest
   order with `layer_index` set for reordering at finalize time.
+- `get_manifest()` - Returns the distribution manifest dict (OCI/Docker v2)
+  without downloading layer blobs. Returns `None` if the input source does
+  not have a distribution manifest (e.g. docker, tarfile inputs).
+- `get_config()` - Returns the parsed OCI image config dict (architecture,
+  OS, rootfs.diff_ids, history, labels, env, etc.) without downloading layer
+  blobs. Returns `None` if unavailable (e.g. dockerpush input).
 
 Input source implementations:
 - `inputs/docker.py` - Fetches images from local Docker daemon via Unix socket,
@@ -178,6 +185,23 @@ The `layer_index` field is set when layers are delivered out of order
 (i.e., when the output's `requires_ordered_layers` is `False`). Outputs
 use this index to reconstruct the correct manifest layer order at
 `finalize()` time.
+
+### The `info` Command
+
+The `info` command displays image metadata without downloading layer blobs.
+It uses `get_manifest()` and `get_config()` on the input source to collect
+metadata, then formats it as either human-readable text (with `prettytable`
+for per-layer details) or JSON.
+
+The output format is controlled by the global `-O`/`--output-format` option
+stored in `ctx.obj['OUTPUT_FORMAT']`.
+
+Key implementation details in `main.py`:
+- `_build_info(input_source)` - Collects metadata from manifest and config
+  into a dict, handling both full (manifest+config) and partial (config-only)
+  cases gracefully
+- `_format_size(size_bytes)` - Formats bytes as human-readable string
+- `_print_info_text(info)` - Renders info dict as human-readable text
 
 ## URI-Style Command Line
 

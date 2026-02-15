@@ -55,6 +55,11 @@ class Image(ImageInput):
         self._auth_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
+        # Cached manifest and config for get_manifest()/get_config()
+        self._manifest = None
+        self._manifest_media_type = None
+        self._config = None
+
     @property
     def image(self):
         """Return the image name."""
@@ -100,6 +105,110 @@ class Image(ImageInput):
 
             return util.request_url(
                 method, url, headers=headers, data=data, stream=stream)
+
+    def _moniker(self):
+        """Return the URL scheme for this registry."""
+        return 'https' if self.secure else 'http'
+
+    def get_manifest(self):
+        """Fetch and return the distribution manifest.
+
+        Resolves manifest lists (multi-arch) to the
+        platform-specific manifest matching this
+        instance's os/architecture/variant.
+
+        Caches the result for subsequent calls.
+        """
+        if self._manifest is not None:
+            return self._manifest
+
+        moniker = self._moniker()
+
+        r = self.request_url(
+            'GET',
+            '%s://%s/v2/%s/manifests/%s'
+            % (moniker, self.registry,
+               self.image, self.tag),
+            headers={
+                'Accept': '%s,%s,%s,%s' % (
+                    constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                    constants.MEDIA_TYPE_DOCKER_MANIFEST_LIST_V2,
+                    constants.MEDIA_TYPE_OCI_MANIFEST,
+                    constants.MEDIA_TYPE_OCI_INDEX)
+            })
+
+        content_type = r.headers['Content-Type']
+
+        if content_type in [
+                constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                constants.MEDIA_TYPE_OCI_MANIFEST]:
+            self._manifest = r.json()
+            self._manifest_media_type = content_type
+
+        elif content_type in [
+                constants.MEDIA_TYPE_DOCKER_MANIFEST_LIST_V2,
+                constants.MEDIA_TYPE_OCI_INDEX]:
+            for m in r.json()['manifests']:
+                if (m['platform']['os'] == self.os
+                        and m['platform'][
+                            'architecture']
+                        == self.architecture
+                        and m['platform'].get(
+                            'variant', '')
+                        == self.variant):
+                    r2 = self.request_url(
+                        'GET',
+                        '%s://%s/v2/%s/manifests/%s'
+                        % (moniker, self.registry,
+                           self.image,
+                           m['digest']),
+                        headers={
+                            'Accept': (
+                                '%s, %s' % (
+                                    constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                                    constants.MEDIA_TYPE_OCI_MANIFEST))
+                        })
+                    self._manifest = r2.json()
+                    self._manifest_media_type = \
+                        r2.headers['Content-Type']
+                    return self._manifest
+
+            raise Exception(
+                'Could not find a matching manifest'
+                ' for this os / architecture / variant')
+        else:
+            raise Exception(
+                'Unknown manifest content type %s!'
+                % content_type)
+
+        return self._manifest
+
+    def get_config(self):
+        """Fetch and return the parsed image config.
+
+        Uses get_manifest() to find the config digest,
+        then fetches the config blob from the registry.
+
+        Caches the result for subsequent calls.
+        """
+        if self._config is not None:
+            return self._config
+
+        manifest = self.get_manifest()
+        if manifest is None:
+            return None
+
+        config_digest = manifest['config']['digest']
+        moniker = self._moniker()
+
+        r = self.request_url(
+            'GET',
+            '%s://%s/v2/%s/blobs/%s'
+            % (moniker, self.registry,
+               self.image, config_digest))
+
+        self._config = r.json()
+        return self._config
 
     def _download_layer(self, layer, moniker):
         """Download a single layer to a temp file.

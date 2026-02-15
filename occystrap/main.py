@@ -1,9 +1,13 @@
+import json as json_mod
+
 import click
 import logging
 import os
+from prettytable import PrettyTable
 from shakenfist_utilities import logs
 import sys
 
+from occystrap import compression
 from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
@@ -192,6 +196,321 @@ def search_cmd(ctx, source, pattern, regex, script_friendly):
 
 
 cli.add_command(search_cmd)
+
+
+def _build_info(input_source):
+    """Build an info dict from an image input source.
+
+    Collects metadata from the manifest (if available)
+    and config (if available) without downloading layer
+    blobs.
+
+    Returns:
+        Dict with image metadata fields.
+    """
+    manifest = input_source.get_manifest()
+    config = input_source.get_config()
+
+    info = {
+        'image': input_source.image,
+        'tag': input_source.tag,
+    }
+
+    # Manifest-derived fields
+    if manifest:
+        info['schema_version'] = manifest.get(
+            'schemaVersion')
+        info['media_type'] = manifest.get('mediaType')
+
+        config_desc = manifest.get('config', {})
+        info['config_digest'] = config_desc.get(
+            'digest')
+        info['config_size'] = config_desc.get('size')
+
+        layers = manifest.get('layers', [])
+        info['layer_count'] = len(layers)
+        info['total_compressed_size'] = sum(
+            ly.get('size', 0) for ly in layers)
+
+        info['layers'] = []
+        for i, layer in enumerate(layers):
+            media_type = layer.get('mediaType', '')
+            comp = \
+                compression \
+                .detect_compression_from_media_type(
+                    media_type)
+            layer_info = {
+                'index': i,
+                'digest': layer.get('digest'),
+                'size': layer.get('size'),
+                'media_type': media_type,
+                'compression': comp,
+            }
+            info['layers'].append(layer_info)
+
+    # Config-derived fields
+    if config:
+        info['architecture'] = config.get(
+            'architecture', '')
+        info['os'] = config.get('os', '')
+        info['variant'] = config.get('variant', '')
+        info['created'] = config.get('created', '')
+
+        rootfs = config.get('rootfs', {})
+        diff_ids = rootfs.get('diff_ids', [])
+        info['diff_ids'] = diff_ids
+
+        # Merge diff_ids into layer info
+        if 'layers' in info:
+            for i, layer in enumerate(info['layers']):
+                if i < len(diff_ids):
+                    layer['diff_id'] = diff_ids[i]
+        else:
+            # No manifest available; build layers
+            # from diff_ids only
+            info['layer_count'] = len(diff_ids)
+            info['layers'] = [
+                {'index': i, 'diff_id': d}
+                for i, d in enumerate(diff_ids)
+            ]
+
+        history = config.get('history', [])
+        info['history_count'] = len(history)
+        info['empty_layer_count'] = sum(
+            1 for h in history
+            if h.get('empty_layer'))
+
+        # Merge history created_by into layer info
+        non_empty_idx = 0
+        for h in history:
+            if not h.get('empty_layer'):
+                if non_empty_idx < len(
+                        info.get('layers', [])):
+                    info['layers'][
+                        non_empty_idx][
+                        'created_by'] = h.get(
+                        'created_by', '')
+                non_empty_idx += 1
+
+        img_config = config.get('config') or {}
+        info['labels'] = img_config.get(
+            'Labels') or {}
+        info['env'] = img_config.get('Env') or []
+        info['entrypoint'] = img_config.get(
+            'Entrypoint')
+        info['cmd'] = img_config.get('Cmd')
+        info['working_dir'] = img_config.get(
+            'WorkingDir', '')
+        info['exposed_ports'] = list(
+            (img_config.get('ExposedPorts')
+             or {}).keys())
+        info['volumes'] = list(
+            (img_config.get('Volumes')
+             or {}).keys())
+
+    return info
+
+
+def _format_size(size_bytes):
+    """Format a size in bytes as a human-readable string."""
+    if size_bytes is None:
+        return 'N/A'
+    if size_bytes < 1024:
+        return '%d B' % size_bytes
+    elif size_bytes < 1024 * 1024:
+        return '%.1f KB' % (size_bytes / 1024)
+    elif size_bytes < 1024 * 1024 * 1024:
+        return '%.1f MB' % (size_bytes / (1024 * 1024))
+    else:
+        return '%.1f GB' % (
+            size_bytes / (1024 * 1024 * 1024))
+
+
+def _print_info_text(info):
+    """Print image info in human-readable text format."""
+    click.echo('Image:         %s:%s'
+               % (info['image'], info['tag']))
+
+    if 'media_type' in info:
+        click.echo('Media type:    %s'
+                   % info['media_type'])
+    if 'schema_version' in info:
+        click.echo('Schema:        v%s'
+                   % info['schema_version'])
+    if 'architecture' in info:
+        arch = info['architecture']
+        if info.get('variant'):
+            arch += '/%s' % info['variant']
+        click.echo('Platform:      %s/%s'
+                   % (info.get('os', ''), arch))
+    if 'created' in info:
+        click.echo('Created:       %s'
+                   % info['created'])
+    if 'config_digest' in info:
+        click.echo('Config digest: %s'
+                   % info['config_digest'])
+    if 'config_size' in info:
+        click.echo('Config size:   %s'
+                   % _format_size(
+                       info['config_size']))
+
+    click.echo('')
+    click.echo('Layers: %d' % info.get(
+        'layer_count', 0))
+    if 'total_compressed_size' in info:
+        click.echo(
+            'Total compressed size: %s'
+            % _format_size(
+                info['total_compressed_size']))
+
+    # Layer table
+    layers = info.get('layers', [])
+    if layers:
+        click.echo('')
+        table = PrettyTable()
+
+        # Build columns based on available data
+        has_digest = any(
+            'digest' in ly for ly in layers)
+        has_size = any(
+            'size' in ly for ly in layers)
+        has_diff_id = any(
+            'diff_id' in ly for ly in layers)
+        has_compression = any(
+            'compression' in ly for ly in layers)
+        has_created_by = any(
+            'created_by' in ly for ly in layers)
+
+        fields = ['#']
+        if has_digest:
+            fields.append('Compressed Digest')
+        if has_diff_id:
+            fields.append('DiffID')
+        if has_size:
+            fields.append('Size')
+        if has_compression:
+            fields.append('Compression')
+        if has_created_by:
+            fields.append('Created By')
+        table.field_names = fields
+
+        if has_created_by:
+            table.max_width['Created By'] = 50
+
+        table.align = 'l'
+
+        for layer in layers:
+            row = [layer['index']]
+            if has_digest:
+                d = layer.get('digest', '')
+                # Truncate for display
+                if len(d) > 25:
+                    d = d[:25] + '...'
+                row.append(d)
+            if has_diff_id:
+                d = layer.get('diff_id', '')
+                if len(d) > 25:
+                    d = d[:25] + '...'
+                row.append(d)
+            if has_size:
+                row.append(_format_size(
+                    layer.get('size')))
+            if has_compression:
+                row.append(
+                    layer.get('compression', ''))
+            if has_created_by:
+                cb = layer.get('created_by', '')
+                row.append(cb)
+            table.add_row(row)
+
+        click.echo(table)
+
+    # History summary
+    if 'history_count' in info:
+        click.echo('')
+        click.echo(
+            'History: %d entries (%d empty)'
+            % (info['history_count'],
+               info.get('empty_layer_count', 0)))
+
+    # Container config
+    has_config = any(
+        k in info for k in [
+            'entrypoint', 'cmd', 'working_dir',
+            'env', 'labels', 'exposed_ports',
+            'volumes'])
+    if has_config:
+        click.echo('')
+        click.echo('Container Config:')
+        if info.get('entrypoint'):
+            click.echo('  Entrypoint: %s'
+                       % info['entrypoint'])
+        if info.get('cmd'):
+            click.echo('  Cmd:        %s'
+                       % info['cmd'])
+        if info.get('working_dir'):
+            click.echo('  WorkingDir: %s'
+                       % info['working_dir'])
+        if info.get('exposed_ports'):
+            click.echo('  Ports:      %s'
+                       % ', '.join(
+                           info['exposed_ports']))
+        if info.get('volumes'):
+            click.echo('  Volumes:    %s'
+                       % ', '.join(
+                           info['volumes']))
+        if info.get('env'):
+            click.echo('  Environment:')
+            for env in info['env']:
+                click.echo('    %s' % env)
+        if info.get('labels'):
+            click.echo('  Labels:')
+            for k, v in info['labels'].items():
+                click.echo('    %s=%s' % (k, v))
+
+
+@click.command('info')
+@click.argument('source')
+@click.pass_context
+def info_cmd(ctx, source):
+    """Display information about a container image.
+
+    SOURCE is a URI specifying where to read the image
+    from:
+
+    \b
+      registry://HOST/IMAGE:TAG  - Docker/OCI registry
+      docker://IMAGE:TAG         - Local Docker daemon
+      tar://PATH                 - Docker-save tarball
+
+    \b
+    Examples:
+      occystrap info registry://docker.io/library/busybox:latest
+      occystrap info docker://myimage:v1
+      occystrap info tar://image.tar
+      occystrap -O json info registry://ghcr.io/org/app:v2
+    """
+    try:
+        builder = PipelineBuilder(ctx)
+        source_spec = uri.parse_uri(source)
+        input_source = builder.build_input(source_spec)
+
+        info = _build_info(input_source)
+
+        output_format = ctx.obj.get(
+            'OUTPUT_FORMAT', 'text')
+        if output_format == 'json':
+            click.echo(json_mod.dumps(
+                info, indent=2))
+        else:
+            _print_info_text(info)
+
+    except (PipelineError, uri.URIParseError) as e:
+        click.echo('Error: %s' % e, err=True)
+        sys.exit(1)
+
+
+cli.add_command(info_cmd)
 
 
 # =============================================================================

@@ -139,6 +139,52 @@ class Image(ImageInput):
             'GET', '/images/%s/json' % ref)
         return r.json()
 
+    def get_config(self):
+        """Return image config from Docker inspect.
+
+        Transforms Docker inspect output into OCI
+        image config format so callers can use a
+        single schema.
+        """
+        data = self.inspect()
+
+        # Build OCI-style config from inspect data
+        config = {
+            'architecture': data.get(
+                'Architecture', ''),
+            'os': data.get('Os', ''),
+            'created': data.get('Created', ''),
+        }
+
+        # Map RootFS -> rootfs
+        rootfs = data.get('RootFS', {})
+        config['rootfs'] = {
+            'type': rootfs.get('Type', 'layers'),
+            'diff_ids': rootfs.get('Layers', []),
+        }
+
+        # Map Config -> config (inner config block)
+        img_config = data.get('Config', {})
+        config['config'] = {
+            'Env': img_config.get('Env'),
+            'Cmd': img_config.get('Cmd'),
+            'Entrypoint': img_config.get(
+                'Entrypoint'),
+            'Labels': img_config.get('Labels'),
+            'WorkingDir': img_config.get(
+                'WorkingDir', ''),
+            'ExposedPorts': img_config.get(
+                'ExposedPorts'),
+            'Volumes': img_config.get('Volumes'),
+        }
+
+        # Docker inspect doesn't include history
+        # (only available from the config blob
+        # inside the tarball)
+        config['history'] = []
+
+        return config
+
     def _extract_inspect_ids(self, inspect_data):
         """Extract config hash and DiffIDs from inspect.
 

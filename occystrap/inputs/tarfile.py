@@ -67,6 +67,21 @@ class Image(ImageInput):
     def tag(self):
         return self._tag
 
+    def get_config(self):
+        """Read and return the parsed image config.
+
+        Reads the config blob from the tarball without
+        extracting any layer data.
+        """
+        config_filename = self._manifest[0]['Config']
+        with tarfile.open(self.tarfile_path, 'r') as tf:
+            config_member = tf.getmember(
+                config_filename)
+            config_file = tf.extractfile(
+                config_member)
+            return json.loads(
+                config_file.read().decode('utf-8'))
+
     def fetch(self, fetch_callback=always_fetch,
               ordered=True):
         # Note: ordered=False provides no throughput
