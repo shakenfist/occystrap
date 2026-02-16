@@ -278,7 +278,7 @@ compression format). Docker and tarball sources show
 config-derived info (architecture, OS, diff_ids, history,
 labels, env, etc.). 19 unit tests cover the implementation.
 
-### Implementation plan for `check`
+### Implementation plan for `check` (done)
 
 **Step 1:** Add `check` command to `main.py`. Same `SOURCE`
 argument and input selection as `info`.
@@ -331,7 +331,7 @@ already handled by input sources during download) and compression
 magic vs mediaType verification (item 9, requires raw blob
 access). 30 unit tests cover the implementation.
 
-### Testing strategy
+### Testing strategy (done)
 
 **For `info`:** Create test images with known properties (specific
 layer counts, compression formats, labels, history entries) and
@@ -436,6 +436,20 @@ chosen to defer to here so that we don't forget them.
   blob. The current `fetch()` interface yields decompressed
   data, so this check needs either a new raw-blob accessor or
   integration at the input source level.
+
+### Bugs discovered during this work
+
+* **Config diff_ids not updated after filtering:** When
+  `process` applies content-modifying filters (e.g.,
+  `normalize-timestamps`, `exclude`), the layer data changes
+  (and thus its SHA256 diff_id), but the config blob is passed
+  through with the original diff_ids. `check` correctly detects
+  this as a diff-id mismatch. Fixing this requires the pipeline
+  to rewrite `config.rootfs.diff_ids` after filtering, which
+  is a non-trivial change affecting the output writers. This is
+  the exact class of bug that motivated the `check` command in
+  the first place (see the "wrong diff id" error in the problem
+  statement).
 
 ### Bugs fixed during this work
 
