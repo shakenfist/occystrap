@@ -47,10 +47,11 @@ DEFAULT_SOCKET_PATH = '/var/run/docker.sock'
 
 COPY_BUFSIZE = 1024 * 1024  # 1MB chunks
 
-# Seconds to wait for Docker to push the manifest
-# after the push API call completes. Large images on
-# slow systems may need more time.
-MANIFEST_TIMEOUT = 300
+# Seconds to wait for the manifest after _push_image
+# returns. Since _push_image consumes the entire push
+# stream, the manifest should already be in memory by
+# then -- this is just a safety margin.
+MANIFEST_TIMEOUT = 10
 
 
 class _RegistryState:
@@ -263,14 +264,21 @@ class EmbeddedRegistryHandler(
                 self.send_response(404)
                 self.end_headers()
                 return
+            upload_path = upload['path']
 
-            # Write and update offset under the lock
-            # so _handle_blob_put cannot delete the
-            # upload between our lookup and write
-            with open(upload['path'], 'ab') as f:
-                f.write(data)
-            upload['offset'] += len(data)
-            new_offset = upload['offset']
+        # File write outside lock: each upload has
+        # its own temp file, so no contention. Docker
+        # serializes PATCH requests per upload UUID.
+        with open(upload_path, 'ab') as f:
+            f.write(data)
+
+        with self.state.lock:
+            upload = self.state.uploads.get(upload_uuid)
+            if upload:
+                upload['offset'] += len(data)
+                new_offset = upload['offset']
+            else:
+                new_offset = len(data)
 
         # Build location for response
         repo_path = path.split(
@@ -323,17 +331,18 @@ class EmbeddedRegistryHandler(
 
         with self.state.lock:
             upload = self.state.uploads.get(upload_uuid)
-
-        if not upload:
-            self.send_response(404)
-            self.end_headers()
-            return
+            if not upload:
+                self.send_response(404)
+                self.end_headers()
+                return
+            upload_path = upload['path']
 
         # Read any remaining body data (monolithic upload
-        # sends all data in the PUT)
+        # sends all data in the PUT). File write outside
+        # lock: each upload has its own temp file.
         data = self._read_body()
         if data:
-            with open(upload['path'], 'ab') as f:
+            with open(upload_path, 'ab') as f:
                 f.write(data)
 
         # Get expected digest from query params
@@ -351,7 +360,7 @@ class EmbeddedRegistryHandler(
 
         # Verify SHA256
         h = hashlib.sha256()
-        with open(upload['path'], 'rb') as f:
+        with open(upload_path, 'rb') as f:
             while True:
                 chunk = f.read(COPY_BUFSIZE)
                 if not chunk:
@@ -365,7 +374,7 @@ class EmbeddedRegistryHandler(
                 ' got %s' % (expected_hex, actual_hex))
             # Clean up temp file
             try:
-                os.unlink(upload['path'])
+                os.unlink(upload_path)
             except OSError:
                 pass
             with self.state.lock:
@@ -375,12 +384,11 @@ class EmbeddedRegistryHandler(
             return
 
         # Move blob to completed state
-        blob_path = upload['path']
         with self.state.lock:
-            self.state.blobs[expected_hex] = blob_path
+            self.state.blobs[expected_hex] = upload_path
             del self.state.uploads[upload_uuid]
 
-        blob_size = os.path.getsize(blob_path)
+        blob_size = os.path.getsize(upload_path)
         LOG.info(
             'Received blob sha256:%s... (%d bytes)'
             % (expected_hex[:12], blob_size))
@@ -738,7 +746,16 @@ class Image(ImageInput):
         Starts a minimal V2 registry on localhost, uses
         Docker's push API to transfer layers, then yields
         ImageElements from the received data.
+
+        Note: ordered=False provides no throughput
+        benefit here since all blobs are already on disk
+        when yielding begins. The only effect is setting
+        layer_index on yielded elements so outputs can
+        reconstruct manifest order.
         """
+        if fetch_callback is None:
+            fetch_callback = always_fetch
+
         ref = self._get_image_reference()
         LOG.info(
             'Fetching image %s via dockerpush from'
