@@ -55,6 +55,19 @@ occystrap/
 deploy/
     occystrap_ci/
         tests/           # Functional tests (run in CI)
+            test_check.py
+            test_dir_deep_images.py
+            test_docker_input.py
+            test_docker_output.py
+            test_exclude_filter.py
+            test_filter_chaining.py
+            test_info.py
+            test_inspect_filter.py
+            test_normalize_timestamps.py
+            test_oci_hello_world.py
+            test_registry_push.py
+            test_search_layers.py
+            test_whiteout.py
 
 pyproject.toml               # Build config (setuptools + setuptools_scm)
 tox.ini                      # Test runner configuration

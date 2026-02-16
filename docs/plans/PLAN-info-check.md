@@ -362,6 +362,18 @@ patterns in `occystrap/tests/`. Functional tests that require
 actual Docker/registry interaction go in
 `deploy/occystrap_ci/tests/`.
 
+**Status:** Implemented. Unit tests cover both `info` (19 tests
+in `occystrap/tests/test_info.py`) and `check` (30 tests in
+`occystrap/tests/test_check.py`) with synthetic images
+containing known properties and defects. Functional tests in
+`deploy/occystrap_ci/tests/test_info.py` (6 tests) and
+`deploy/occystrap_ci/tests/test_check.py` (12 tests) validate
+against real images (busybox, ubuntu) in the CI local registry.
+The functional check tests include the core CI use case:
+process with filters (normalize-timestamps, exclude, combined),
+then check the output passes full validation. Registry
+roundtrip validation is also covered.
+
 ## Administration and logistics
 
 ### Success criteria
