@@ -1,6 +1,11 @@
 from abc import ABC, abstractmethod
 
 
+class ImageInputError(Exception):
+    """Raised when an input source encounters an error."""
+    pass
+
+
 def always_fetch(digest):
     """Default fetch callback that fetches all layers."""
     return True

@@ -23,7 +23,8 @@ import time
 from occystrap import compression
 from occystrap import constants
 from occystrap import util
-from occystrap.inputs.base import ImageInput, always_fetch
+from occystrap.inputs.base import (
+    ImageInput, ImageInputError, always_fetch)
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -173,11 +174,11 @@ class Image(ImageInput):
                         r2.headers['Content-Type']
                     return self._manifest
 
-            raise Exception(
+            raise ImageInputError(
                 'Could not find a matching manifest'
                 ' for this os / architecture / variant')
         else:
-            raise Exception(
+            raise ImageInputError(
                 'Unknown manifest content type %s!'
                 % content_type)
 
@@ -188,6 +189,8 @@ class Image(ImageInput):
 
         Uses get_manifest() to find the config digest,
         then fetches the config blob from the registry.
+        Verifies the blob's SHA256 digest matches the
+        manifest's config descriptor.
 
         Caches the result for subsequent calls.
         """
@@ -206,6 +209,16 @@ class Image(ImageInput):
             '%s://%s/v2/%s/blobs/%s'
             % (moniker, self.registry,
                self.image, config_digest))
+
+        config_bytes = r.content
+        h = hashlib.sha256()
+        h.update(config_bytes)
+        expected = config_digest.split(':')[1]
+        if h.hexdigest() != expected:
+            raise ImageInputError(
+                'Hash verification failed for'
+                ' config blob (%s vs %s)'
+                % (expected, h.hexdigest()))
 
         self._config = r.json()
         return self._config
@@ -308,101 +321,17 @@ class Image(ImageInput):
     def fetch(self, fetch_callback=always_fetch,
               ordered=True):
         LOG.info('Fetching manifest')
-        moniker = 'https'
-        if not self.secure:
-            moniker = 'http'
+        manifest = self.get_manifest()
+        moniker = self._moniker()
 
-        r = self.request_url(
-            'GET',
-            '%(moniker)s://%(registry)s/v2/%(image)s'
-            '/manifests/%(tag)s'
-            % {
-                'moniker': moniker,
-                'registry': self.registry,
-                'image': self.image,
-                'tag': self.tag
-            },
-            headers={
-                'Accept': ('%s,%s,%s,%s' % (
-                    constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
-                    constants.MEDIA_TYPE_DOCKER_MANIFEST_LIST_V2,
-                    constants.MEDIA_TYPE_OCI_MANIFEST,
-                    constants.MEDIA_TYPE_OCI_INDEX))
-            })
-
-        config_digest = None
-        if r.headers['Content-Type'] in [
-                constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
-                constants.MEDIA_TYPE_OCI_MANIFEST]:
-            manifest = r.json()
-            config_digest = manifest['config']['digest']
-        elif r.headers['Content-Type'] in [
-                constants.MEDIA_TYPE_DOCKER_MANIFEST_LIST_V2,
-                constants.MEDIA_TYPE_OCI_INDEX]:
-            for m in r.json()['manifests']:
-                if 'variant' in m['platform']:
-                    LOG.info(
-                        'Found manifest for %s on %s %s'
-                        % (m['platform']['os'],
-                           m['platform']['architecture'],
-                           m['platform']['variant']))
-                else:
-                    LOG.info(
-                        'Found manifest for %s on %s'
-                        % (m['platform']['os'],
-                           m['platform'][
-                               'architecture']))
-
-                if (m['platform']['os'] == self.os
-                        and m['platform'][
-                            'architecture']
-                        == self.architecture
-                        and m['platform'].get(
-                            'variant', '')
-                        == self.variant):
-                    LOG.info('Fetching matching manifest')
-                    r = self.request_url(
-                        'GET',
-                        '%(moniker)s://%(registry)s'
-                        '/v2/%(image)s/manifests'
-                        '/%(tag)s'
-                        % {
-                            'moniker': moniker,
-                            'registry': self.registry,
-                            'image': self.image,
-                            'tag': m['digest']
-                        },
-                        headers={
-                            'Accept': (
-                                '%s, %s' % (
-                                    constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
-                                    constants.MEDIA_TYPE_OCI_MANIFEST))
-                        })
-                    manifest = r.json()
-                    config_digest = \
-                        manifest['config']['digest']
-
-            if not config_digest:
-                raise Exception(
-                    'Could not find a matching'
-                    ' manifest for this'
-                    ' os / architecture / variant')
-        else:
-            raise Exception(
-                'Unknown manifest content type %s!'
-                % r.headers['Content-Type'])
+        config_digest = manifest['config']['digest']
 
         LOG.info('Fetching config file')
         r = self.request_url(
             'GET',
-            '%(moniker)s://%(registry)s/v2/%(image)s'
-            '/blobs/%(config)s'
-            % {
-                'moniker': moniker,
-                'registry': self.registry,
-                'image': self.image,
-                'config': config_digest
-            })
+            '%s://%s/v2/%s/blobs/%s'
+            % (moniker, self.registry,
+               self.image, config_digest))
         config = r.content
         h = hashlib.sha256()
         h.update(config)

@@ -33,8 +33,8 @@ def _make_manifest(layer_count=2,
         layers.append({
             'mediaType': media,
             'size': (i + 1) * 1000,
-            'digest': 'sha256:%s' % ('a%d' % i
-                                     * 32)[:64],
+            'digest': ('sha256:%s'
+                       % (('a%d' % i) * 32)[:64]),
         })
 
     return {
@@ -55,7 +55,7 @@ def _make_config(layer_count=2, arch='amd64',
                  os_name='linux'):
     """Build an OCI image config blob."""
     diff_ids = [
-        'sha256:%s' % ('d%d' % i * 32)[:64]
+        'sha256:%s' % (('d%d' % i) * 32)[:64]
         for i in range(layer_count)
     ]
 

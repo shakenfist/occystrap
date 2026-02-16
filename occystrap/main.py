@@ -8,6 +8,7 @@ from shakenfist_utilities import logs
 import sys
 
 from occystrap import compression
+from occystrap.inputs.base import ImageInputError
 from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
 from occystrap.inputs import tarfile as input_tarfile
@@ -505,7 +506,8 @@ def info_cmd(ctx, source):
         else:
             _print_info_text(info)
 
-    except (PipelineError, uri.URIParseError) as e:
+    except (PipelineError, uri.URIParseError,
+            ImageInputError) as e:
         click.echo('Error: %s' % e, err=True)
         sys.exit(1)
 
