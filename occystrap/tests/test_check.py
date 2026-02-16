@@ -550,8 +550,31 @@ class TestCheckLayers(unittest.TestCase):
             and r['severity'] == check.CHECK_ERROR]
         self.assertEqual(len(errors), 0)
 
+    def test_whiteout_nonzero_size(self):
+        """Test warning for non-empty whiteout file."""
+        layer_tar = _make_layer_tar(
+            {'.wh.oldfile': b'unexpected'})
+
+        config = _make_config(
+            [_sha256(layer_tar)])
+
+        inp = MockCheckInput(
+            config=config,
+            layers=[layer_tar])
+
+        results = check.CheckResults()
+        check.check_layers(
+            inp, None, config, results)
+
+        warnings = [
+            r for r in results.results
+            if r['check'] == 'whiteout-size']
+        self.assertEqual(len(warnings), 1)
+        self.assertIn('non-zero',
+                      warnings[0]['message'])
+
     def test_duplicate_files_across_layers(self):
-        """Test duplicate file warning."""
+        """Test duplicate file info report."""
         layer1 = _make_layer_tar(
             {'shared.txt': b'v1'})
         layer2 = _make_layer_tar(
@@ -568,12 +591,14 @@ class TestCheckLayers(unittest.TestCase):
         check.check_layers(
             inp, None, config, results)
 
-        warnings = [
+        dupes = [
             r for r in results.results
             if r['check'] == 'duplicate-file']
-        self.assertEqual(len(warnings), 1)
+        self.assertEqual(len(dupes), 1)
+        self.assertEqual(
+            dupes[0]['severity'], check.CHECK_INFO)
         self.assertIn('shared.txt',
-                      warnings[0]['message'])
+                      dupes[0]['message'])
 
     def test_negative_timestamp(self):
         """Test error for negative mtime."""

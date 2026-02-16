@@ -372,8 +372,15 @@ def check_layers(input_source, manifest, config,
                     % layer_idx)
 
         # Scan tar entries for filesystem checks.
-        # Seek back and open as tarball.
-        element.data.seek(0)
+        try:
+            element.data.seek(0)
+        except (AttributeError, OSError) as e:
+            results.error(
+                'layer-seekable',
+                'Layer %d data is not seekable: %s'
+                % (layer_idx, e))
+            layer_idx += 1
+            continue
         try:
             with tarfile_mod.open(
                     fileobj=element.data) as tf:
@@ -384,7 +391,7 @@ def check_layers(input_source, manifest, config,
                     # Whiteout validation
                     if basename.startswith('.wh.'):
                         _check_whiteout(
-                            name, basename,
+                            name, basename, entry,
                             layer_idx, results)
 
                     # Tar entry validation
@@ -406,25 +413,27 @@ def check_layers(input_source, manifest, config,
 
         layer_idx += 1
 
-    # Report duplicate files across layers
+    # Report duplicate files across layers.
+    # This is informational since multi-layer images
+    # commonly overwrite files in later layers.
     dupes_reported = 0
     for path, layers in seen_files.items():
         if len(layers) > 1:
             dupes_reported += 1
             if dupes_reported <= 10:
-                results.warning(
+                results.info(
                     'duplicate-file',
                     'File %r appears in layers %s'
                     % (path, layers))
     if dupes_reported > 10:
-        results.warning(
+        results.info(
             'duplicate-file',
             '... and %d more duplicate files'
             % (dupes_reported - 10))
 
 
-def _check_whiteout(name, basename, layer_idx,
-                    results):
+def _check_whiteout(name, basename, entry,
+                    layer_idx, results):
     """Check whiteout file validity.
 
     Called only when basename starts with '.wh.'.
@@ -440,6 +449,14 @@ def _check_whiteout(name, basename, layer_idx,
             'whiteout',
             'Layer %d: empty whiteout target '
             'at %s' % (layer_idx, name))
+
+    # OCI spec: whiteout files should be empty
+    if entry.isreg() and entry.size > 0:
+        results.warning(
+            'whiteout-size',
+            'Layer %d: whiteout %s has non-zero '
+            'size (%d bytes)'
+            % (layer_idx, name, entry.size))
 
 
 def _check_tar_entry(entry, layer_idx, results):

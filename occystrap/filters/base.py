@@ -217,6 +217,12 @@ class ImageFilter(ImageOutput, ABC):
         Forwards any buffered config (with updated
         diff_ids) before delegating to the wrapped
         output.
+
+        The ordering here is critical: the config must
+        be forwarded before calling wrapped.finalize(),
+        because the wrapped output (another filter or
+        TarWriter) may itself buffer the config and
+        forward it in its own finalize().
         """
         self._forward_buffered_config()
         if self._wrapped is not None:
