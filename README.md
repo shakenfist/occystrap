@@ -143,6 +143,35 @@ occystrap search --regex tar://image.tar ".*\.py$"
 occystrap search --script-friendly registry://docker.io/library/busybox:latest "*sh"
 ```
 
+## The `info` Command
+
+Display information about a container image without downloading layers:
+
+```
+occystrap info SOURCE
+```
+
+The output format is controlled by the global `-O` / `--output-format`
+option:
+
+```
+# Human-readable text output (default)
+occystrap info registry://docker.io/library/busybox:latest
+
+# JSON output for scripting
+occystrap -O json info registry://docker.io/library/busybox:latest
+
+# From local Docker daemon
+occystrap info docker://myimage:v1
+
+# From tarball
+occystrap info tar://image.tar
+```
+
+Registry sources show full detail (compressed sizes, media types,
+compression format). Docker and tarball sources show config-derived
+info (architecture, OS, diff_ids, history, labels, env, etc.).
+
 ## Legacy Commands (Deprecated)
 
 The following commands are deprecated but still work for backwards

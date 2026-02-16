@@ -162,6 +162,12 @@ class RegistryWriterTestCase(unittest.TestCase):
                 'config.json',
                 io.BytesIO(config_data)))
 
+        # Wait for the config upload thread to complete
+        # before the mock is removed. Without this, the
+        # thread can leak into subsequent tests and
+        # inflate their mock call counts.
+        writer._executor.shutdown(wait=True)
+
         self.assertIsNotNone(writer._config_digest)
         self.assertTrue(writer._config_digest.startswith('sha256:'))
         self.assertEqual(len(config_data), writer._config_size)
