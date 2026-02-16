@@ -106,6 +106,22 @@ def request_url(method, url, headers=None, data=None, stream=False, auth=None,
     raise last_exception
 
 
+def format_size(size_bytes):
+    """Format a size in bytes as a human-readable string."""
+    if size_bytes is None:
+        return 'N/A'
+    if size_bytes < 1024:
+        return '%d B' % size_bytes
+    elif size_bytes < 1024 * 1024:
+        return '%.1f KB' % (size_bytes / 1024)
+    elif size_bytes < 1024 * 1024 * 1024:
+        return '%.1f MB' % (
+            size_bytes / (1024 * 1024))
+    else:
+        return '%.1f GB' % (
+            size_bytes / (1024 * 1024 * 1024))
+
+
 def execute(command, check_exit_code=[0], env_variables=None,
             cwd=None):
     return processutils.execute(

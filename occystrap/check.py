@@ -17,6 +17,8 @@ import tarfile as tarfile_mod
 
 from occystrap import compression
 from occystrap import constants
+from occystrap.inputs.base import always_fetch
+from occystrap.util import format_size
 
 
 LOG = logging.getLogger(__name__)
@@ -236,8 +238,8 @@ def check_metadata(manifest, config, results):
                 'this correctly')
 
         # Docker v2 media types
-        if manifest_media == \
-                constants.MEDIA_TYPE_DOCKER_MANIFEST_V2:
+        if (manifest_media
+                == constants.MEDIA_TYPE_DOCKER_MANIFEST_V2):
             results.info(
                 'docker-media-type',
                 'Image uses Docker v2 media types; '
@@ -252,7 +254,7 @@ def check_metadata(manifest, config, results):
                     'large-layer',
                     'Layer %d is very large: %s '
                     'compressed'
-                    % (i, _format_size(size)))
+                    % (i, format_size(size)))
 
     # ArgsEscaped deprecation
     if config:
@@ -286,7 +288,8 @@ def check_layers(input_source, manifest, config,
     seen_files = {}  # path -> list of layer indices
     layer_idx = 0
 
-    for element in input_source.fetch():
+    for element in input_source.fetch(
+            fetch_callback=always_fetch):
         if element.element_type == constants.CONFIG_FILE:
             # Config element - verify digest if manifest
             if manifest and element.data:
@@ -328,18 +331,20 @@ def check_layers(input_source, manifest, config,
                             '%d bytes' % config_size)
             continue
 
-        if element.element_type \
-                != constants.IMAGE_LAYER:
+        if (element.element_type
+                != constants.IMAGE_LAYER):
             continue
 
         if element.data is None:
-            # Layer was skipped (shouldn't happen
-            # since we use always_fetch)
+            # Layer was skipped
             layer_idx += 1
             continue
 
         # Diff_id verification: hash the decompressed
         # layer in chunks to keep memory usage low.
+        # Layer data must be seekable (BytesIO or file)
+        # since we read it twice: once for hashing and
+        # once for tar entry scanning.
         h = hashlib.sha256()
         while True:
             chunk = element.data.read(65536)
@@ -420,19 +425,21 @@ def check_layers(input_source, manifest, config,
 
 def _check_whiteout(name, basename, layer_idx,
                     results):
-    """Check whiteout file validity."""
+    """Check whiteout file validity.
+
+    Called only when basename starts with '.wh.'.
+    """
     if basename == '.wh..wh..opq':
         # Opaque whiteout - valid
         return
 
-    if basename.startswith('.wh.'):
-        # Deletion whiteout - should have a target
-        target = basename[4:]
-        if not target:
-            results.error(
-                'whiteout',
-                'Layer %d: empty whiteout target '
-                'at %s' % (layer_idx, name))
+    # Deletion whiteout - should have a target
+    target = basename[4:]
+    if not target:
+        results.error(
+            'whiteout',
+            'Layer %d: empty whiteout target '
+            'at %s' % (layer_idx, name))
 
 
 def _check_tar_entry(entry, layer_idx, results):
@@ -463,17 +470,3 @@ def _truncate_digest(digest):
     if len(digest) > 25:
         return digest[:25] + '...'
     return digest
-
-
-def _format_size(size_bytes):
-    """Format a size in bytes as human-readable."""
-    if size_bytes < 1024:
-        return '%d B' % size_bytes
-    elif size_bytes < 1024 * 1024:
-        return '%.1f KB' % (size_bytes / 1024)
-    elif size_bytes < 1024 * 1024 * 1024:
-        return '%.1f MB' % (
-            size_bytes / (1024 * 1024))
-    else:
-        return '%.1f GB' % (
-            size_bytes / (1024 * 1024 * 1024))

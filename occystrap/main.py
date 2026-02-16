@@ -20,6 +20,7 @@ from occystrap.outputs import tarfile as output_tarfile
 from occystrap.filters import SearchFilter, TimestampNormalizer
 from occystrap.pipeline import PipelineBuilder, PipelineError
 from occystrap import uri
+from occystrap.util import format_size
 
 
 LOG = logs.setup_console(__name__)
@@ -313,21 +314,6 @@ def _build_info(input_source):
     return info
 
 
-def _format_size(size_bytes):
-    """Format a size in bytes as a human-readable string."""
-    if size_bytes is None:
-        return 'N/A'
-    if size_bytes < 1024:
-        return '%d B' % size_bytes
-    elif size_bytes < 1024 * 1024:
-        return '%.1f KB' % (size_bytes / 1024)
-    elif size_bytes < 1024 * 1024 * 1024:
-        return '%.1f MB' % (size_bytes / (1024 * 1024))
-    else:
-        return '%.1f GB' % (
-            size_bytes / (1024 * 1024 * 1024))
-
-
 def _print_info_text(info):
     """Print image info in human-readable text format."""
     click.echo('Image:         %s:%s'
@@ -353,7 +339,7 @@ def _print_info_text(info):
                    % info['config_digest'])
     if 'config_size' in info:
         click.echo('Config size:   %s'
-                   % _format_size(
+                   % format_size(
                        info['config_size']))
 
     click.echo('')
@@ -362,7 +348,7 @@ def _print_info_text(info):
     if 'total_compressed_size' in info:
         click.echo(
             'Total compressed size: %s'
-            % _format_size(
+            % format_size(
                 info['total_compressed_size']))
 
     # Layer table
@@ -415,7 +401,7 @@ def _print_info_text(info):
                     d = d[:25] + '...'
                 row.append(d)
             if has_size:
-                row.append(_format_size(
+                row.append(format_size(
                     layer.get('size')))
             if has_compression:
                 row.append(
