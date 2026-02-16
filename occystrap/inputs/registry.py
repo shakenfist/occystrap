@@ -15,7 +15,6 @@ import logging
 import os
 import re
 from requests.exceptions import ChunkedEncodingError, ConnectionError
-import sys
 import tempfile
 import threading
 import time
@@ -60,6 +59,7 @@ class Image(ImageInput):
         self._manifest = None
         self._manifest_media_type = None
         self._config = None
+        self._config_bytes = None
 
     @property
     def image(self):
@@ -107,8 +107,8 @@ class Image(ImageInput):
             return util.request_url(
                 method, url, headers=headers, data=data, stream=stream)
 
-    def _moniker(self):
-        """Return the URL scheme for this registry."""
+    def _url_scheme(self):
+        """Return 'https' or 'http' based on self.secure."""
         return 'https' if self.secure else 'http'
 
     def get_manifest(self):
@@ -123,7 +123,7 @@ class Image(ImageInput):
         if self._manifest is not None:
             return self._manifest
 
-        moniker = self._moniker()
+        moniker = self._url_scheme()
 
         r = self.request_url(
             'GET',
@@ -149,7 +149,24 @@ class Image(ImageInput):
         elif content_type in [
                 constants.MEDIA_TYPE_DOCKER_MANIFEST_LIST_V2,
                 constants.MEDIA_TYPE_OCI_INDEX]:
-            for m in r.json()['manifests']:
+            manifests = r.json()['manifests']
+            for m in manifests:
+                plat = m['platform']
+                if plat.get('variant'):
+                    LOG.info(
+                        'Found manifest for %s on'
+                        ' %s %s'
+                        % (plat['os'],
+                           plat['architecture'],
+                           plat['variant']))
+                else:
+                    LOG.info(
+                        'Found manifest for %s on'
+                        ' %s'
+                        % (plat['os'],
+                           plat['architecture']))
+
+            for m in manifests:
                 if (m['platform']['os'] == self.os
                         and m['platform'][
                             'architecture']
@@ -157,6 +174,8 @@ class Image(ImageInput):
                         and m['platform'].get(
                             'variant', '')
                         == self.variant):
+                    LOG.info(
+                        'Fetching matching manifest')
                     r2 = self.request_url(
                         'GET',
                         '%s://%s/v2/%s/manifests/%s'
@@ -202,7 +221,7 @@ class Image(ImageInput):
             return None
 
         config_digest = manifest['config']['digest']
-        moniker = self._moniker()
+        moniker = self._url_scheme()
 
         r = self.request_url(
             'GET',
@@ -210,9 +229,9 @@ class Image(ImageInput):
             % (moniker, self.registry,
                self.image, config_digest))
 
-        config_bytes = r.content
+        self._config_bytes = r.content
         h = hashlib.sha256()
-        h.update(config_bytes)
+        h.update(self._config_bytes)
         expected = config_digest.split(':')[1]
         if h.hexdigest() != expected:
             raise ImageInputError(
@@ -322,32 +341,17 @@ class Image(ImageInput):
               ordered=True):
         LOG.info('Fetching manifest')
         manifest = self.get_manifest()
-        moniker = self._moniker()
-
-        config_digest = manifest['config']['digest']
+        moniker = self._url_scheme()
 
         LOG.info('Fetching config file')
-        r = self.request_url(
-            'GET',
-            '%s://%s/v2/%s/blobs/%s'
-            % (moniker, self.registry,
-               self.image, config_digest))
-        config = r.content
-        h = hashlib.sha256()
-        h.update(config)
-        if h.hexdigest() != config_digest.split(':')[1]:
-            LOG.error(
-                'Hash verification failed for image'
-                ' config blob (%s vs %s)'
-                % (config_digest.split(':')[1],
-                   h.hexdigest()))
-            sys.exit(1)
+        self.get_config()
 
+        config_digest = manifest['config']['digest']
         config_filename = (
             '%s.json' % config_digest.split(':')[1])
         yield constants.ImageElement(
             constants.CONFIG_FILE, config_filename,
-            io.BytesIO(config))
+            io.BytesIO(self._config_bytes))
 
         LOG.info('There are %d image layers'
                  % len(manifest['layers']))

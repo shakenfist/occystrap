@@ -30,11 +30,13 @@ def _make_manifest(layer_count=2,
 
     layers = []
     for i in range(layer_count):
+        # Repeat 'aN' 32 times and take first 64 chars
+        # to produce a valid 64-char hex-length digest.
+        hex_part = (('a%d' % i) * 32)[:64]
         layers.append({
             'mediaType': media,
             'size': (i + 1) * 1000,
-            'digest': ('sha256:%s'
-                       % (('a%d' % i) * 32)[:64]),
+            'digest': 'sha256:%s' % hex_part,
         })
 
     return {
@@ -54,6 +56,8 @@ def _make_manifest(layer_count=2,
 def _make_config(layer_count=2, arch='amd64',
                  os_name='linux'):
     """Build an OCI image config blob."""
+    # Repeat 'dN' 32 times, take first 64 chars for
+    # a valid 64-char hex-length digest.
     diff_ids = [
         'sha256:%s' % (('d%d' % i) * 32)[:64]
         for i in range(layer_count)

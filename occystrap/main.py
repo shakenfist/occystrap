@@ -1,4 +1,4 @@
-import json as json_mod
+import json
 
 import click
 import logging
@@ -501,7 +501,7 @@ def info_cmd(ctx, source):
         output_format = ctx.obj.get(
             'OUTPUT_FORMAT', 'text')
         if output_format == 'json':
-            click.echo(json_mod.dumps(
+            click.echo(json.dumps(
                 info, indent=2))
         else:
             _print_info_text(info)
