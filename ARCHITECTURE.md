@@ -130,6 +130,23 @@ decorator pattern. Each filter wraps another output (or filter) and can:
 - Skip elements entirely
 - Accumulate state across elements
 
+**Config diff_id updates:** Filters that modify layer content change the layer's
+SHA256 hash (diff_id). The `ImageFilter` base class provides helper methods for
+keeping the config's `rootfs.diff_ids` in sync:
+
+- `_buffer_config(element)` - Buffers the config element instead of forwarding
+  it immediately. The config is forwarded in `finalize()` with updated diff_ids.
+- `_record_new_diff_id(sha256_hex, layer_index)` - Records the new SHA256 for
+  a modified layer.
+- `_skip_layer(layer_index)` - Advances the layer counter for unmodified
+  layers (data=None, skipped by fetch_callback).
+- `_forward_buffered_config()` - Called by `finalize()` to update the config's
+  `rootfs.diff_ids` and forward it to the wrapped output. If no diff_ids
+  changed, the original config is forwarded unchanged.
+
+Content-modifying filters (ExcludeFilter, TimestampNormalizer) use these methods.
+Non-modifying filters (InspectFilter, SearchFilter) pass config through unchanged.
+
 Filter implementations:
 - `filters/exclude.py` - Excludes files matching glob patterns from layers,
   recalculating layer SHAs. Supports multiple comma-separated patterns.

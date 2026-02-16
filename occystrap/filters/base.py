@@ -1,6 +1,14 @@
 from abc import ABC, abstractmethod
+import hashlib
+import io
+import json
+import logging
 
+from occystrap import constants
 from occystrap.outputs.base import ImageOutput
+
+
+LOG = logging.getLogger(__name__)
 
 
 class ImageFilter(ImageOutput, ABC):
@@ -25,6 +33,13 @@ class ImageFilter(ImageOutput, ABC):
     - Skip elements entirely
     - Accumulate state across elements (e.g., collect
       search results)
+
+    Filters that modify layer content (and thus change
+    the layer's diff_id) should call _buffer_config()
+    for config elements and _record_new_diff_id() for
+    each modified layer. The base class finalize() will
+    then update the config's rootfs.diff_ids to match
+    the actual layer content before forwarding it.
     """
 
     def __init__(self, wrapped_output, temp_dir=None):
@@ -41,6 +56,14 @@ class ImageFilter(ImageOutput, ABC):
         """
         self._wrapped = wrapped_output
         self.temp_dir = temp_dir
+
+        # Config buffering for diff_id updates.
+        # Content-modifying filters buffer the config
+        # element and forward it in finalize() with
+        # updated diff_ids.
+        self._buffered_config = None
+        self._new_diff_ids = {}
+        self._layer_counter = 0
 
     @property
     def requires_ordered_layers(self):
@@ -83,12 +106,116 @@ class ImageFilter(ImageOutput, ABC):
         """
         pass
 
+    def _buffer_config(self, element):
+        """Buffer config for later diff_id update.
+
+        Content-modifying filters should call this
+        instead of forwarding the config element
+        directly. The config will be forwarded in
+        finalize() with updated diff_ids.
+
+        Args:
+            element: The CONFIG_FILE ImageElement.
+        """
+        self._buffered_config = element
+
+    def _record_new_diff_id(
+            self, sha256_hex, layer_index):
+        """Record a new diff_id for a modified layer.
+
+        Args:
+            sha256_hex: SHA256 hex digest of the
+                modified decompressed layer data
+                (without 'sha256:' prefix).
+            layer_index: The layer's position index,
+                or None for ordered delivery.
+        """
+        idx = (layer_index
+               if layer_index is not None
+               else self._layer_counter)
+        self._new_diff_ids[idx] = sha256_hex
+        self._layer_counter += 1
+
+    def _skip_layer(self, layer_index):
+        """Advance the layer counter for an unmodified
+        layer (data=None, skipped by fetch_callback).
+
+        Only needed for ordered delivery where
+        layer_index is None.
+
+        Args:
+            layer_index: The layer's position index,
+                or None for ordered delivery.
+        """
+        if layer_index is None:
+            self._layer_counter += 1
+
+    def _forward_buffered_config(self):
+        """Forward the buffered config to the wrapped
+        output, updating diff_ids if any layers were
+        modified.
+
+        Called automatically by finalize(). Does
+        nothing if no config was buffered.
+        """
+        if self._buffered_config is None:
+            return
+
+        if not self._new_diff_ids:
+            self._wrapped.process_image_element(
+                self._buffered_config)
+            self._buffered_config = None
+            return
+
+        # Parse the original config
+        self._buffered_config.data.seek(0)
+        config = json.loads(
+            self._buffered_config.data.read())
+
+        original_ids = config.get(
+            'rootfs', {}).get('diff_ids', [])
+
+        # Replace diff_ids for modified layers,
+        # keeping originals for unmodified layers
+        updated_ids = list(original_ids)
+        for idx, sha in self._new_diff_ids.items():
+            if idx < len(updated_ids):
+                updated_ids[idx] = (
+                    'sha256:%s' % sha)
+
+        if updated_ids == original_ids:
+            self._wrapped.process_image_element(
+                self._buffered_config)
+        else:
+            LOG.info(
+                'Updating config diff_ids '
+                '(%d of %d layers modified)'
+                % (len(self._new_diff_ids),
+                   len(original_ids)))
+            config['rootfs']['diff_ids'] = updated_ids
+            updated_bytes = json.dumps(
+                config).encode('utf-8')
+
+            h = hashlib.sha256()
+            h.update(updated_bytes)
+            updated_name = (
+                '%s.json' % h.hexdigest())
+
+            self._wrapped.process_image_element(
+                constants.ImageElement(
+                    constants.CONFIG_FILE,
+                    updated_name,
+                    io.BytesIO(updated_bytes)))
+
+        self._buffered_config = None
+
     def finalize(self):
         """Complete the filter operation.
 
-        Default implementation delegates to the wrapped
-        output. Override to perform cleanup or output
-        accumulated results.
+        Forwards any buffered config (with updated
+        diff_ids) before delegating to the wrapped
+        output.
         """
+        self._forward_buffered_config()
         if self._wrapped is not None:
             self._wrapped.finalize()

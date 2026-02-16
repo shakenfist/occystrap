@@ -437,22 +437,21 @@ chosen to defer to here so that we don't forget them.
   data, so this check needs either a new raw-blob accessor or
   integration at the input source level.
 
-### Bugs discovered during this work
+### Bugs fixed during this work
 
 * **Config diff_ids not updated after filtering:** When
   `process` applies content-modifying filters (e.g.,
   `normalize-timestamps`, `exclude`), the layer data changes
-  (and thus its SHA256 diff_id), but the config blob is passed
-  through with the original diff_ids. `check` correctly detects
-  this as a diff-id mismatch. Fixing this requires the pipeline
-  to rewrite `config.rootfs.diff_ids` after filtering, which
-  is a non-trivial change affecting the output writers. This is
-  the exact class of bug that motivated the `check` command in
-  the first place (see the "wrong diff id" error in the problem
-  statement).
-
-### Bugs fixed during this work
-
+  (and thus its SHA256 diff_id), but the config blob was passed
+  through with the original diff_ids. `check` correctly
+  detected this as a diff-id mismatch. Fixed by adding config
+  buffering and diff_id tracking to the `ImageFilter` base
+  class (`occystrap/filters/base.py`). Content-modifying
+  filters now buffer the config element, record new diff_ids
+  as layers are processed, and forward the updated config in
+  `finalize()`. This is the exact class of bug that motivated
+  the `check` command in the first place (see the "wrong
+  diff id" error in the problem statement).
 * **Flaky `test_upload_blob_new`:** `test_process_config_file`
   submitted config upload to a `ThreadPoolExecutor` but never
   called `finalize()` or shut down the executor. Under certain

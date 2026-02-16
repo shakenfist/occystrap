@@ -208,11 +208,9 @@ class CheckAfterProcessTestCase(testtools.TestCase):
     """
 
     def test_check_after_normalize_timestamps(self):
-        """Normalize-timestamps changes layer content,
-        so check detects diff_id mismatch (the config
-        still has original diff_ids). This is a known
-        limitation of process -- filters that modify
-        layer content don't update the config."""
+        """Normalize-timestamps changes layer content
+        and updates config diff_ids to match. Full
+        check should pass with zero errors."""
         runner = CliRunner()
 
         with tempfile.NamedTemporaryFile(
@@ -232,36 +230,25 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                 0, result.exit_code,
                 'process failed: %s' % result.output)
 
+            # Full check should pass -- filter updates
+            # config diff_ids to match modified layers
             result = runner.invoke(cli, [
                 '-O', 'json',
                 'check',
                 'tar://%s' % tar_path,
             ])
 
+            self.assertEqual(
+                0, result.exit_code,
+                'check failed: %s' % result.output)
+
             output = json.loads(result.output)
+            self.assertEqual(
+                0, output['errors'],
+                'Unexpected errors: %s'
+                % output['results'])
 
-            # check should detect diff-id mismatch
-            diff_id_errors = [
-                r for r in output['results']
-                if r['check'] == 'diff-id'
-                and r['severity'] == 'error']
-            self.assertGreater(
-                len(diff_id_errors), 0,
-                'Expected diff-id errors after '
-                'normalize-timestamps')
-
-            # Only diff-id errors should be present
-            # (metadata checks should pass)
-            all_errors = [
-                r for r in output['results']
-                if r['severity'] == 'error']
-            for err in all_errors:
-                self.assertEqual(
-                    'diff-id', err['check'],
-                    'Unexpected error: %s' % err)
-
-            # Fast mode should still pass (no layer
-            # download means no diff-id check)
+            # Fast mode should also pass
             result = runner.invoke(cli, [
                 '-O', 'json',
                 'check', '--fast',
@@ -276,8 +263,9 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                 os.unlink(tar_path)
 
     def test_check_after_exclude_filter(self):
-        """Exclude filter changes layer content, so
-        check detects diff_id mismatch."""
+        """Exclude filter changes layer content and
+        updates config diff_ids. Full check should
+        pass with zero errors."""
         runner = CliRunner()
 
         with tempfile.NamedTemporaryFile(
@@ -303,34 +291,24 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                 'tar://%s' % tar_path,
             ])
 
+            self.assertEqual(
+                0, result.exit_code,
+                'check failed: %s' % result.output)
+
             output = json.loads(result.output)
-
-            # check should detect diff-id mismatch
-            diff_id_errors = [
-                r for r in output['results']
-                if r['check'] == 'diff-id'
-                and r['severity'] == 'error']
-            self.assertGreater(
-                len(diff_id_errors), 0,
-                'Expected diff-id errors after '
-                'exclude filter')
-
-            # Only diff-id errors expected
-            all_errors = [
-                r for r in output['results']
-                if r['severity'] == 'error']
-            for err in all_errors:
-                self.assertEqual(
-                    'diff-id', err['check'],
-                    'Unexpected error: %s' % err)
+            self.assertEqual(
+                0, output['errors'],
+                'Unexpected errors: %s'
+                % output['results'])
 
         finally:
             if os.path.exists(tar_path):
                 os.unlink(tar_path)
 
     def test_check_after_combined_filters(self):
-        """Combined filters change layer content, so
-        check detects diff_id mismatch."""
+        """Combined filters change layer content and
+        update config diff_ids. Full check should
+        pass with zero errors."""
         runner = CliRunner()
 
         with tempfile.NamedTemporaryFile(
@@ -357,26 +335,15 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                 'tar://%s' % tar_path,
             ])
 
+            self.assertEqual(
+                0, result.exit_code,
+                'check failed: %s' % result.output)
+
             output = json.loads(result.output)
-
-            # check should detect diff-id mismatch
-            diff_id_errors = [
-                r for r in output['results']
-                if r['check'] == 'diff-id'
-                and r['severity'] == 'error']
-            self.assertGreater(
-                len(diff_id_errors), 0,
-                'Expected diff-id errors after '
-                'combined filters')
-
-            # Only diff-id errors expected
-            all_errors = [
-                r for r in output['results']
-                if r['severity'] == 'error']
-            for err in all_errors:
-                self.assertEqual(
-                    'diff-id', err['check'],
-                    'Unexpected error: %s' % err)
+            self.assertEqual(
+                0, output['errors'],
+                'Unexpected errors: %s'
+                % output['results'])
 
         finally:
             if os.path.exists(tar_path):
