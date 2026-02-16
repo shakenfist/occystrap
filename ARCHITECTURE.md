@@ -9,6 +9,7 @@ container images.
 occystrap/
     __init__.py
     main.py              # CLI entry point (Click-based)
+    check.py             # Image validation checks for the check command
     constants.py         # Element/compression type constants, media types
     compression.py       # Compression utilities (gzip/zstd detection & streaming)
     common.py            # Shared utilities
@@ -43,6 +44,7 @@ occystrap/
     tests/               # Unit tests (run with tox -epy3)
         __init__.py
         test_compression.py
+        test_check.py
         test_info.py
         test_inspect.py
         test_registry_output.py
@@ -202,6 +204,31 @@ Key implementation details in `main.py`:
   cases gracefully
 - `_format_size(size_bytes)` - Formats bytes as human-readable string
 - `_print_info_text(info)` - Renders info dict as human-readable text
+
+### The `check` Command
+
+The `check` command validates a container image's structural integrity,
+history consistency, compression compatibility, and filesystem correctness.
+It supports two modes:
+
+- **Fast mode** (`--fast`): Uses only `get_manifest()` and `get_config()` to
+  check metadata consistency without downloading layer blobs. Validates
+  schema version, rootfs type, layer count vs diff_id count, history
+  entry count, compression compatibility, and more.
+
+- **Full mode** (default): Downloads all layers via `fetch()` and additionally
+  verifies config digest/size, diff_ids (SHA256 of decompressed layers),
+  tar archive validity, whiteout file correctness, and tar header
+  integrity.
+
+The check logic lives in a separate `occystrap/check.py` module:
+- `CheckResults` - Accumulator for errors, warnings, and informational messages
+- `check_metadata(manifest, config, results)` - Fast mode checks
+- `check_layers(input_source, manifest, config, results)` - Full mode checks
+
+The command in `main.py` wires these together and handles output formatting
+(text or JSON via `-O`/`--output-format`). Exit code is non-zero if any
+errors are found, enabling CI integration.
 
 ## URI-Style Command Line
 

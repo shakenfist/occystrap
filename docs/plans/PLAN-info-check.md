@@ -317,9 +317,19 @@ formatting helper. Human-readable output should group by severity
 a structured list of check results. Exit code should be non-zero
 if any errors were found (useful for CI integration).
 
-**Files touched:** `occystrap/main.py` (new command), potentially
-a new `occystrap/check.py` module for the check logic if it grows
-large enough to warrant separation from `main.py`.
+**Files touched:** `occystrap/main.py` (new command),
+`occystrap/check.py` (check logic module).
+
+**Status:** Implemented (steps 1-8). The `check` command works
+with `registry://`, `docker://`, and `tar://` sources. Fast mode
+checks metadata consistency (schema version, rootfs type, layer
+count, history count, compression compatibility, ArgsEscaped).
+Full mode additionally verifies config digest/size, layer
+diff_ids, tar validity, whiteout files, and tar headers. Checks
+not yet implemented: compressed blob digest verification (item 2,
+already handled by input sources during download) and compression
+magic vs mediaType verification (item 9, requires raw blob
+access). 30 unit tests cover the implementation.
 
 ### Testing strategy
 
@@ -400,6 +410,20 @@ chosen to defer to here so that we don't forget them.
   compression, format conversion). Its output could be used as
   a reference in tests to verify occystrap produces equivalent
   results.
+* **Compressed blob digest verification (check item 2):**
+  `check` does not independently verify that
+  `sha256(compressed_blob) == manifest.layers[i].digest`
+  because the input sources already verify this during
+  download. If we want `check` to be a standalone validator
+  (e.g., for images not fetched by occystrap), we'd need raw
+  blob access before the input source decompresses them.
+* **Compression magic vs mediaType verification (check item
+  9):** Verifying that a layer's actual compression format
+  (detected from magic bytes) matches the declared mediaType
+  requires reading the first few bytes of the raw compressed
+  blob. The current `fetch()` interface yields decompressed
+  data, so this check needs either a new raw-blob accessor or
+  integration at the input source level.
 
 ### Bugs fixed during this work
 

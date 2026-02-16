@@ -172,6 +172,35 @@ Registry sources show full detail (compressed sizes, media types,
 compression format). Docker and tarball sources show config-derived
 info (architecture, OS, diff_ids, history, labels, env, etc.).
 
+## The `check` Command
+
+Check validity of a container image. Validates structural integrity,
+history consistency, compression compatibility, and filesystem
+correctness:
+
+```
+occystrap check SOURCE [--fast]
+```
+
+Use `--fast` to skip layer downloads and only check metadata consistency
+(manifest and config). The exit code is non-zero if any errors are
+found, making it suitable for CI integration.
+
+```
+# Full check (downloads and verifies all layers)
+occystrap check registry://docker.io/library/busybox:latest
+
+# Fast metadata-only check
+occystrap check --fast docker://myimage:v1
+
+# JSON output for CI scripting
+occystrap -O json check tar://image.tar
+
+# Validate output of a process pipeline
+occystrap process docker://myimage:v1 tar://output.tar
+occystrap check tar://output.tar
+```
+
 ## Legacy Commands (Deprecated)
 
 The following commands are deprecated but still work for backwards

@@ -7,6 +7,7 @@ from prettytable import PrettyTable
 from shakenfist_utilities import logs
 import sys
 
+from occystrap import check
 from occystrap import compression
 from occystrap.inputs.base import ImageInputError
 from occystrap.inputs import docker as input_docker
@@ -513,6 +514,134 @@ def info_cmd(ctx, source):
 
 
 cli.add_command(info_cmd)
+
+
+def _print_check_text(results, fast=False):
+    """Print check results in human-readable format.
+
+    Groups results by severity: errors first, then
+    warnings, then informational messages.
+    """
+    errors = [
+        r for r in results.results
+        if r['severity'] == check.CHECK_ERROR]
+    warnings = [
+        r for r in results.results
+        if r['severity'] == check.CHECK_WARNING]
+    infos = [
+        r for r in results.results
+        if r['severity'] == check.CHECK_INFO]
+
+    if errors:
+        click.echo('Errors:')
+        for r in errors:
+            click.echo(
+                '  [%s] %s'
+                % (r['check'], r['message']))
+        click.echo('')
+
+    if warnings:
+        click.echo('Warnings:')
+        for r in warnings:
+            click.echo(
+                '  [%s] %s'
+                % (r['check'], r['message']))
+        click.echo('')
+
+    if infos:
+        click.echo('Info:')
+        for r in infos:
+            click.echo(
+                '  [%s] %s'
+                % (r['check'], r['message']))
+        click.echo('')
+
+    # Summary
+    mode = 'fast (metadata only)' if fast else 'full'
+    click.echo(
+        'Check complete (%s): %d error(s), '
+        '%d warning(s)'
+        % (mode, results.error_count,
+           results.warning_count))
+
+
+@click.command('check')
+@click.argument('source')
+@click.option('--fast', is_flag=True, default=False,
+              help='Skip layer download, check '
+              'metadata only')
+@click.pass_context
+def check_cmd(ctx, source, fast):
+    """Check validity of a container image.
+
+    Validates structural integrity, history
+    consistency, compression compatibility, and
+    filesystem correctness.
+
+    SOURCE is a URI specifying where to read the
+    image from:
+
+    \b
+      registry://HOST/IMAGE:TAG  - Docker/OCI registry
+      docker://IMAGE:TAG         - Local Docker daemon
+      tar://PATH                 - Docker-save tarball
+
+    Use --fast to skip layer downloads and only check
+    metadata consistency (manifest and config).
+
+    Exit code is non-zero if any errors are found.
+
+    \b
+    Examples:
+      occystrap check registry://docker.io/library/busybox:latest
+      occystrap check --fast docker://myimage:v1
+      occystrap check tar://image.tar
+      occystrap -O json check registry://ghcr.io/org/app:v2
+    """
+    try:
+        builder = PipelineBuilder(ctx)
+        source_spec = uri.parse_uri(source)
+        input_source = builder.build_input(
+            source_spec)
+
+        manifest = input_source.get_manifest()
+        config = input_source.get_config()
+
+        results = check.CheckResults()
+        check.check_metadata(
+            manifest, config, results)
+
+        if not fast:
+            check.check_layers(
+                input_source, manifest,
+                config, results)
+
+        output_format = ctx.obj.get(
+            'OUTPUT_FORMAT', 'text')
+        if output_format == 'json':
+            output = {
+                'image': input_source.image,
+                'tag': input_source.tag,
+                'mode': 'fast' if fast else 'full',
+                'errors': results.error_count,
+                'warnings': results.warning_count,
+                'results': results.results,
+            }
+            click.echo(json.dumps(
+                output, indent=2))
+        else:
+            _print_check_text(results, fast=fast)
+
+        if results.has_errors:
+            sys.exit(1)
+
+    except (PipelineError, uri.URIParseError,
+            ImageInputError) as e:
+        click.echo('Error: %s' % e, err=True)
+        sys.exit(1)
+
+
+cli.add_command(check_cmd)
 
 
 # =============================================================================
