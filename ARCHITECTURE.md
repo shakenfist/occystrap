@@ -9,6 +9,7 @@ container images.
 occystrap/
     __init__.py
     main.py              # CLI entry point (Click-based)
+    check.py             # Image validation checks for the check command
     constants.py         # Element/compression type constants, media types
     compression.py       # Compression utilities (gzip/zstd detection & streaming)
     common.py            # Shared utilities
@@ -43,6 +44,7 @@ occystrap/
     tests/               # Unit tests (run with tox -epy3)
         __init__.py
         test_compression.py
+        test_check.py
         test_info.py
         test_inspect.py
         test_registry_output.py
@@ -53,6 +55,19 @@ occystrap/
 deploy/
     occystrap_ci/
         tests/           # Functional tests (run in CI)
+            test_check.py
+            test_dir_deep_images.py
+            test_docker_input.py
+            test_docker_output.py
+            test_exclude_filter.py
+            test_filter_chaining.py
+            test_info.py
+            test_inspect_filter.py
+            test_normalize_timestamps.py
+            test_oci_hello_world.py
+            test_registry_push.py
+            test_search_layers.py
+            test_whiteout.py
 
 pyproject.toml               # Build config (setuptools + setuptools_scm)
 tox.ini                      # Test runner configuration
@@ -114,6 +129,23 @@ decorator pattern. Each filter wraps another output (or filter) and can:
 - Inspect elements without modification (e.g., search)
 - Skip elements entirely
 - Accumulate state across elements
+
+**Config diff_id updates:** Filters that modify layer content change the layer's
+SHA256 hash (diff_id). The `ImageFilter` base class provides helper methods for
+keeping the config's `rootfs.diff_ids` in sync:
+
+- `_buffer_config(element)` - Buffers the config element instead of forwarding
+  it immediately. The config is forwarded in `finalize()` with updated diff_ids.
+- `_record_new_diff_id(sha256_hex, layer_index)` - Records the new SHA256 for
+  a modified layer.
+- `_skip_layer(layer_index)` - Advances the layer counter for unmodified
+  layers (data=None, skipped by fetch_callback).
+- `_forward_buffered_config()` - Called by `finalize()` to update the config's
+  `rootfs.diff_ids` and forward it to the wrapped output. If no diff_ids
+  changed, the original config is forwarded unchanged.
+
+Content-modifying filters (ExcludeFilter, TimestampNormalizer) use these methods.
+Non-modifying filters (InspectFilter, SearchFilter) pass config through unchanged.
 
 Filter implementations:
 - `filters/exclude.py` - Excludes files matching glob patterns from layers,
@@ -202,6 +234,31 @@ Key implementation details in `main.py`:
   cases gracefully
 - `_format_size(size_bytes)` - Formats bytes as human-readable string
 - `_print_info_text(info)` - Renders info dict as human-readable text
+
+### The `check` Command
+
+The `check` command validates a container image's structural integrity,
+history consistency, compression compatibility, and filesystem correctness.
+It supports two modes:
+
+- **Fast mode** (`--fast`): Uses only `get_manifest()` and `get_config()` to
+  check metadata consistency without downloading layer blobs. Validates
+  schema version, rootfs type, layer count vs diff_id count, history
+  entry count, compression compatibility, and more.
+
+- **Full mode** (default): Downloads all layers via `fetch()` and additionally
+  verifies config digest/size, diff_ids (SHA256 of decompressed layers),
+  tar archive validity, whiteout file correctness, and tar header
+  integrity.
+
+The check logic lives in a separate `occystrap/check.py` module:
+- `CheckResults` - Accumulator for errors, warnings, and informational messages
+- `check_metadata(manifest, config, results)` - Fast mode checks
+- `check_layers(input_source, manifest, config, results)` - Full mode checks
+
+The command in `main.py` wires these together and handles output formatting
+(text or JSON via `-O`/`--output-format`). Exit code is non-zero if any
+errors are found, enabling CI integration.
 
 ## URI-Style Command Line
 

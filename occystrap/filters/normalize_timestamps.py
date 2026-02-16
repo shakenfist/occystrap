@@ -106,17 +106,23 @@ class TimestampNormalizer(ImageFilter):
         """Process an image element, normalizing layer
         timestamps.
 
-        Config files are passed through unchanged. Layers
-        have their timestamps normalized and their names
-        updated to reflect the new SHA256 hash.
+        Config files are buffered so diff_ids can be
+        updated in finalize(). Layers have their
+        timestamps normalized and their names updated
+        to reflect the new SHA256 hash.
         """
-        if (element.element_type == constants.IMAGE_LAYER
+        if element.element_type == constants.CONFIG_FILE:
+            self._buffer_config(element)
+        elif (element.element_type
+                == constants.IMAGE_LAYER
                 and element.data is not None):
             LOG.info(
                 'Normalizing timestamps in layer %s'
                 % element.name)
             normalized_data, new_name = \
                 self._normalize_layer(element.data)
+            self._record_new_diff_id(
+                new_name, element.layer_index)
 
             try:
                 self._wrapped.process_image_element(
@@ -124,7 +130,8 @@ class TimestampNormalizer(ImageFilter):
                         element.element_type,
                         new_name,
                         normalized_data,
-                        layer_index=element.layer_index))
+                        layer_index=(
+                            element.layer_index)))
             finally:
                 try:
                     normalized_data.close()
@@ -132,4 +139,8 @@ class TimestampNormalizer(ImageFilter):
                 except Exception:
                     pass
         else:
-            self._wrapped.process_image_element(element)
+            if (element.element_type
+                    == constants.IMAGE_LAYER):
+                self._skip_layer(element.layer_index)
+            self._wrapped.process_image_element(
+                element)

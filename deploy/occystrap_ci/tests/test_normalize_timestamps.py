@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import os
 import tarfile
 import tempfile
@@ -152,6 +153,126 @@ class NormalizeTimestampsTestCase(unittest.TestCase):
                         # Verify the layer path doesn't use the original hash
                         layer_path = tw.tar_manifest[0]['Layers'][0]
                         self.assertNotIn('originalhash', layer_path)
+
+                    finally:
+                        os.unlink(layer_tf.name)
+
+            finally:
+                if os.path.exists(output_tf.name):
+                    os.unlink(output_tf.name)
+
+    def test_filter_updates_config_diff_ids(self):
+        """Test that TimestampNormalizer updates config
+        diff_ids to match the normalized layer hashes."""
+        with tempfile.NamedTemporaryFile(
+                delete=False, suffix='.tar') as output_tf:
+            try:
+                tw = output_tarfile.TarWriter(
+                    'test/image', 'latest', output_tf.name)
+                normalizer = TimestampNormalizer(
+                    tw, timestamp=0)
+
+                # Create a test layer
+                with tempfile.NamedTemporaryFile(
+                        delete=False) as layer_tf:
+                    try:
+                        with tarfile.open(
+                                fileobj=layer_tf,
+                                mode='w') as layer_tar:
+                            ti = tarfile.TarInfo(
+                                'test.txt')
+                            ti.size = 11
+                            ti.mtime = 1609459200
+                            layer_tar.addfile(
+                                ti,
+                                io.BytesIO(
+                                    b'hello world'))
+
+                        layer_tf.flush()
+                        layer_tf.seek(0)
+
+                        # Calculate original diff_id
+                        original_sha = hashlib.sha256(
+                            layer_tf.read()).hexdigest()
+                        layer_tf.seek(0)
+
+                        # Create config with original
+                        # diff_id
+                        config = {
+                            'architecture': 'amd64',
+                            'os': 'linux',
+                            'rootfs': {
+                                'type': 'layers',
+                                'diff_ids': [
+                                    'sha256:%s'
+                                    % original_sha
+                                ],
+                            },
+                        }
+                        config_bytes = json.dumps(
+                            config).encode('utf-8')
+                        config_sha = hashlib.sha256(
+                            config_bytes).hexdigest()
+                        config_name = (
+                            '%s.json' % config_sha)
+
+                        # Process config then layer
+                        normalizer.process_image_element(
+                            constants.ImageElement(
+                                constants.CONFIG_FILE,
+                                config_name,
+                                io.BytesIO(
+                                    config_bytes)))
+                        normalizer.process_image_element(
+                            constants.ImageElement(
+                                constants.IMAGE_LAYER,
+                                original_sha,
+                                open(
+                                    layer_tf.name,
+                                    'rb')))
+
+                        # Finalize updates config
+                        normalizer.finalize()
+
+                        # Read back the tarball and
+                        # extract config
+                        with tarfile.open(
+                                output_tf.name,
+                                'r') as out_tar:
+                            manifest = json.loads(
+                                out_tar.extractfile(
+                                    'manifest.json'
+                                ).read())
+                            config_path = (
+                                manifest[0]['Config'])
+                            updated_config = json.loads(
+                                out_tar.extractfile(
+                                    config_path
+                                ).read())
+
+                        # Config should have updated
+                        # diff_ids
+                        updated_ids = (
+                            updated_config['rootfs'][
+                                'diff_ids'])
+                        self.assertEqual(
+                            1, len(updated_ids))
+
+                        # Should NOT be the original
+                        self.assertNotEqual(
+                            'sha256:%s' % original_sha,
+                            updated_ids[0])
+
+                        # Should match the normalized
+                        # layer hash
+                        self.assertTrue(
+                            updated_ids[0].startswith(
+                                'sha256:'))
+
+                        # Config filename should also
+                        # have changed
+                        self.assertNotEqual(
+                            config_name, config_path)
 
                     finally:
                         os.unlink(layer_tf.name)

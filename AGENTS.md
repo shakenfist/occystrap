@@ -110,6 +110,10 @@ The project uses pre-commit hooks for `tox -eflake8` (linting) and `tox -epy3`
   take a `SOURCE` argument, use `PipelineBuilder.build_input()` to get an
   input, call `get_manifest()`/`get_config()` for metadata, and use the
   `-O`/`--output-format` global option for text/JSON output
+- **Add a new validation command**: Follow the `check` command pattern --
+  use `check.py` module with `CheckResults` accumulator for errors/warnings/
+  info, separate metadata checks (fast mode) from layer checks (full mode),
+  and exit non-zero on errors for CI integration
 
 ## CI/CD Automation Tools
 

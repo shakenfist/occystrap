@@ -119,15 +119,22 @@ class ExcludeFilter(ImageFilter):
         """Process an image element, filtering layer
         contents.
 
-        Config files are passed through unchanged. Layers
-        have matching entries excluded and their names
-        updated to reflect the new SHA256 hash.
+        Config files are buffered so diff_ids can be
+        updated in finalize(). Layers have matching
+        entries excluded and their names updated to
+        reflect the new SHA256 hash.
         """
-        if (element.element_type == constants.IMAGE_LAYER
+        if element.element_type == constants.CONFIG_FILE:
+            self._buffer_config(element)
+        elif (element.element_type
+                == constants.IMAGE_LAYER
                 and element.data is not None):
-            LOG.info('Filtering layer %s' % element.name)
+            LOG.info(
+                'Filtering layer %s' % element.name)
             filtered_data, new_name = \
                 self._filter_layer(element.data)
+            self._record_new_diff_id(
+                new_name, element.layer_index)
 
             try:
                 self._wrapped.process_image_element(
@@ -135,7 +142,8 @@ class ExcludeFilter(ImageFilter):
                         element.element_type,
                         new_name,
                         filtered_data,
-                        layer_index=element.layer_index))
+                        layer_index=(
+                            element.layer_index)))
             finally:
                 try:
                     filtered_data.close()
@@ -143,4 +151,8 @@ class ExcludeFilter(ImageFilter):
                 except Exception:
                     pass
         else:
-            self._wrapped.process_image_element(element)
+            if (element.element_type
+                    == constants.IMAGE_LAYER):
+                self._skip_layer(element.layer_index)
+            self._wrapped.process_image_element(
+                element)

@@ -12,8 +12,8 @@ from click.testing import CliRunner
 
 from occystrap import constants
 from occystrap.inputs.base import ImageInput
-from occystrap.main import (
-    _build_info, _format_size, cli)
+from occystrap.main import _build_info, cli
+from occystrap.util import format_size
 
 
 # --- Helpers ---
@@ -263,27 +263,27 @@ class TestBuildInfo(unittest.TestCase):
         self.assertEqual(info['env'], [])
 
 
-# --- Tests for _format_size ---
+# --- Tests for format_size ---
 
 class TestFormatSize(unittest.TestCase):
     def test_bytes(self):
-        self.assertEqual(_format_size(42), '42 B')
+        self.assertEqual(format_size(42), '42 B')
 
     def test_kilobytes(self):
         self.assertEqual(
-            _format_size(2048), '2.0 KB')
+            format_size(2048), '2.0 KB')
 
     def test_megabytes(self):
         self.assertEqual(
-            _format_size(5 * 1024 * 1024), '5.0 MB')
+            format_size(5 * 1024 * 1024), '5.0 MB')
 
     def test_gigabytes(self):
         self.assertEqual(
-            _format_size(2 * 1024 * 1024 * 1024),
+            format_size(2 * 1024 * 1024 * 1024),
             '2.0 GB')
 
     def test_none(self):
-        self.assertEqual(_format_size(None), 'N/A')
+        self.assertEqual(format_size(None), 'N/A')
 
 
 # --- Tests for tarfile get_config ---
