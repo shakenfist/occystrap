@@ -608,6 +608,100 @@ class FilterChainingTestCase(unittest.TestCase):
         finally:
             os.unlink(layer_path)
 
+    def test_config_forwarded_when_exclude_matches_nothing(
+            self):
+        """Test config is intact when exclude filter has
+        no matching entries.
+
+        This reproduces the bug where a chained filter
+        that doesn't change the layer hash forwards the
+        config with its BytesIO position at the end,
+        causing TarWriter to write a 0-byte config entry.
+
+        Pipeline: normalize -> exclude -> tarwriter
+        The layer has no __pycache__, so exclude rewrites
+        but doesn't remove anything. If the rewritten
+        layer hash equals the input hash, the exclude
+        filter's _forward_buffered_config takes the
+        'no change' path and must seek(0) on the config
+        data before forwarding.
+        """
+        from occystrap.inputs import (
+            tarfile as input_tarfile)
+
+        # Layer with NO __pycache__ — exclude won't
+        # remove anything
+        layer_path = self._create_layer_with_files({
+            'app/main.py': 'print("hello")',
+            'app/utils.py': 'def util(): pass',
+        })
+
+        try:
+            with open(layer_path, 'rb') as f:
+                original_sha = hashlib.sha256(
+                    f.read()).hexdigest()
+
+            config = {
+                'architecture': 'amd64',
+                'os': 'linux',
+                'rootfs': {
+                    'type': 'layers',
+                    'diff_ids': [
+                        'sha256:%s' % original_sha
+                    ],
+                },
+            }
+            config_bytes = json.dumps(
+                config).encode('utf-8')
+            config_sha = hashlib.sha256(
+                config_bytes).hexdigest()
+            config_name = '%s.json' % config_sha
+
+            with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix='.tar') as output_tf:
+                tar_path = output_tf.name
+
+            try:
+                tw = output_tarfile.TarWriter(
+                    'test/image', 'latest', tar_path)
+                exclude_filter = ExcludeFilter(
+                    tw,
+                    patterns=['*__pycache__*'])
+                normalizer = TimestampNormalizer(
+                    exclude_filter, timestamp=0)
+
+                normalizer.process_image_element(
+                    constants.ImageElement(
+                        constants.CONFIG_FILE,
+                        config_name,
+                        io.BytesIO(config_bytes)))
+                normalizer.process_image_element(
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        original_sha,
+                        open(layer_path, 'rb'),
+                        layer_index=0))
+                normalizer.finalize()
+
+                # Read back and verify config is not
+                # empty (this was the bug)
+                input_source = input_tarfile.Image(
+                    tar_path)
+                config_out = input_source.get_config()
+                self.assertIsNotNone(config_out)
+                self.assertIn('rootfs', config_out)
+                self.assertIn(
+                    'diff_ids',
+                    config_out['rootfs'])
+
+            finally:
+                if os.path.exists(tar_path):
+                    os.unlink(tar_path)
+
+        finally:
+            os.unlink(layer_path)
+
     def test_search_does_not_modify_data(self):
         """Test that SearchFilter does not modify layer data."""
         layer_path = self._create_layer_with_files({

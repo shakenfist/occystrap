@@ -162,6 +162,7 @@ class ImageFilter(ImageOutput, ABC):
             return
 
         if not self._new_diff_ids:
+            self._buffered_config.data.seek(0)
             self._wrapped.process_image_element(
                 self._buffered_config)
             self._buffered_config = None
@@ -184,6 +185,7 @@ class ImageFilter(ImageOutput, ABC):
                     'sha256:%s' % sha)
 
         if updated_ids == original_ids:
+            self._buffered_config.data.seek(0)
             self._wrapped.process_image_element(
                 self._buffered_config)
         else:
