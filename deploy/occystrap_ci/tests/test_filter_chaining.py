@@ -373,6 +373,241 @@ class FilterChainingTestCase(unittest.TestCase):
         finally:
             os.unlink(layer_path)
 
+    def test_combined_filters_update_config_diff_ids(
+            self):
+        """Test that chained content-modifying filters
+        correctly update config diff_ids.
+
+        Pipeline: normalize-timestamps -> exclude -> tw
+        Both filters modify layer content and must update
+        the config diff_ids chain correctly.
+        """
+        layer_path = self._create_layer_with_files({
+            'app/main.py': 'print("hello")',
+            'app/__pycache__/main.cpython-311.pyc':
+                b'\x00\x00',
+            'app/utils.py': 'def util(): pass',
+        })
+
+        try:
+            # Compute original diff_id
+            with open(layer_path, 'rb') as f:
+                original_sha = hashlib.sha256(
+                    f.read()).hexdigest()
+
+            # Build config with original diff_id
+            config = {
+                'architecture': 'amd64',
+                'os': 'linux',
+                'rootfs': {
+                    'type': 'layers',
+                    'diff_ids': [
+                        'sha256:%s' % original_sha
+                    ],
+                },
+            }
+            config_bytes = json.dumps(
+                config).encode('utf-8')
+            config_sha = hashlib.sha256(
+                config_bytes).hexdigest()
+            config_name = '%s.json' % config_sha
+
+            with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix='.tar') as output_tf:
+                try:
+                    # Pipeline: normalize -> exclude -> tw
+                    tw = output_tarfile.TarWriter(
+                        'test/image', 'latest',
+                        output_tf.name)
+                    exclude_filter = ExcludeFilter(
+                        tw,
+                        patterns=['*__pycache__*'])
+                    normalizer = TimestampNormalizer(
+                        exclude_filter, timestamp=0)
+
+                    # Process config then layer
+                    normalizer.process_image_element(
+                        constants.ImageElement(
+                            constants.CONFIG_FILE,
+                            config_name,
+                            io.BytesIO(config_bytes)))
+                    normalizer.process_image_element(
+                        constants.ImageElement(
+                            constants.IMAGE_LAYER,
+                            original_sha,
+                            open(layer_path, 'rb'),
+                            layer_index=0))
+
+                    normalizer.finalize()
+
+                    # Read back the tarball
+                    with tarfile.open(
+                            output_tf.name,
+                            'r') as out_tar:
+                        manifest = json.loads(
+                            out_tar.extractfile(
+                                'manifest.json'
+                            ).read())
+                        config_path = (
+                            manifest[0]['Config'])
+                        updated_config = json.loads(
+                            out_tar.extractfile(
+                                config_path
+                            ).read())
+
+                        # Get the actual layer data
+                        layer_path_in_tar = (
+                            manifest[0]['Layers'][0])
+                        layer_data = (
+                            out_tar.extractfile(
+                                layer_path_in_tar
+                            ).read())
+
+                    # Config should have updated
+                    # diff_ids
+                    updated_ids = (
+                        updated_config['rootfs'][
+                            'diff_ids'])
+                    self.assertEqual(
+                        1, len(updated_ids))
+
+                    # Should NOT be the original
+                    self.assertNotEqual(
+                        'sha256:%s' % original_sha,
+                        updated_ids[0])
+
+                    # Verify the diff_id matches
+                    # actual layer content
+                    actual_sha = hashlib.sha256(
+                        layer_data).hexdigest()
+                    self.assertEqual(
+                        'sha256:%s' % actual_sha,
+                        updated_ids[0],
+                        'Config diff_id does not '
+                        'match actual layer hash')
+
+                    # Verify config filename changed
+                    self.assertNotEqual(
+                        config_name, config_path)
+
+                    # Verify layer has normalized
+                    # timestamps and no __pycache__
+                    with tarfile.open(
+                            fileobj=io.BytesIO(
+                                layer_data),
+                            mode='r') as layer_tar:
+                        names = []
+                        for member in layer_tar:
+                            names.append(member.name)
+                            self.assertEqual(
+                                0, member.mtime)
+                        self.assertIn(
+                            'app/main.py', names)
+                        self.assertNotIn(
+                            'app/__pycache__/'
+                            'main.cpython-311.pyc',
+                            names)
+
+                finally:
+                    if os.path.exists(output_tf.name):
+                        os.unlink(output_tf.name)
+
+        finally:
+            os.unlink(layer_path)
+
+    def test_combined_filters_check_passes(self):
+        """Test that check verifies a tarball produced
+        by chained filters without errors.
+
+        Exercises the full pipeline: create tarball with
+        combined filters, then verify via check logic.
+        """
+        from occystrap import check as check_mod
+        from occystrap.inputs import tarfile as input_tarfile
+
+        layer_path = self._create_layer_with_files({
+            'app/main.py': 'print("hello")',
+            'app/__pycache__/main.cpython-311.pyc':
+                b'\x00\x00',
+            'app/utils.py': 'def util(): pass',
+        })
+
+        try:
+            # Compute original diff_id
+            with open(layer_path, 'rb') as f:
+                original_sha = hashlib.sha256(
+                    f.read()).hexdigest()
+
+            config = {
+                'architecture': 'amd64',
+                'os': 'linux',
+                'rootfs': {
+                    'type': 'layers',
+                    'diff_ids': [
+                        'sha256:%s' % original_sha
+                    ],
+                },
+            }
+            config_bytes = json.dumps(
+                config).encode('utf-8')
+            config_sha = hashlib.sha256(
+                config_bytes).hexdigest()
+            config_name = '%s.json' % config_sha
+
+            with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix='.tar') as output_tf:
+                tar_path = output_tf.name
+
+            try:
+                # Pipeline: normalize -> exclude -> tw
+                tw = output_tarfile.TarWriter(
+                    'test/image', 'latest', tar_path)
+                exclude_filter = ExcludeFilter(
+                    tw,
+                    patterns=['*__pycache__*'])
+                normalizer = TimestampNormalizer(
+                    exclude_filter, timestamp=0)
+
+                normalizer.process_image_element(
+                    constants.ImageElement(
+                        constants.CONFIG_FILE,
+                        config_name,
+                        io.BytesIO(config_bytes)))
+                normalizer.process_image_element(
+                    constants.ImageElement(
+                        constants.IMAGE_LAYER,
+                        original_sha,
+                        open(layer_path, 'rb'),
+                        layer_index=0))
+                normalizer.finalize()
+
+                # Now run check on the tarball
+                input_source = input_tarfile.Image(
+                    tar_path)
+                config_out = input_source.get_config()
+                results = check_mod.CheckResults()
+                check_mod.check_metadata(
+                    None, config_out, results)
+                check_mod.check_layers(
+                    input_source, None,
+                    config_out, results)
+
+                errors = [
+                    r for r in results.results
+                    if r['severity'] == 'error']
+                self.assertEqual(
+                    0, len(errors),
+                    'Check found errors: %s' % errors)
+
+            finally:
+                if os.path.exists(tar_path):
+                    os.unlink(tar_path)
+
+        finally:
+            os.unlink(layer_path)
+
     def test_search_does_not_modify_data(self):
         """Test that SearchFilter does not modify layer data."""
         layer_path = self._create_layer_with_files({

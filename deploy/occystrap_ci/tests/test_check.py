@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import tempfile
+import traceback
 import testtools
 
 from click.testing import CliRunner
@@ -335,9 +336,30 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                 'tar://%s' % tar_path,
             ])
 
-            self.assertEqual(
-                0, result.exit_code,
-                'check failed: %s' % result.output)
+            if result.exit_code != 0:
+                exc_info = ''
+                if result.exception:
+                    exc_info = (
+                        '\nException: %s\n%s'
+                        % (result.exception,
+                           ''.join(
+                               traceback
+                               .format_exception(
+                                   type(
+                                       result
+                                       .exception
+                                   ),
+                                   result.exception,
+                                   result.exception
+                                   .__traceback__
+                               ))))
+                self.fail(
+                    'check failed '
+                    '(exit_code=%d):\n'
+                    'output: %s%s'
+                    % (result.exit_code,
+                       result.output,
+                       exc_info))
 
             output = json.loads(result.output)
             self.assertEqual(
