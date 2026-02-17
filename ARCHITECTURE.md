@@ -17,6 +17,7 @@ occystrap/
     uri.py               # URI parsing for pipeline specification
     pipeline.py          # Pipeline builder from URIs
     layer_cache.py       # Cross-invocation layer cache for registry push
+    progress.py          # tqdm progress bars with non-TTY fallback
     docker_extract.py    # Layer extraction utilities
     inputs/              # Input source modules
         __init__.py
@@ -170,19 +171,31 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
   layer)
 - `finalize()` - Writes manifest and completes output
 
-The base class also provides summary statistics tracking. All output writers log
-a summary line at the end of processing. The registry output provides granular
-timing with compression and upload breakdowns:
+The base class also provides summary statistics tracking via
+`_log_summary()`, which uses `LOG.with_fields()` for structured
+output. All output writers log a summary at the end of processing:
 
 ```
-Processed 40 layers in 34.7s (compress: 15.8s, upload: 4.5s,
-  upload_skipped: 22), 980.0 MB in, 326.3 MB out (33%)
+Processing complete
+    bytes: 12345678
+    layers: 5
+    elapsed_s: 3.2
 ```
 
-Other outputs log a simpler summary:
+The registry output provides granular timing with compression and
+upload breakdowns via its own `with_fields()` summary in `finalize()`:
 
 ```
-Processed 12345678 bytes in 5 layers in 3.2 seconds
+Push complete
+    layers: 40
+    elapsed_s: 34.7
+    compress_s: 15.8
+    upload_s: 4.5
+    upload_skipped: 22
+    cache_hits: 0
+    input_mb: 980.0
+    output_mb: 326.3
+    ratio_pct: 33
 ```
 
 Output writer implementations:
@@ -600,14 +613,17 @@ Input URI  -->  Input Source  -->  | Filter Chain    |  -->  Output Writer  --> 
                        (skip/include)
 ```
 
-The `_fetch()` function in `main.py` connects the pipeline:
+The `_fetch()` function in `main.py` connects the pipeline. It wraps
+the loop in `redirect_logging()` (from `progress.py`) so that tqdm
+progress bars and log output do not interfere with each other:
 
 ```python
 def _fetch(img, output):
     ordered = output.requires_ordered_layers
-    for element in img.fetch(
-            fetch_callback=output.fetch_callback,
-            ordered=ordered):
-        output.process_image_element(element)
-    output.finalize()
+    with redirect_logging():
+        for element in img.fetch(
+                fetch_callback=output.fetch_callback,
+                ordered=ordered):
+            output.process_image_element(element)
+        output.finalize()
 ```

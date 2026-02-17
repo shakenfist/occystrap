@@ -210,13 +210,49 @@ because the following statements will be true:
   bars in interactive sessions, with a log-based fallback for
   non-interactive contexts.
 
+### Implementation summary
+
+This plan has been implemented across six commits:
+
+1. **Logger initialization consistency** (`e20ae2d`): Migrated all
+   modules to `shakenfist_utilities.logs.setup_console(__name__)`,
+   removed manual `setLevel()` calls, monkeypatched
+   `ConsoleLoggingHandler` to write to stderr.
+2. **Log level audit and with_fields() adoption** (`bf0edc4`):
+   Downgraded ~60 `LOG.info()` calls to `LOG.debug()` across 13
+   files. Added `with_fields()` structured summaries to the four
+   main pipeline endpoints.
+3. **--verbose cleanup and --debug flag** (`87dd747`): Scoped
+   `--verbose` to `occystrap.*` loggers only. Added `--debug` for
+   the full firehose including library output.
+4. **tqdm progress wrapper** (`0656684`): Created
+   `occystrap/progress.py` with `LayerProgress` (tqdm in TTY,
+   periodic log in non-TTY) and `redirect_logging()`. Integrated
+   into registry download and upload paths.
+5. **Pre-commit enforcement** (`6f77532`): Added
+   `tools/check-log-levels.sh` pre-commit hook enforcing max 10
+   `LOG.info()` calls per file.
+6. **Documentation updates**: Updated README.md, AGENTS.md, and
+   ARCHITECTURE.md to reflect all changes.
+
 ### Future work
 
 We should list obvious extensions, known issues, unrelated bugs
 we encountered, and anything else we should one day do but have
 chosen to defer to here so that we don't forget them.
 
-*None tracked at this time.*
+* **Integration test log capture**: Assert that a standard pull
+  at INFO level produces fewer than N lines of output (deferred
+  as it requires functional test infrastructure).
+* **`with_fields()` enforcement**: A grep-based pre-commit check
+  that warns if new log calls lack structured context (deferred
+  as the benefit is marginal given the log-level linting).
+* **Unit tests for progress.py**: The `LayerProgress` class and
+  `redirect_logging()` helper have no unit test coverage. Tests
+  should verify TTY vs non-TTY behavior, update intervals, and
+  context manager lifecycle.
+* **Unit tests for --verbose/--debug flags**: The CLI flag logic
+  in `main.py` that scopes logger levels has no test coverage.
 
 ### Bugs fixed during this work
 

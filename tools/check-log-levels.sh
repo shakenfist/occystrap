@@ -16,13 +16,13 @@ set -euo pipefail
 MAX_INFO=10
 EXIT_CODE=0
 
-for f in $(find occystrap -name '*.py' -not -path '*/tests/*' -not -path '*/.tox/*'); do
+while IFS= read -r -d '' f; do
     count=$(grep -c 'LOG\.info(' "$f" 2>/dev/null || true)
     if [ "$count" -gt "$MAX_INFO" ]; then
         echo "ERROR: $f has $count LOG.info() calls (max $MAX_INFO)"
         EXIT_CODE=1
     fi
-done
+done < <(find occystrap -name '*.py' -not -path '*/tests/*' -not -path '*/.tox/*' -print0)
 
 if [ "$EXIT_CODE" -eq 0 ]; then
     echo "Log level check passed (all files <= $MAX_INFO LOG.info calls)"
