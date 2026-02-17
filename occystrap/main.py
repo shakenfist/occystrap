@@ -9,6 +9,7 @@ import sys
 
 from occystrap import check
 from occystrap import compression
+from occystrap.progress import redirect_logging
 from occystrap.inputs.base import ImageInputError
 from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
@@ -97,11 +98,12 @@ def cli(ctx, verbose=None, debug=None, os=None,
 
 def _fetch(img, output):
     ordered = output.requires_ordered_layers
-    for element in img.fetch(
-            fetch_callback=output.fetch_callback,
-            ordered=ordered):
-        output.process_image_element(element)
-    output.finalize()
+    with redirect_logging():
+        for element in img.fetch(
+                fetch_callback=output.fetch_callback,
+                ordered=ordered):
+            output.process_image_element(element)
+        output.finalize()
 
 
 # =============================================================================

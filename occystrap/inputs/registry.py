@@ -24,6 +24,7 @@ from occystrap import constants
 from occystrap import util
 from occystrap.inputs.base import (
     ImageInput, ImageInputError, always_fetch)
+from occystrap.progress import LayerProgress
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -293,9 +294,16 @@ class Image(ImageInput):
 
                 tf = tempfile.NamedTemporaryFile(delete=False, dir=self.temp_dir)
                 LOG.debug('Temporary file for layer is %s' % tf.name)
-                for chunk in r.iter_content(8192):
-                    tf.write(d.decompress(chunk))
-                    h.update(chunk)
+                with LayerProgress(
+                        total=layer['size'],
+                        desc='Layer %s'
+                        % layer_filename[:12],
+                        unit='B',
+                        unit_scale=True) as progress:
+                    for chunk in r.iter_content(8192):
+                        tf.write(d.decompress(chunk))
+                        h.update(chunk)
+                        progress.update(len(chunk))
                 # Flush any remaining data
                 remaining = d.flush()
                 if remaining:

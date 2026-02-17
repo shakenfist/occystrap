@@ -28,6 +28,7 @@ import requests
 from occystrap import compression
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
+from occystrap.progress import LayerProgress
 from occystrap import util
 from shakenfist_utilities import logs
 
@@ -424,37 +425,26 @@ class RegistryWriter(ImageOutput):
         # Each entry is (layer_index, future)
         indexed_layers = []
         unindexed_layers = []
-        completed = 0
-        last_report_time = time.time()
-        progress_interval = 10  # seconds
 
-        for i, (layer_index, future) in enumerate(
-                self._layer_futures):
-            try:
-                layer_metadata = future.result()
-                if layer_index is not None:
-                    indexed_layers.append(
-                        (layer_index, layer_metadata))
-                else:
-                    unindexed_layers.append(
-                        layer_metadata)
-                completed += 1
+        with LayerProgress(
+                total=total_layers,
+                desc='Uploading') as progress:
+            for i, (layer_index, future) in enumerate(
+                    self._layer_futures):
+                try:
+                    layer_metadata = future.result()
+                    if layer_index is not None:
+                        indexed_layers.append(
+                            (layer_index,
+                             layer_metadata))
+                    else:
+                        unindexed_layers.append(
+                            layer_metadata)
+                    progress.update(1)
 
-                # Report progress every 10 seconds
-                now = time.time()
-                if (now - last_report_time
-                        >= progress_interval):
-                    remaining = (
-                        total_layers - completed)
-                    LOG.info(
-                        'Progress: %d/%d layers'
-                        ' complete, %d remaining'
-                        % (completed, total_layers,
-                           remaining))
-                    last_report_time = now
-
-            except Exception as e:
-                errors.append('Layer %d: %s' % (i, e))
+                except Exception as e:
+                    errors.append(
+                        'Layer %d: %s' % (i, e))
 
         self._executor.shutdown(wait=True)
 
