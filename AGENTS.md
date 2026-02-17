@@ -117,6 +117,15 @@ and `tox -epy3` (unit tests). Install with `pre-commit install`.
   info, separate metadata checks (fast mode) from layer checks (full mode),
   and exit non-zero on errors for CI integration
 
+### CliRunner and JSON Output
+
+Click 8.2+ changed `result.output` to be a mix of stdout and
+stderr. Tests that parse structured output (JSON) from CLI
+commands must use `result.stdout` (stdout only) instead of
+`result.output` (mixed). Use `result.output` only for
+human-readable assertions where log messages mixed in are
+acceptable.
+
 ## Logging Conventions
 
 All modules use `shakenfist_utilities.logs.setup_console(__name__)`

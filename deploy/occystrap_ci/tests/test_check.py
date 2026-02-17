@@ -41,7 +41,7 @@ class CheckRegistryTestCase(testtools.TestCase):
             0, result.exit_code,
             'check --fast failed: %s' % result.output)
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         self.assertEqual('fast', output['mode'])
         self.assertEqual(0, output['errors'])
 
@@ -69,7 +69,7 @@ class CheckRegistryTestCase(testtools.TestCase):
             0, result.exit_code,
             'check failed: %s' % result.output)
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         self.assertEqual('full', output['mode'])
         self.assertEqual(0, output['errors'])
 
@@ -96,7 +96,7 @@ class CheckRegistryTestCase(testtools.TestCase):
             0, result.exit_code,
             'check failed: %s' % result.output)
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         self.assertEqual(0, output['errors'])
 
     def test_check_text_output(self):
@@ -156,7 +156,7 @@ class CheckTarfileTestCase(testtools.TestCase):
                 0, result.exit_code,
                 'check failed: %s' % result.output)
 
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             self.assertEqual(0, output['errors'])
 
         finally:
@@ -192,7 +192,7 @@ class CheckTarfileTestCase(testtools.TestCase):
                 'check --fast failed: %s'
                 % result.output)
 
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             self.assertEqual(0, output['errors'])
 
         finally:
@@ -243,7 +243,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                 0, result.exit_code,
                 'check failed: %s' % result.output)
 
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             self.assertEqual(
                 0, output['errors'],
                 'Unexpected errors: %s'
@@ -256,7 +256,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                 'tar://%s' % tar_path,
             ])
             self.assertEqual(0, result.exit_code)
-            fast_output = json.loads(result.output)
+            fast_output = json.loads(result.stdout)
             self.assertEqual(0, fast_output['errors'])
 
         finally:
@@ -296,7 +296,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                 0, result.exit_code,
                 'check failed: %s' % result.output)
 
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             self.assertEqual(
                 0, output['errors'],
                 'Unexpected errors: %s'
@@ -361,7 +361,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
                        result.output,
                        exc_info))
 
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             self.assertEqual(
                 0, output['errors'],
                 'Unexpected errors: %s'
@@ -401,7 +401,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
             0, result.exit_code,
             'check failed: %s' % result.output)
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         self.assertEqual(0, output['errors'])
 
     def test_check_verifies_diff_ids_match(self):
@@ -430,7 +430,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
             ])
             self.assertEqual(0, result.exit_code)
 
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
 
             # Count diff-id info results -- should be
             # one per layer

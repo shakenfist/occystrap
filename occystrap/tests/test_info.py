@@ -478,7 +478,7 @@ class TestInfoCommand(unittest.TestCase):
                  ])
 
         self.assertEqual(result.exit_code, 0)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         self.assertEqual(data['image'], 'test/img')
         self.assertEqual(data['tag'], 'latest')
         self.assertEqual(data['architecture'], 'amd64')
@@ -574,7 +574,7 @@ class TestInfoCommand(unittest.TestCase):
                  'tar://%s' % tf_path])
 
             self.assertEqual(result.exit_code, 0)
-            data = json.loads(result.output)
+            data = json.loads(result.stdout)
             self.assertEqual(
                 data['image'], 'testimg')
             self.assertEqual(data['tag'], 'v1')
