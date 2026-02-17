@@ -13,13 +13,13 @@ cache entries.
 
 import datetime
 import json
-import logging
 import os
 import tempfile
 
+from shakenfist_utilities import logs
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+
+LOG = logs.setup_console(__name__)
 
 
 class LayerCache:

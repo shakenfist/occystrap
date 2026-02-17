@@ -1,5 +1,4 @@
 import hashlib
-import logging
 import os
 import tarfile
 import tempfile
@@ -7,10 +6,10 @@ import tempfile
 from occystrap import constants
 from occystrap.filters.base import ImageFilter
 from occystrap.tarformat import select_tar_format_for_layer
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class TimestampNormalizer(ImageFilter):

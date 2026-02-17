@@ -11,10 +11,10 @@
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
-import logging
 import os
 import re
 from requests.exceptions import ChunkedEncodingError, ConnectionError
+from shakenfist_utilities import logs
 import tempfile
 import threading
 import time
@@ -29,8 +29,7 @@ from occystrap.inputs.base import (
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2  # Exponential backoff: 2^attempt seconds
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
 

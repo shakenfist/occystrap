@@ -11,7 +11,6 @@ container images. Checks are organized by category:
 """
 
 import hashlib
-import logging
 import os
 import tarfile as tarfile_mod
 
@@ -19,10 +18,10 @@ from occystrap import compression
 from occystrap import constants
 from occystrap.inputs.base import always_fetch
 from occystrap.util import format_size
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 # Severity levels

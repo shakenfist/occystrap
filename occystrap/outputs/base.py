@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-import logging
 import time
 
+from shakenfist_utilities import logs
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+
+LOG = logs.setup_console(__name__)
 
 
 class ImageOutput(ABC):

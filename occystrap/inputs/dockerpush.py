@@ -25,7 +25,6 @@ import hashlib
 import http.server
 import io
 import json
-import logging
 import os
 import tempfile
 import threading
@@ -34,14 +33,14 @@ from urllib.parse import (
     urlparse, parse_qs, quote, urlencode)
 
 import requests_unixsocket
+from shakenfist_utilities import logs
 
 from occystrap import compression
 from occystrap import constants
 from occystrap.inputs.base import ImageInput, always_fetch
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 DEFAULT_SOCKET_PATH = '/var/run/docker.sock'
 

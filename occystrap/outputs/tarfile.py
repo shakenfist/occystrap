@@ -1,15 +1,14 @@
 import io
 import json
-import logging
 import os
 import tarfile
 
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 # This code creates v1.2 format image tarballs.

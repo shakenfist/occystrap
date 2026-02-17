@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import logging
 import tarfile
 import tempfile
 import os
@@ -832,10 +833,16 @@ class TestCheckCommand(unittest.TestCase):
                     ti, io.BytesIO(layer_tar))
 
             runner = CliRunner()
-            result = runner.invoke(
-                cli,
-                ['-O', 'json', 'check',
-                 'tar://%s' % tf_path])
+            # Suppress log output to avoid
+            # contaminating captured stdout
+            logging.disable(logging.CRITICAL)
+            try:
+                result = runner.invoke(
+                    cli,
+                    ['-O', 'json', 'check',
+                     'tar://%s' % tf_path])
+            finally:
+                logging.disable(logging.NOTSET)
 
             self.assertEqual(result.exit_code, 0)
             data = json.loads(result.output)

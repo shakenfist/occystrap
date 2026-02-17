@@ -25,14 +25,6 @@ from occystrap.util import format_size
 
 LOG = logs.setup_console(__name__)
 
-# setup_console adds a handler to the occystrap.main logger but
-# not to the root logger. Other module loggers (inputs, outputs,
-# filters) propagate to root, so add a root handler for their
-# INFO messages to be visible. Stop the main logger propagating
-# to avoid duplicate output.
-logging.basicConfig(level=logging.INFO)
-logging.getLogger(__name__).propagate = False
-
 
 @click.group()
 @click.option('--verbose', is_flag=True)
@@ -64,10 +56,13 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
         parallel=None, temp_dir=None, layer_cache=None,
         output_format=None):
     if verbose:
-        logging.root.setLevel(logging.DEBUG)
-        for handler in logging.root.handlers:
-            handler.setLevel(logging.DEBUG)
-        LOG.setLevel(logging.DEBUG)
+        for name, obj in \
+                logging.Logger.manager.loggerDict.items():
+            if name.startswith('occystrap') \
+                    and isinstance(obj, logging.Logger):
+                obj.setLevel(logging.DEBUG)
+                for handler in obj.handlers:
+                    handler.setLevel(logging.DEBUG)
 
     if not ctx.obj:
         ctx.obj = {}

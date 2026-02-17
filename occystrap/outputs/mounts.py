@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import stat
 import tarfile
@@ -8,10 +7,10 @@ from occystrap import common
 from occystrap import constants
 from occystrap import util
 from occystrap.outputs.base import ImageOutput
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class MountWriter(ImageOutput):

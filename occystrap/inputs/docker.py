@@ -61,13 +61,13 @@
 
 import io
 import json
-import logging
 import os
 import shutil
 import tarfile
 import tempfile
 
 import requests_unixsocket
+from shakenfist_utilities import logs
 
 from occystrap import constants
 from occystrap.inputs.base import ImageInput, always_fetch
@@ -75,8 +75,7 @@ from occystrap.inputs.base import ImageInput, always_fetch
 COPY_BUFSIZE = 1024 * 1024  # 1MB chunks for streaming copies
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 DEFAULT_SOCKET_PATH = '/var/run/docker.sock'
 

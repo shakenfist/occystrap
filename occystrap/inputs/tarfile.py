@@ -1,16 +1,15 @@
 import io
 import json
-import logging
 import os
 import tarfile
 
 from occystrap import compression
 from occystrap import constants
 from occystrap.inputs.base import ImageInput, always_fetch
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class Image(ImageInput):

@@ -6,12 +6,13 @@
 #
 # See docs/tar-format-selection.md for detailed explanation.
 
-import logging
 import os
 import tarfile
 
+from shakenfist_utilities import logs
 
-LOG = logging.getLogger(__name__)
+
+LOG = logs.setup_console(__name__)
 
 # USTAR format limits (POSIX.1-1988)
 #

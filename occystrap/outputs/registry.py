@@ -19,7 +19,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import io
 import json
-import logging
 import re
 import threading
 import time
@@ -30,10 +29,10 @@ from occystrap import compression
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
 from occystrap import util
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class RegistryWriter(ImageOutput):
