@@ -243,8 +243,8 @@ class Image(ImageInput):
         shutil.copyfileobj(fileobj, tf, length=COPY_BUFSIZE)
         tf.close()
         size = os.path.getsize(tf.name)
-        LOG.info('Buffered %s to %s (%d bytes)'
-                 % (name, tf.name, size))
+        LOG.debug('Buffered %s to %s (%d bytes)'
+                  % (name, tf.name, size))
         return tf.name
 
     def _open_buffered(self, buffered, filename):
@@ -293,12 +293,12 @@ class Image(ImageInput):
         config_hex, diff_ids = \
             self._extract_inspect_ids(inspect_data)
         if config_hex and diff_ids:
-            LOG.info(
+            LOG.debug(
                 'Pre-computed from inspect:'
                 ' config=%s..., %d layers'
                 % (config_hex[:12], len(diff_ids)))
         elif config_hex:
-            LOG.info(
+            LOG.debug(
                 'Config hash from inspect: %s...'
                 % config_hex[:12])
 
@@ -308,7 +308,7 @@ class Image(ImageInput):
             ' Docker daemon...')
         r = self._request(
             'GET', '/images/%s/get' % ref, stream=True)
-        LOG.info('Docker API responded, stream ready')
+        LOG.debug('Docker API responded, stream ready')
 
         # State tracking
         manifest = None
@@ -370,7 +370,7 @@ class Image(ImageInput):
                     if v > 1
                 }
                 if dupes:
-                    LOG.info(
+                    LOG.debug(
                         '%d layer path(s) referenced'
                         ' multiple times in manifest'
                         % len(dupes))
@@ -404,7 +404,7 @@ class Image(ImageInput):
                     'Layers': expected_layers
                 }]
                 _compute_refcounts()
-                LOG.info(
+                LOG.debug(
                     'OCI format detected, pre-computed'
                     ' manifest: config=%s, %d layers'
                     % (config_filename,
@@ -414,7 +414,7 @@ class Image(ImageInput):
                 # the config filename but not layer paths
                 config_filename = \
                     '%s.json' % config_hex
-                LOG.info(
+                LOG.debug(
                     'Legacy format detected,'
                     ' config=%s' % config_filename)
 
@@ -465,7 +465,7 @@ class Image(ImageInput):
             size = os.path.getsize(path)
             source = ('buffer' if from_buffer
                       else 'temp')
-            LOG.info(
+            LOG.debug(
                 '%s Yielding layer %s from %s'
                 ' (%d bytes)'
                 % (_layer_progress(), layer_digest,
@@ -502,7 +502,7 @@ class Image(ImageInput):
                 if not fetch_callback(
                         layer_digest):
                     _consume_ref(layer_path)
-                    LOG.info(
+                    LOG.debug(
                         '%s Skipping layer %s'
                         ' (fetch callback)'
                         % (_layer_progress(),
@@ -527,14 +527,14 @@ class Image(ImageInput):
                 ' a while for large images)...')
             tar = tarfile.open(
                 fileobj=r.raw, mode='r|')
-            LOG.info('Tarball stream opened,'
-                     ' reading entries...')
+            LOG.debug('Tarball stream opened,'
+                      ' reading entries...')
 
             for member in tar:
                 f = tar.extractfile(member)
                 if f is None:
                     _detect_format(member.name)
-                    LOG.info(
+                    LOG.debug(
                         'Skipping directory entry: %s'
                         % member.name)
                     continue
@@ -564,7 +564,7 @@ class Image(ImageInput):
                             manifest = real
                             _compute_refcounts()
                         else:
-                            LOG.info(
+                            LOG.debug(
                                 'Pre-computed manifest'
                                 ' verified against'
                                 ' actual')
@@ -583,20 +583,20 @@ class Image(ImageInput):
                     if config_filename \
                             and real_config \
                             != config_filename:
-                        LOG.info(
+                        LOG.debug(
                             'Config filename corrected'
                             ': %s -> %s'
                             % (config_filename,
                                real_config))
                     config_filename = real_config
 
-                    LOG.info(
+                    LOG.debug(
                         'Found manifest: config=%s,'
                         ' %d layers'
                         % (config_filename,
                            len(expected_layers)))
                     if buffered:
-                        LOG.info(
+                        LOG.debug(
                             '%d file(s) were buffered'
                             ' before manifest'
                             % len(buffered))
@@ -606,7 +606,7 @@ class Image(ImageInput):
                     if not config_yielded \
                             and config_filename \
                             in buffered:
-                        LOG.info(
+                        LOG.debug(
                             'Config was buffered'
                             ' before manifest,'
                             ' yielding from buffer')
@@ -636,7 +636,7 @@ class Image(ImageInput):
                             == config_filename \
                             and not config_yielded:
                         config_data = f.read()
-                        LOG.info(
+                        LOG.debug(
                             'Config identified early'
                             ' from inspect: %s'
                             ' (%d bytes)'
@@ -651,7 +651,7 @@ class Image(ImageInput):
 
                     # Buffer everything else until
                     # manifest arrives
-                    LOG.info(
+                    LOG.debug(
                         'Manifest not yet seen,'
                         ' buffering %s'
                         % member.name)
@@ -664,7 +664,7 @@ class Image(ImageInput):
                 if member.name == config_filename \
                         and not config_yielded:
                     config_data = f.read()
-                    LOG.info(
+                    LOG.debug(
                         'Found config file %s'
                         ' (%d bytes)'
                         % (config_filename,
@@ -702,7 +702,7 @@ class Image(ImageInput):
                     elif not fetch_callback(
                             layer_digest):
                         _consume_ref(layer_path)
-                        LOG.info(
+                        LOG.debug(
                             '%s Skipping layer %s'
                             ' (fetch callback)'
                             % (_layer_progress(),
@@ -731,7 +731,7 @@ class Image(ImageInput):
                         fh = open(temp_path, 'rb')
                         size = os.path.getsize(
                             temp_path)
-                        LOG.info(
+                        LOG.debug(
                             '%s Streaming layer %s'
                             ' via temp (%d bytes)'
                             % (_layer_progress(),
@@ -767,7 +767,7 @@ class Image(ImageInput):
 
                 # --- Out-of-order or unknown file ---
                 if member.isfile():
-                    LOG.info(
+                    LOG.debug(
                         'Out-of-order file %s,'
                         ' buffering to temp'
                         % member.name)
@@ -776,13 +776,13 @@ class Image(ImageInput):
                             f, member.name)
 
             tar.close()
-            LOG.info('Tarball stream complete')
+            LOG.debug('Tarball stream complete')
 
             # Yield any remaining buffered items
             if not config_yielded \
                     and config_filename \
                     and config_filename in buffered:
-                LOG.info(
+                LOG.debug(
                     'Yielding config from buffer'
                     ' (arrived after layers)')
                 fh, path = self._open_buffered(
@@ -802,7 +802,7 @@ class Image(ImageInput):
                 remaining = (
                     len(expected_layers)
                     - next_layer_idx)
-                LOG.info(
+                LOG.debug(
                     '%d layer(s) remaining in'
                     ' buffer' % remaining)
 
@@ -829,7 +829,7 @@ class Image(ImageInput):
                 if not fetch_callback(
                         layer_digest):
                     _consume_ref(layer_path)
-                    LOG.info(
+                    LOG.debug(
                         '%s Skipping layer %s'
                         ' (fetch callback)'
                         % (_layer_progress(),
@@ -855,7 +855,8 @@ class Image(ImageInput):
                     os.unlink(path)
 
         total = layers_streamed + layers_buffered
-        LOG.info(
-            'Done: %d layer(s) streamed directly,'
-            ' %d from buffer (%d total)'
-            % (layers_streamed, layers_buffered, total))
+        LOG.with_fields({
+            'streamed': layers_streamed,
+            'buffered': layers_buffered,
+            'total': total,
+        }).info('Fetch complete')

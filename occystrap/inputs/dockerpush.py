@@ -388,7 +388,7 @@ class EmbeddedRegistryHandler(
             del self.state.uploads[upload_uuid]
 
         blob_size = os.path.getsize(upload_path)
-        LOG.info(
+        LOG.debug(
             'Received blob sha256:%s... (%d bytes)'
             % (expected_hex[:12], blob_size))
 
@@ -414,7 +414,7 @@ class EmbeddedRegistryHandler(
         with self.state.lock:
             self.state.manifest_data = data
 
-        LOG.info(
+        LOG.debug(
             'Received manifest (%d bytes, sha256:%s...)'
             % (len(data), manifest_digest[:12]))
 
@@ -517,7 +517,7 @@ class Image(ImageInput):
             raise Exception(
                 'Failed to tag image: %d %s'
                 % (r.status_code, r.text))
-        LOG.info('Tagged %s as %s:%s' % (ref, repo, tag))
+        LOG.debug('Tagged %s as %s:%s' % (ref, repo, tag))
 
     def _push_image(self, repo, tag):
         """Push an image to the embedded registry.
@@ -541,7 +541,7 @@ class Image(ImageInput):
                 'Push request failed: %d %s'
                 % (r.status_code, r.text))
 
-        LOG.info('Push started for %s' % push_ref)
+        LOG.debug('Push started for %s' % push_ref)
 
         # Consume streaming response and check for
         # errors. Docker sends one JSON object per line.
@@ -562,7 +562,7 @@ class Image(ImageInput):
             if status:
                 LOG.debug('Push: %s' % status)
 
-        LOG.info('Push completed for %s' % push_ref)
+        LOG.debug('Push completed for %s' % push_ref)
 
     def _untag_image(self, repo, tag):
         """Remove a temporary tag from the Docker daemon.
@@ -575,7 +575,7 @@ class Image(ImageInput):
             ref, safe='')
         r = self._request('DELETE', path)
         if r.status_code in (200, 404):
-            LOG.info('Untagged %s' % ref)
+            LOG.debug('Untagged %s' % ref)
         else:
             LOG.warning(
                 'Failed to untag %s: %d %s'
@@ -596,7 +596,7 @@ class Image(ImageInput):
             daemon=True)
         thread.start()
         port = server.server_address[1]
-        LOG.info(
+        LOG.debug(
             'Embedded registry listening on'
             ' 127.0.0.1:%d' % port)
         return server
@@ -604,7 +604,7 @@ class Image(ImageInput):
     def _stop_server(self, server):
         """Stop the embedded registry HTTP server."""
         server.shutdown()
-        LOG.info('Embedded registry stopped')
+        LOG.debug('Embedded registry stopped')
 
     def _digest_mapping_path(self):
         """Return the path for the digest mapping file.
@@ -631,7 +631,7 @@ class Image(ImageInput):
             with open(path, 'r') as f:
                 data = json.load(f)
             if data.get('version') == 1:
-                LOG.info(
+                LOG.debug(
                     'Loaded digest mapping with'
                     ' %d entries from %s'
                     % (len(data.get('mappings', {})),
@@ -671,7 +671,7 @@ class Image(ImageInput):
                 with os.fdopen(fd, 'w') as f:
                     json.dump(data, f, indent=2)
                 os.replace(tmp_path, path)
-                LOG.info(
+                LOG.debug(
                     'Saved digest mapping with'
                     ' %d entries to %s'
                     % (len(mappings), path))
@@ -832,7 +832,7 @@ class Image(ImageInput):
 
                 config_filename = (
                     '%s.json' % config_hex)
-                LOG.info(
+                LOG.debug(
                     'Config: %s (%d bytes)'
                     % (config_filename,
                        len(config_data)))
@@ -876,7 +876,7 @@ class Image(ImageInput):
                            if not ordered else None)
 
                     if not fetch_callback(diff_id):
-                        LOG.info(
+                        LOG.debug(
                             '[%d/%d] Skipping layer'
                             ' %s... (fetch callback)'
                             % (layer_idx + 1,
@@ -912,7 +912,7 @@ class Image(ImageInput):
 
                     if blob_missing:
                         if was_skipped:
-                            LOG.info(
+                            LOG.debug(
                                 '[%d/%d] Skipping'
                                 ' layer %s...'
                                 ' (cached, HEAD skip)'
@@ -994,7 +994,7 @@ class Image(ImageInput):
                     with state.lock:
                         del state.blobs[compressed_hex]
 
-                    LOG.info(
+                    LOG.debug(
                         '[%d/%d] Layer %s...'
                         ' (%d bytes compressed,'
                         ' %d decompressed)'
@@ -1022,11 +1022,10 @@ class Image(ImageInput):
                 self._save_digest_mapping(
                     digest_mapping)
 
-                LOG.info(
-                    'Done: %d layer(s) fetched,'
-                    ' %d skipped'
-                    % (layers_fetched,
-                       layers_skipped))
+                LOG.with_fields({
+                    'fetched': layers_fetched,
+                    'skipped': layers_skipped,
+                }).info('Fetch complete')
 
             finally:
                 # Untag the localhost image

@@ -152,14 +152,14 @@ class Image(ImageInput):
             for m in manifests:
                 plat = m['platform']
                 if plat.get('variant'):
-                    LOG.info(
+                    LOG.debug(
                         'Found manifest for %s on'
                         ' %s %s'
                         % (plat['os'],
                            plat['architecture'],
                            plat['variant']))
                 else:
-                    LOG.info(
+                    LOG.debug(
                         'Found manifest for %s on'
                         ' %s'
                         % (plat['os'],
@@ -173,7 +173,7 @@ class Image(ImageInput):
                         and m['platform'].get(
                             'variant', '')
                         == self.variant):
-                    LOG.info(
+                    LOG.debug(
                         'Fetching matching manifest')
                     r2 = self.request_url(
                         'GET',
@@ -260,8 +260,8 @@ class Image(ImageInput):
         """
         layer_filename = layer['digest'].split(':')[1]
 
-        LOG.info('Fetching layer %s (%d bytes)'
-                 % (layer['digest'], layer['size']))
+        LOG.debug('Fetching layer %s (%d bytes)'
+                  % (layer['digest'], layer['size']))
 
         # Detect compression from media type (fallback to gzip for compat)
         layer_media_type = layer.get('mediaType')
@@ -269,7 +269,7 @@ class Image(ImageInput):
             layer_media_type)
         if compression_type == constants.COMPRESSION_UNKNOWN:
             compression_type = constants.COMPRESSION_GZIP
-        LOG.info('Layer compression: %s' % compression_type)
+        LOG.debug('Layer compression: %s' % compression_type)
 
         # Retry logic for streaming downloads which can fail mid-transfer
         last_exception = None
@@ -292,7 +292,7 @@ class Image(ImageInput):
                 d = compression.StreamingDecompressor(compression_type)
 
                 tf = tempfile.NamedTemporaryFile(delete=False, dir=self.temp_dir)
-                LOG.info('Temporary file for layer is %s' % tf.name)
+                LOG.debug('Temporary file for layer is %s' % tf.name)
                 for chunk in r.iter_content(8192):
                     tf.write(d.decompress(chunk))
                     h.update(chunk)
@@ -364,7 +364,7 @@ class Image(ImageInput):
             layer_filename = \
                 layer['digest'].split(':')[1]
             if not fetch_callback(layer_filename):
-                LOG.info(
+                LOG.debug(
                     'Fetch callback says skip'
                     ' layer %s' % layer['digest'])
                 layer_futures.append(

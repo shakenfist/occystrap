@@ -115,7 +115,7 @@ class TimestampNormalizer(ImageFilter):
         elif (element.element_type
                 == constants.IMAGE_LAYER
                 and element.data is not None):
-            LOG.info(
+            LOG.debug(
                 'Normalizing timestamps in layer %s'
                 % element.name)
             normalized_data, new_name = \

@@ -90,7 +90,7 @@ class SearchFilter(ImageFilter):
 
     def _search_layer(self, name, data):
         """Search a layer for matching files."""
-        LOG.info('Searching layer %s' % name)
+        LOG.debug('Searching layer %s' % name)
 
         data.seek(0)
         try:

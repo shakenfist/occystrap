@@ -109,7 +109,7 @@ class DockerWriter(ImageOutput):
         """Process an image element, adding it to the
         tarball."""
         if element.element_type == constants.CONFIG_FILE:
-            LOG.info('Adding config file to tarball')
+            LOG.debug('Adding config file to tarball')
 
             ti = tarfile.TarInfo(element.name)
             ti.size = len(element.data.read())
@@ -122,7 +122,7 @@ class DockerWriter(ImageOutput):
 
         elif element.element_type == \
                 constants.IMAGE_LAYER:
-            LOG.info('Adding layer to tarball')
+            LOG.debug('Adding layer to tarball')
 
             layer_name = element.name + '/layer.tar'
             ti = tarfile.TarInfo(layer_name)
@@ -151,7 +151,7 @@ class DockerWriter(ImageOutput):
                 name for _, name
                 in self._indexed_layers]
 
-        LOG.info('Writing manifest to tarball')
+        LOG.debug('Writing manifest to tarball')
         encoded_manifest = json.dumps(
             self._tar_manifest).encode('utf-8')
         ti = tarfile.TarInfo('manifest.json')

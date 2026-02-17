@@ -128,7 +128,7 @@ class ExcludeFilter(ImageFilter):
         elif (element.element_type
                 == constants.IMAGE_LAYER
                 and element.data is not None):
-            LOG.info(
+            LOG.debug(
                 'Filtering layer %s' % element.name)
             filtered_data, new_name = \
                 self._filter_layer(element.data)

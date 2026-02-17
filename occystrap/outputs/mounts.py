@@ -45,7 +45,7 @@ class MountWriter(ImageOutput):
 
     def fetch_callback(self, digest):
         layer_file_in_dir = os.path.join(self.image_path, digest, 'layer.tar')
-        LOG.info('Layer file is %s' % layer_file_in_dir)
+        LOG.debug('Layer file is %s' % layer_file_in_dir)
         return not os.path.exists(layer_file_in_dir)
 
     def process_image_element(self, element):
@@ -84,7 +84,7 @@ class MountWriter(ImageOutput):
                 self.image_path, layer_file)
             layer_size = 0
             if os.path.exists(layer_file_in_dir):
-                LOG.info(
+                LOG.debug(
                     'Skipping layer already in'
                     ' output directory')
                 layer_size = os.path.getsize(
