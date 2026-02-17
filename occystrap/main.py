@@ -27,7 +27,11 @@ LOG = logs.setup_console(__name__)
 
 
 @click.group()
-@click.option('--verbose', is_flag=True)
+@click.option('--verbose', is_flag=True,
+              help='Enable debug logging for occystrap')
+@click.option('--debug', is_flag=True,
+              help='Enable debug logging for all modules'
+              ' (includes library output)')
 @click.option('--os', default='linux')
 @click.option('--architecture', default='amd64')
 @click.option('--variant', default='')
@@ -51,11 +55,23 @@ LOG = logs.setup_console(__name__)
               type=click.Choice(['text', 'json']),
               help='Output format for info/check commands (default: text)')
 @click.pass_context
-def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
-        username=None, password=None, insecure=None, compression=None,
-        parallel=None, temp_dir=None, layer_cache=None,
-        output_format=None):
-    if verbose:
+def cli(ctx, verbose=None, debug=None, os=None,
+        architecture=None, variant=None,
+        username=None, password=None, insecure=None,
+        compression=None, parallel=None, temp_dir=None,
+        layer_cache=None, output_format=None):
+    if debug:
+        # Enable debug for all loggers (occystrap +
+        # libraries like requests, urllib3, etc.)
+        logging.getLogger().setLevel(logging.DEBUG)
+        for name, obj in \
+                logging.Logger.manager.loggerDict.items():
+            if isinstance(obj, logging.Logger):
+                obj.setLevel(logging.DEBUG)
+                for handler in obj.handlers:
+                    handler.setLevel(logging.DEBUG)
+    elif verbose:
+        # Enable debug for occystrap loggers only
         for name, obj in \
                 logging.Logger.manager.loggerDict.items():
             if name.startswith('occystrap') \
