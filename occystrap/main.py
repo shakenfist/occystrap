@@ -25,6 +25,8 @@ from occystrap.util import format_size
 
 
 LOG = logs.setup_console(__name__)
+logging.basicConfig(level=logging.INFO)
+logging.getLogger(__name__).propagate = False
 
 
 @click.group()
@@ -64,7 +66,9 @@ def cli(ctx, verbose=None, debug=None, os=None,
     if debug:
         # Enable debug for all loggers (occystrap +
         # libraries like requests, urllib3, etc.)
-        logging.getLogger().setLevel(logging.DEBUG)
+        logging.root.setLevel(logging.DEBUG)
+        for handler in logging.root.handlers:
+            handler.setLevel(logging.DEBUG)
         for name, obj in \
                 logging.Logger.manager.loggerDict.items():
             if isinstance(obj, logging.Logger):
