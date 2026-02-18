@@ -95,6 +95,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: write
     runs-on: [self-hosted, claude-code]
     needs: [functional]
     if: github.event_name == 'pull_request'
