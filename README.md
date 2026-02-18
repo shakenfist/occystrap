@@ -606,6 +606,12 @@ commands, comment on a pull request with one of the following:
 
 These commands are only available to repository collaborators with write access.
 
+### Claude Code Skills
+
+The `.claude/skills/` directory contains guidance for AI agents working on
+this codebase, covering documentation updates, testing discipline, and PR
+preparation.
+
 ## Documentation
 
 For more detailed documentation, see the [docs/](docs/) directory:
