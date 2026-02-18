@@ -19,6 +19,9 @@
       "automerge": false
     }
   ],
+  "constraints": {
+    "python": ">=3.7"
+  },
   "minimumReleaseAge": "3 days",
   "rollbackPrs": true
 }

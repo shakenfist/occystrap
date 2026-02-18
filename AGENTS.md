@@ -77,8 +77,10 @@ under `[project.dependencies]` and `[project.optional-dependencies.test]`.
 
 ### Pre-commit Hooks
 
-The project uses pre-commit hooks for `tox -eflake8` (linting) and `tox -epy3`
-(unit tests). Install with `pre-commit install`.
+The project uses pre-commit hooks for `actionlint` (GitHub Actions
+validation), `shellcheck` (shell script linting), `check-log-levels`
+(enforces max LOG.info() calls per file), `tox -eflake8` (linting),
+and `tox -epy3` (unit tests). Install with `pre-commit install`.
 
 ## Common Tasks
 
@@ -114,6 +116,35 @@ The project uses pre-commit hooks for `tox -eflake8` (linting) and `tox -epy3`
   use `check.py` module with `CheckResults` accumulator for errors/warnings/
   info, separate metadata checks (fast mode) from layer checks (full mode),
   and exit non-zero on errors for CI integration
+
+### CliRunner and JSON Output
+
+Click 8.2+ changed `result.output` to be a mix of stdout and
+stderr. Tests that parse structured output (JSON) from CLI
+commands must use `result.stdout` (stdout only) instead of
+`result.output` (mixed). Use `result.output` only for
+human-readable assertions where log messages mixed in are
+acceptable.
+
+## Logging Conventions
+
+All modules use `shakenfist_utilities.logs.setup_console(__name__)`
+for logger initialization. The returned `ConsoleAdapter` supports
+`with_fields()` for structured key-value output.
+
+**Log level policy:**
+- **INFO**: Milestones only -- pipeline start/end, summary statistics,
+  layer counts. Each file should have at most 10 `LOG.info()` calls
+  (enforced by the `check-log-levels` pre-commit hook).
+- **DEBUG**: Per-layer, per-request, per-blob operations.
+
+**Structured summaries:** Use `LOG.with_fields({...}).info(...)` for
+end-of-pipeline summary lines (see `outputs/base.py:_log_summary()`
+and `outputs/registry.py:finalize()` for examples).
+
+**Progress bars:** Use `LayerProgress` from `occystrap/progress.py`
+for long-running loops (downloads, uploads). It auto-detects TTY
+and falls back to periodic log messages in non-TTY environments.
 
 ## CI/CD Automation Tools
 

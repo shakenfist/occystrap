@@ -499,6 +499,24 @@ in the target registry, the layer is skipped entirely (no fetch, no filter,
 no compress, no upload). The cache is filter-aware: layers processed with
 different filter configurations get separate cache entries.
 
+## Verbosity and Debugging
+
+By default, occystrap logs only milestones (start/end, summary
+statistics, layer counts) at INFO level. Per-layer and per-request
+detail is logged at DEBUG level.
+
+```
+# Enable debug logging for occystrap modules only
+occystrap --verbose process docker://myimage:v1 tar://output.tar
+
+# Enable debug logging for all modules (includes library output)
+occystrap --debug process docker://myimage:v1 tar://output.tar
+```
+
+When running in a terminal, registry downloads and uploads display
+interactive tqdm progress bars. In non-TTY environments (CI, pipes),
+periodic log messages are emitted instead.
+
 ## Supporting non-default architectures
 
 Docker image repositories can store multiple versions of a single image, with
@@ -540,6 +558,7 @@ pre-commit install
 The hooks run:
 - `actionlint` - GitHub Actions workflow validation
 - `shellcheck` - Shell script linting
+- `check-log-levels` - Enforces max LOG.info() calls per file
 - `tox -eflake8` - Python code style checks
 - `tox -epy3` - Unit tests
 
@@ -586,6 +605,12 @@ commands, comment on a pull request with one of the following:
   automated review comments
 
 These commands are only available to repository collaborators with write access.
+
+### Claude Code Skills
+
+The `.claude/skills/` directory contains guidance for AI agents working on
+this codebase, covering documentation updates, testing discipline, and PR
+preparation.
 
 ## Documentation
 

@@ -30,7 +30,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # Full history needed for pbr versioning
+          fetch-depth: 0  # Full history needed for setuptools_scm
 
       - name: Install build dependencies
         run: |

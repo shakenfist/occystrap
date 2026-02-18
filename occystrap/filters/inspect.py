@@ -1,12 +1,11 @@
 import json
-import logging
 
 from occystrap import constants
 from occystrap.filters.base import ImageFilter
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class InspectFilter(ImageFilter):

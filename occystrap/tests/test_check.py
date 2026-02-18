@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+
 import tarfile
 import tempfile
 import os
@@ -690,7 +691,7 @@ class TestCheckCommand(unittest.TestCase):
                  'registry://docker.io/test/img:v1'])
 
         self.assertEqual(result.exit_code, 0)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         self.assertEqual(data['mode'], 'fast')
         self.assertEqual(data['errors'], 0)
         self.assertIn('results', data)
@@ -787,7 +788,7 @@ class TestCheckCommand(unittest.TestCase):
                  'registry://docker.io/test/img:v1'])
 
         self.assertEqual(result.exit_code, 0)
-        data = json.loads(result.output)
+        data = json.loads(result.stdout)
         self.assertEqual(data['mode'], 'full')
         self.assertEqual(data['errors'], 0)
 
@@ -838,7 +839,7 @@ class TestCheckCommand(unittest.TestCase):
                  'tar://%s' % tf_path])
 
             self.assertEqual(result.exit_code, 0)
-            data = json.loads(result.output)
+            data = json.loads(result.stdout)
             self.assertEqual(data['errors'], 0)
             self.assertEqual(data['mode'], 'full')
         finally:

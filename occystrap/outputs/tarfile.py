@@ -1,15 +1,14 @@
 import io
 import json
-import logging
 import os
 import tarfile
 
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 # This code creates v1.2 format image tarballs.
@@ -55,7 +54,7 @@ class TarWriter(ImageOutput):
 
     def process_image_element(self, element):
         if element.element_type == constants.CONFIG_FILE:
-            LOG.info('Writing config file to tarball')
+            LOG.debug('Writing config file to tarball')
 
             ti = tarfile.TarInfo(element.name)
             ti.size = len(element.data.read())
@@ -66,7 +65,7 @@ class TarWriter(ImageOutput):
                 element.element_type, ti.size)
 
         elif element.element_type == constants.IMAGE_LAYER:
-            LOG.info('Writing layer to tarball')
+            LOG.debug('Writing layer to tarball')
 
             layer_name = element.name + '/layer.tar'
             ti = tarfile.TarInfo(layer_name)
@@ -93,7 +92,7 @@ class TarWriter(ImageOutput):
                 name for _, name
                 in self._indexed_layers]
 
-        LOG.info('Writing manifest file to tarball')
+        LOG.debug('Writing manifest file to tarball')
         encoded_manifest = json.dumps(
             self.tar_manifest).encode('utf-8')
         ti = tarfile.TarInfo('manifest.json')

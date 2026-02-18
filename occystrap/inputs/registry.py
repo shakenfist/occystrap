@@ -11,10 +11,10 @@
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
-import logging
 import os
 import re
 from requests.exceptions import ChunkedEncodingError, ConnectionError
+from shakenfist_utilities import logs
 import tempfile
 import threading
 import time
@@ -24,13 +24,13 @@ from occystrap import constants
 from occystrap import util
 from occystrap.inputs.base import (
     ImageInput, ImageInputError, always_fetch)
+from occystrap.progress import LayerProgress
 
 # Retry configuration
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2  # Exponential backoff: 2^attempt seconds
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
 
@@ -153,14 +153,14 @@ class Image(ImageInput):
             for m in manifests:
                 plat = m['platform']
                 if plat.get('variant'):
-                    LOG.info(
+                    LOG.debug(
                         'Found manifest for %s on'
                         ' %s %s'
                         % (plat['os'],
                            plat['architecture'],
                            plat['variant']))
                 else:
-                    LOG.info(
+                    LOG.debug(
                         'Found manifest for %s on'
                         ' %s'
                         % (plat['os'],
@@ -174,7 +174,7 @@ class Image(ImageInput):
                         and m['platform'].get(
                             'variant', '')
                         == self.variant):
-                    LOG.info(
+                    LOG.debug(
                         'Fetching matching manifest')
                     r2 = self.request_url(
                         'GET',
@@ -261,8 +261,8 @@ class Image(ImageInput):
         """
         layer_filename = layer['digest'].split(':')[1]
 
-        LOG.info('Fetching layer %s (%d bytes)'
-                 % (layer['digest'], layer['size']))
+        LOG.debug('Fetching layer %s (%d bytes)'
+                  % (layer['digest'], layer['size']))
 
         # Detect compression from media type (fallback to gzip for compat)
         layer_media_type = layer.get('mediaType')
@@ -270,7 +270,7 @@ class Image(ImageInput):
             layer_media_type)
         if compression_type == constants.COMPRESSION_UNKNOWN:
             compression_type = constants.COMPRESSION_GZIP
-        LOG.info('Layer compression: %s' % compression_type)
+        LOG.debug('Layer compression: %s' % compression_type)
 
         # Retry logic for streaming downloads which can fail mid-transfer
         last_exception = None
@@ -293,10 +293,18 @@ class Image(ImageInput):
                 d = compression.StreamingDecompressor(compression_type)
 
                 tf = tempfile.NamedTemporaryFile(delete=False, dir=self.temp_dir)
-                LOG.info('Temporary file for layer is %s' % tf.name)
-                for chunk in r.iter_content(8192):
-                    tf.write(d.decompress(chunk))
-                    h.update(chunk)
+                LOG.debug('Temporary file for layer is %s' % tf.name)
+                with LayerProgress(
+                        total=layer['size'],
+                        desc='Layer %s'
+                        % layer_filename[:12],
+                        unit='B',
+                        unit_scale=True,
+                        log_level='debug') as progress:
+                    for chunk in r.iter_content(8192):
+                        tf.write(d.decompress(chunk))
+                        h.update(chunk)
+                        progress.update(len(chunk))
                 # Flush any remaining data
                 remaining = d.flush()
                 if remaining:
@@ -365,7 +373,7 @@ class Image(ImageInput):
             layer_filename = \
                 layer['digest'].split(':')[1]
             if not fetch_callback(layer_filename):
-                LOG.info(
+                LOG.debug(
                     'Fetch callback says skip'
                     ' layer %s' % layer['digest'])
                 layer_futures.append(

@@ -9,6 +9,7 @@ import sys
 
 from occystrap import check
 from occystrap import compression
+from occystrap.progress import redirect_logging
 from occystrap.inputs.base import ImageInputError
 from occystrap.inputs import docker as input_docker
 from occystrap.inputs import registry as input_registry
@@ -24,18 +25,16 @@ from occystrap.util import format_size
 
 
 LOG = logs.setup_console(__name__)
-
-# setup_console adds a handler to the occystrap.main logger but
-# not to the root logger. Other module loggers (inputs, outputs,
-# filters) propagate to root, so add a root handler for their
-# INFO messages to be visible. Stop the main logger propagating
-# to avoid duplicate output.
 logging.basicConfig(level=logging.INFO)
 logging.getLogger(__name__).propagate = False
 
 
 @click.group()
-@click.option('--verbose', is_flag=True)
+@click.option('--verbose', is_flag=True,
+              help='Enable debug logging for occystrap')
+@click.option('--debug', is_flag=True,
+              help='Enable debug logging for all modules'
+              ' (includes library output)')
 @click.option('--os', default='linux')
 @click.option('--architecture', default='amd64')
 @click.option('--variant', default='')
@@ -59,15 +58,29 @@ logging.getLogger(__name__).propagate = False
               type=click.Choice(['text', 'json']),
               help='Output format for info/check commands (default: text)')
 @click.pass_context
-def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
-        username=None, password=None, insecure=None, compression=None,
-        parallel=None, temp_dir=None, layer_cache=None,
-        output_format=None):
-    if verbose:
+def cli(ctx, verbose=None, debug=None, os=None,
+        architecture=None, variant=None,
+        username=None, password=None, insecure=None,
+        compression=None, parallel=None, temp_dir=None,
+        layer_cache=None, output_format=None):
+    if debug:
+        # Enable debug for all loggers (occystrap +
+        # libraries like requests, urllib3, etc.)
+        # Setting root level + handler levels is
+        # sufficient since child loggers propagate.
         logging.root.setLevel(logging.DEBUG)
         for handler in logging.root.handlers:
             handler.setLevel(logging.DEBUG)
         LOG.setLevel(logging.DEBUG)
+    elif verbose:
+        # Enable debug for occystrap loggers only
+        for name, obj in \
+                logging.Logger.manager.loggerDict.items():
+            if name.startswith('occystrap') \
+                    and isinstance(obj, logging.Logger):
+                obj.setLevel(logging.DEBUG)
+                for handler in obj.handlers:
+                    handler.setLevel(logging.DEBUG)
 
     if not ctx.obj:
         ctx.obj = {}
@@ -86,11 +99,12 @@ def cli(ctx, verbose=None, os=None, architecture=None, variant=None,
 
 def _fetch(img, output):
     ordered = output.requires_ordered_layers
-    for element in img.fetch(
-            fetch_callback=output.fetch_callback,
-            ordered=ordered):
-        output.process_image_element(element)
-    output.finalize()
+    with redirect_logging():
+        for element in img.fetch(
+                fetch_callback=output.fetch_callback,
+                ordered=ordered):
+            output.process_image_element(element)
+        output.finalize()
 
 
 # =============================================================================

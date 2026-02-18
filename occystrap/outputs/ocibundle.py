@@ -2,17 +2,16 @@
 # all of the data that a directory output does, and they place the data they
 # do contain into different locations within the directory structure.
 
-import logging
 import os
 import shutil
 
 from occystrap.constants import RUNC_SPEC_TEMPLATE
 from occystrap import common
 from occystrap.outputs.directory import DirWriter
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class OCIBundleWriter(DirWriter):

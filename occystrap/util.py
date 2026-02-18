@@ -1,13 +1,14 @@
 import json
-import logging
+
 from oslo_concurrency import processutils
 from pbr.version import VersionInfo
 import requests
 from requests.exceptions import ChunkedEncodingError, ConnectionError
+from shakenfist_utilities import logs
 import time
 
 
-LOG = logging.getLogger(__name__)
+LOG = logs.setup_console(__name__)
 
 # Retry configuration
 MAX_RETRIES = 3

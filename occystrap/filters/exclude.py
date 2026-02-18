@@ -1,6 +1,5 @@
 import fnmatch
 import hashlib
-import logging
 import os
 import tarfile
 import tempfile
@@ -8,10 +7,10 @@ import tempfile
 from occystrap import constants
 from occystrap.filters.base import ImageFilter
 from occystrap.tarformat import select_tar_format_for_layer
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class ExcludeFilter(ImageFilter):
@@ -129,7 +128,7 @@ class ExcludeFilter(ImageFilter):
         elif (element.element_type
                 == constants.IMAGE_LAYER
                 and element.data is not None):
-            LOG.info(
+            LOG.debug(
                 'Filtering layer %s' % element.name)
             filtered_data, new_name = \
                 self._filter_layer(element.data)

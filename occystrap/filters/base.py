@@ -2,13 +2,12 @@ from abc import ABC, abstractmethod
 import hashlib
 import io
 import json
-import logging
-
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
+LOG = logs.setup_console(__name__)
 
 
 class ImageFilter(ImageOutput, ABC):

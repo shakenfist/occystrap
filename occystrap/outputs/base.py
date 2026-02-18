@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-import logging
 import time
 
+from shakenfist_utilities import logs
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+
+LOG = logs.setup_console(__name__)
 
 
 class ImageOutput(ABC):
@@ -72,10 +72,11 @@ class ImageOutput(ABC):
             return
 
         elapsed = time.time() - self._start_time
-        LOG.info(
-            f'Processed {self._total_bytes} bytes in '
-            f'{self._layer_count} layers in '
-            f'{elapsed:.1f} seconds')
+        LOG.with_fields({
+            'bytes': self._total_bytes,
+            'layers': self._layer_count,
+            'elapsed_s': round(elapsed, 1),
+        }).info('Processing complete')
 
     @abstractmethod
     def fetch_callback(self, digest):

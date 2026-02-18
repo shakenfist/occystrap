@@ -1,14 +1,13 @@
 import json
-import logging
 import os
 import tarfile
 
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 # Python supports the following tarfile object types: REGTYPE, AREGTYPE,
@@ -145,7 +144,7 @@ class DirWriter(ImageOutput):
 
     def fetch_callback(self, digest):
         layer_file_in_dir = os.path.join(self.image_path, digest, 'layer.tar')
-        LOG.info('Layer file is %s' % layer_file_in_dir)
+        LOG.debug('Layer file is %s' % layer_file_in_dir)
         return not os.path.exists(layer_file_in_dir)
 
     def process_image_element(self, element):
@@ -184,7 +183,7 @@ class DirWriter(ImageOutput):
                 self.image_path, layer_file)
             layer_size = 0
             if os.path.exists(layer_file_in_dir):
-                LOG.info(
+                LOG.debug(
                     'Skipping layer already in'
                     ' output directory')
                 layer_size = os.path.getsize(
@@ -271,13 +270,13 @@ class DirWriter(ImageOutput):
             versions = len(self.bundle[path])
             if versions > 1:
                 path_savings = 0
-                LOG.info('Bundle path "%s" has %d versions'
-                         % (path, versions))
+                LOG.debug('Bundle path "%s" has %d versions'
+                          % (path, versions))
                 for ver in self.bundle[path][:-1]:
                     path_savings += ver.size
                 if type(self.bundle[path][-1]) is BundleDeletedFile:
-                    LOG.info('Bundle path "%s" final version is a deleted file, '
-                             'which wasted %d bytes.' % (path, path_savings))
+                    LOG.debug('Bundle path "%s" final version is a deleted file, '
+                              'which wasted %d bytes.' % (path, path_savings))
                 savings += path_savings
 
         LOG.info('Flattening image would save %d bytes' % savings)

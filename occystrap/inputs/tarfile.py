@@ -1,16 +1,15 @@
 import io
 import json
-import logging
 import os
 import tarfile
 
 from occystrap import compression
 from occystrap import constants
 from occystrap.inputs.base import ImageInput, always_fetch
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class Image(ImageInput):
@@ -95,8 +94,8 @@ class Image(ImageInput):
             # Yield config file
             config_filename = \
                 self._manifest[0]['Config']
-            LOG.info('Reading config file %s'
-                     % config_filename)
+            LOG.debug('Reading config file %s'
+                      % config_filename)
             config_member = tf.getmember(
                 config_filename)
             config_file = tf.extractfile(
@@ -131,7 +130,7 @@ class Image(ImageInput):
                        if not ordered else None)
 
                 if not fetch_callback(layer_digest):
-                    LOG.info(
+                    LOG.debug(
                         'Fetch callback says skip'
                         ' layer %s' % layer_digest)
                     yield constants.ImageElement(
@@ -140,8 +139,8 @@ class Image(ImageInput):
                         layer_index=idx)
                     continue
 
-                LOG.info('Reading layer %s'
-                         % layer_path)
+                LOG.debug('Reading layer %s'
+                          % layer_path)
                 layer_member = tf.getmember(
                     layer_path)
                 layer_file = tf.extractfile(
@@ -158,7 +157,7 @@ class Image(ImageInput):
                             constants.COMPRESSION_GZIP,
                             constants.COMPRESSION_ZSTD
                     ):
-                        LOG.info(
+                        LOG.debug(
                             'Decompressing %s layer'
                             % compression_type)
                         layer_data = \

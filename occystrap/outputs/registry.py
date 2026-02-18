@@ -19,7 +19,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 import hashlib
 import io
 import json
-import logging
 import re
 import threading
 import time
@@ -29,11 +28,12 @@ import requests
 from occystrap import compression
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
+from occystrap.progress import LayerProgress
 from occystrap import util
+from shakenfist_utilities import logs
 
 
-LOG = logging.getLogger(__name__)
-LOG.setLevel(logging.INFO)
+LOG = logs.setup_console(__name__)
 
 
 class RegistryWriter(ImageOutput):
@@ -172,10 +172,10 @@ class RegistryWriter(ImageOutput):
             False if it was uploaded.
         """
         if self._blob_exists(digest):
-            LOG.info(f'Blob {digest[:19]} already exists, skipping upload')
+            LOG.debug(f'Blob {digest[:19]} already exists, skipping upload')
             return True
 
-        LOG.info(f'Uploading blob {digest[:19]} ({size} bytes)')
+        LOG.debug(f'Uploading blob {digest[:19]} ({size} bytes)')
 
         url = f'{self._moniker}://{self.registry}/v2/{self.image}/blobs/uploads/'
         r = self._request('POST', url)
@@ -205,7 +205,7 @@ class RegistryWriter(ImageOutput):
         if r.status_code not in (200, 201, 202):
             raise Exception(f'Failed to upload blob: {r.status_code} {r.text}')
 
-        LOG.info('Blob uploaded successfully')
+        LOG.debug('Blob uploaded successfully')
         return False
 
     def _compress_and_upload_layer(
@@ -291,13 +291,13 @@ class RegistryWriter(ImageOutput):
 
         # Check if registry still has this blob
         if self._blob_exists(entry['compressed_digest']):
-            LOG.info(
+            LOG.debug(
                 'Layer %s cached, registry has %s, skipping',
                 digest[:19], entry['compressed_digest'][:19])
             self._cached_layers[digest] = entry
             return False
 
-        LOG.info(
+        LOG.debug(
             'Layer %s cached but registry missing %s, '
             're-processing',
             digest[:19], entry['compressed_digest'][:19])
@@ -320,7 +320,7 @@ class RegistryWriter(ImageOutput):
 
         if (element.element_type == constants.CONFIG_FILE
                 and element.data is not None):
-            LOG.info('Processing config file')
+            LOG.debug('Processing config file')
 
             element.data.seek(0)
             config_data = element.data.read()
@@ -353,7 +353,7 @@ class RegistryWriter(ImageOutput):
                     self._original_digests.popleft())
             else:
                 original_digest = element.name
-            LOG.info(
+            LOG.debug(
                 'Processing layer %s'
                 % element.name)
 
@@ -417,7 +417,7 @@ class RegistryWriter(ImageOutput):
         if self._config_future:
             try:
                 self._config_future.result()
-                LOG.info('Config uploaded')
+                LOG.debug('Config uploaded')
             except Exception as e:
                 errors.append('Config upload: %s' % e)
 
@@ -425,37 +425,26 @@ class RegistryWriter(ImageOutput):
         # Each entry is (layer_index, future)
         indexed_layers = []
         unindexed_layers = []
-        completed = 0
-        last_report_time = time.time()
-        progress_interval = 10  # seconds
 
-        for i, (layer_index, future) in enumerate(
-                self._layer_futures):
-            try:
-                layer_metadata = future.result()
-                if layer_index is not None:
-                    indexed_layers.append(
-                        (layer_index, layer_metadata))
-                else:
-                    unindexed_layers.append(
-                        layer_metadata)
-                completed += 1
+        with LayerProgress(
+                total=total_layers,
+                desc='Uploading') as progress:
+            for i, (layer_index, future) in enumerate(
+                    self._layer_futures):
+                try:
+                    layer_metadata = future.result()
+                    if layer_index is not None:
+                        indexed_layers.append(
+                            (layer_index,
+                             layer_metadata))
+                    else:
+                        unindexed_layers.append(
+                            layer_metadata)
+                    progress.update(1)
 
-                # Report progress every 10 seconds
-                now = time.time()
-                if (now - last_report_time
-                        >= progress_interval):
-                    remaining = (
-                        total_layers - completed)
-                    LOG.info(
-                        'Progress: %d/%d layers'
-                        ' complete, %d remaining'
-                        % (completed, total_layers,
-                           remaining))
-                    last_report_time = now
-
-            except Exception as e:
-                errors.append('Layer %d: %s' % (i, e))
+                except Exception as e:
+                    errors.append(
+                        'Layer %d: %s' % (i, e))
 
         self._executor.shutdown(wait=True)
 
@@ -526,13 +515,16 @@ class RegistryWriter(ImageOutput):
         input_mb = total_input / 1_000_000
         ratio = (total_compressed / total_input * 100
                  if total_input else 0)
-        LOG.info(
-            f'Processed {len(self._layers)} layers in '
-            f'{elapsed:.1f}s '
-            f'(compress: {self._total_compress_time:.1f}s, '
-            f'upload: {self._total_upload_time:.1f}s, '
-            f'upload_skipped: {self._upload_skipped}, '
-            f'cache_hits: {self._cache_hits}), '
-            f'{input_mb:.1f} MB in, '
-            f'{compressed_mb:.1f} MB out '
-            f'({ratio:.0f}%)')
+        LOG.with_fields({
+            'layers': len(self._layers),
+            'elapsed_s': round(elapsed, 1),
+            'compress_s': round(
+                self._total_compress_time, 1),
+            'upload_s': round(
+                self._total_upload_time, 1),
+            'upload_skipped': self._upload_skipped,
+            'cache_hits': self._cache_hits,
+            'input_mb': round(input_mb, 1),
+            'output_mb': round(compressed_mb, 1),
+            'ratio_pct': round(ratio),
+        }).info('Push complete')

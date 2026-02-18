@@ -86,7 +86,7 @@ class InfoRegistryTestCase(testtools.TestCase):
         self.assertEqual(0, result.exit_code,
                          'info failed: %s' % result.output)
 
-        info = json.loads(result.output)
+        info = json.loads(result.stdout)
         self.assertEqual(
             'library/busybox', info['image'])
         self.assertEqual('latest', info['tag'])
@@ -165,7 +165,7 @@ class InfoTarfileTestCase(testtools.TestCase):
                 0, result.exit_code,
                 'info failed: %s' % result.output)
 
-            info = json.loads(result.output)
+            info = json.loads(result.stdout)
             self.assertIn('layer_count', info)
             self.assertGreater(info['layer_count'], 0)
             self.assertEqual(
@@ -199,7 +199,7 @@ class InfoTarfileTestCase(testtools.TestCase):
             ':latest',
         ])
         self.assertEqual(0, result.exit_code)
-        registry_info = json.loads(result.output)
+        registry_info = json.loads(result.stdout)
 
         # Create tarball
         with tempfile.NamedTemporaryFile(
@@ -223,7 +223,7 @@ class InfoTarfileTestCase(testtools.TestCase):
                 'tar://%s' % tar_path,
             ])
             self.assertEqual(0, result.exit_code)
-            tar_info = json.loads(result.output)
+            tar_info = json.loads(result.stdout)
 
             # Layer counts must match
             self.assertEqual(

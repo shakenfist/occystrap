@@ -15,6 +15,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: check-log-levels
+        name: check log levels
+        entry: tools/check-log-levels.sh
+        language: script
+        pass_filenames: false
+        always_run: true
+
       - id: tox-flake8
         name: tox flake8
         entry: tox -eflake8
