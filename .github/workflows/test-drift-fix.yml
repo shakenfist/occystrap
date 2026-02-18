@@ -329,7 +329,7 @@ jobs:
                 echo ""
                 echo "Signed-off-by: Michael Still <mikal@stillhq.com>"
                 echo "Assisted-By: Claude Code"
-                echo "Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
+                echo "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
               } > ${{ github.workspace }}/commit-message.txt
 
               git commit -F ${{ github.workspace }}/commit-message.txt
@@ -344,7 +344,7 @@ jobs:
 
           Signed-off-by: Michael Still <mikal@stillhq.com>
           Assisted-By: Claude Code
-          Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
           EOF
           )"
               else
@@ -355,7 +355,7 @@ jobs:
 
           Signed-off-by: Michael Still <mikal@stillhq.com>
           Assisted-By: Claude Code
-          Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+          Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
           EOF
           )"
               fi
