@@ -66,15 +66,12 @@ def cli(ctx, verbose=None, debug=None, os=None,
     if debug:
         # Enable debug for all loggers (occystrap +
         # libraries like requests, urllib3, etc.)
+        # Setting root level + handler levels is
+        # sufficient since child loggers propagate.
         logging.root.setLevel(logging.DEBUG)
         for handler in logging.root.handlers:
             handler.setLevel(logging.DEBUG)
-        for name, obj in \
-                logging.Logger.manager.loggerDict.items():
-            if isinstance(obj, logging.Logger):
-                obj.setLevel(logging.DEBUG)
-                for handler in obj.handlers:
-                    handler.setLevel(logging.DEBUG)
+        LOG.setLevel(logging.DEBUG)
     elif verbose:
         # Enable debug for occystrap loggers only
         for name, obj in \

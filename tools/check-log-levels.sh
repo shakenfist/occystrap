@@ -17,7 +17,7 @@ MAX_INFO=10
 EXIT_CODE=0
 
 while IFS= read -r -d '' f; do
-    count=$(grep -c 'LOG\.info(' "$f" 2>/dev/null || true)
+    count=$(grep -v '^\s*#' "$f" | grep -c 'LOG\.info(' 2>/dev/null || true)
     if [ "$count" -gt "$MAX_INFO" ]; then
         echo "ERROR: $f has $count LOG.info() calls (max $MAX_INFO)"
         EXIT_CODE=1

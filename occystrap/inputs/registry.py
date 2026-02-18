@@ -299,7 +299,8 @@ class Image(ImageInput):
                         desc='Layer %s'
                         % layer_filename[:12],
                         unit='B',
-                        unit_scale=True) as progress:
+                        unit_scale=True,
+                        log_level='debug') as progress:
                     for chunk in r.iter_content(8192):
                         tf.write(d.decompress(chunk))
                         h.update(chunk)
