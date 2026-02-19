@@ -12,7 +12,9 @@
 #
 # Since Docker 1.3.2, the entire 127.0.0.0/8 range is implicitly
 # trusted as insecure, so no daemon.json changes or TLS
-# certificates are needed.
+# certificates are needed. We use 127.0.0.1 (not "localhost") because
+# the hostname may resolve to ::1 and not receive the insecure
+# exemption in all Docker versions.
 #
 # Docker Engine API documentation:
 # https://docs.docker.com/engine/api/
@@ -131,8 +133,11 @@ class EmbeddedRegistryHandler(
             line = self.rfile.readline()
             # Chunk size is hex, may have extensions
             # after a semicolon
-            chunk_size = int(
-                line.strip().split(b';')[0], 16)
+            chunk_header = line.strip().split(b';')[0]
+            if not chunk_header:
+                # Connection closed mid-stream
+                break
+            chunk_size = int(chunk_header, 16)
             if chunk_size == 0:
                 # Read trailing CRLF after final chunk
                 self.rfile.readline()
@@ -169,7 +174,8 @@ class EmbeddedRegistryHandler(
         """Handle HEAD /v2/{name}/blobs/{digest}.
 
         Returns 200 for digests in skip_digests (cached
-        layers), causing Docker to skip the upload.
+        layers) or blobs (already uploaded), causing
+        Docker to skip the upload or confirm receipt.
         Returns 404 otherwise to force Docker to upload.
         """
         path, _ = self._parse_path()
@@ -187,6 +193,22 @@ class EmbeddedRegistryHandler(
                     'sha256:%s' % digest_hex)
                 self.send_header(
                     'Content-Length', '0')
+                self.end_headers()
+                return
+
+            with self.state.lock:
+                blob_path = self.state.blobs.get(
+                    digest_hex)
+            if blob_path:
+                blob_size = os.path.getsize(
+                    blob_path)
+                self.send_response(200)
+                self.send_header(
+                    'Docker-Content-Digest',
+                    'sha256:%s' % digest_hex)
+                self.send_header(
+                    'Content-Length',
+                    str(blob_size))
                 self.end_headers()
                 return
 
@@ -769,8 +791,7 @@ class Image(ImageInput):
 
         server = self._start_server(state)
         port = server.server_address[1]
-        push_repo = 'localhost:%d/%s' % (
-            port, self._image)
+        push_repo = f'127.0.0.1:{port}/{self._image}'
 
         try:
             # Tag image for localhost push
