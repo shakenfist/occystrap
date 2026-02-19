@@ -47,7 +47,7 @@ occystrap = "occystrap.main:cli"
 [project.optional-dependencies]
 test = [
     "coverage",     # apache2
-    "testtools<2.8.0",  # mit; stestr uses _b removed in 2.8
+    "testtools<2.8.3",  # mit; stestr uses _b removed in 2.8
     "mock",         # bsd
     "stestr",       # apache2
     "flake8",       # mit
