@@ -644,6 +644,17 @@ class Image(ImageInput):
             )
             context = ssl.SSLContext(
                 ssl.PROTOCOL_TLS_SERVER)
+            # Restrict protocol versions to TLS 1.2 and above.
+            try:
+                # Preferred on Python 3.7+
+                context.minimum_version = ssl.TLSVersion.TLSv1_2
+            except AttributeError:
+                # Fallback for older Python versions
+                try:
+                    context.options |= ssl.OP_NO_TLSv1 | ssl.OP_NO_TLSv1_1
+                except AttributeError:
+                    # If options or constants are unavailable, proceed with defaults.
+                    pass
             context.load_cert_chain(cert_path, key_path)
             return context
         finally:
