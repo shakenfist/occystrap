@@ -10,11 +10,16 @@
 # the Registry V2 protocol, providing significantly better
 # throughput for multi-layer images.
 #
-# Since Docker 1.3.2, the entire 127.0.0.0/8 range is implicitly
-# trusted as insecure, so no daemon.json changes or TLS
-# certificates are needed. We use 127.0.0.1 (not "localhost") because
-# the hostname may resolve to ::1 and not receive the insecure
-# exemption in all Docker versions.
+# Docker treats the entire 127.0.0.0/8 range as "insecure",
+# meaning it skips TLS certificate verification. However,
+# some Docker versions (especially those using containerd for
+# registry operations) do not fall back from HTTPS to HTTP
+# when the server doesn't speak TLS. To avoid this, we serve
+# HTTPS with an ephemeral self-signed certificate generated
+# via openssl. Docker accepts the self-signed cert because
+# 127.0.0.1 is in the insecure range. We use 127.0.0.1 (not
+# "localhost") because the hostname may resolve to ::1 and
+# not receive the insecure exemption in all Docker versions.
 #
 # Docker Engine API documentation:
 # https://docs.docker.com/engine/api/
@@ -28,6 +33,8 @@ import http.server
 import io
 import json
 import os
+import ssl
+import subprocess
 import tempfile
 import threading
 import uuid
@@ -457,8 +464,9 @@ class Image(ImageInput):
 
     Instead of using Docker's /images/{name}/get API (which
     returns a single sequential tarball), this input starts a
-    minimal HTTP server on localhost and uses Docker's push
-    mechanism to transfer layers in parallel.
+    minimal HTTPS server on localhost (with an ephemeral
+    self-signed certificate) and uses Docker's push mechanism
+    to transfer layers in parallel.
 
     Limitations:
     - Only supports single-platform V2 manifests. If
@@ -603,16 +611,64 @@ class Image(ImageInput):
                 'Failed to untag %s: %d %s'
                 % (ref, r.status_code, r.text))
 
-    def _start_server(self, state):
-        """Start the embedded registry HTTP server.
+    def _generate_tls_context(self):
+        """Generate a self-signed TLS certificate and return
+        an ssl.SSLContext.
 
-        Binds to 127.0.0.1:0 (ephemeral port) and runs
-        in a daemon thread.
+        Uses openssl to create an ephemeral RSA key and
+        self-signed certificate valid for 1 day. The cert
+        files are deleted after loading into the context.
+        """
+        cert_fd, cert_path = tempfile.mkstemp(
+            suffix='.pem', dir=self.temp_dir)
+        key_fd, key_path = tempfile.mkstemp(
+            suffix='.pem', dir=self.temp_dir)
+        os.close(cert_fd)
+        os.close(key_fd)
+
+        try:
+            subprocess.run(
+                [
+                    'openssl', 'req', '-x509',
+                    '-newkey', 'rsa:2048',
+                    '-keyout', key_path,
+                    '-out', cert_path,
+                    '-days', '1',
+                    '-nodes',
+                    '-subj', '/CN=127.0.0.1',
+                    '-addext',
+                    'subjectAltName=IP:127.0.0.1',
+                ],
+                check=True,
+                capture_output=True,
+            )
+            context = ssl.SSLContext(
+                ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(cert_path, key_path)
+            return context
+        finally:
+            for path in (cert_path, key_path):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+    def _start_server(self, state):
+        """Start the embedded registry HTTPS server.
+
+        Binds to 127.0.0.1:0 (ephemeral port), wraps the
+        socket with TLS using a self-signed certificate,
+        and runs in a daemon thread.
         """
         server = http.server.ThreadingHTTPServer(
             ('127.0.0.1', 0),
             EmbeddedRegistryHandler)
         server.registry_state = state
+
+        tls_context = self._generate_tls_context()
+        server.socket = tls_context.wrap_socket(
+            server.socket, server_side=True)
+
         thread = threading.Thread(
             target=server.serve_forever,
             daemon=True)
@@ -620,7 +676,7 @@ class Image(ImageInput):
         port = server.server_address[1]
         LOG.debug(
             'Embedded registry listening on'
-            ' 127.0.0.1:%d' % port)
+            ' https://127.0.0.1:%d' % port)
         return server
 
     def _stop_server(self, server):
@@ -764,7 +820,8 @@ class Image(ImageInput):
         """Fetch image layers by pushing to an embedded
         registry.
 
-        Starts a minimal V2 registry on localhost, uses
+        Starts a minimal HTTPS V2 registry on localhost
+        (with an ephemeral self-signed certificate), uses
         Docker's push API to transfer layers, then yields
         ImageElements from the received data.
 

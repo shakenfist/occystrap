@@ -403,13 +403,14 @@ Key design considerations:
 The `dockerpush` input (`inputs/dockerpush.py`) takes a fundamentally different
 approach to fetching images from a local Docker daemon. Instead of using the
 Docker Engine API's `/images/{name}/get` endpoint (which returns a single
-sequential tarball), it starts an embedded HTTP server implementing the Docker
+sequential tarball), it starts an embedded HTTPS server implementing the Docker
 Registry V2 push-path API, then uses Docker's own push mechanism to transfer
 layers.
 
 ```
 fetch() generator
-    └── Start ThreadingHTTPServer on 127.0.0.1:0 (ephemeral port)
+    └── Generate ephemeral self-signed TLS certificate (via openssl)
+    └── Start ThreadingHTTPServer on 127.0.0.1:0 (ephemeral port, TLS-wrapped)
     └── Tag image for localhost push
     └── POST /images/{name}/push (Docker pushes in parallel)
     └── Wait for manifest event from registry handler
@@ -431,8 +432,9 @@ The embedded registry implements six V2 push-path endpoints:
 Key design considerations:
 - Docker push uploads layers in parallel using the V2 protocol, providing
   significantly better throughput than the sequential tarball export
-- Since Docker 1.3.2, `127.0.0.0/8` is implicitly trusted as insecure,
-  so no daemon.json changes or TLS certificates are needed
+- Docker treats `127.0.0.0/8` as insecure (skips cert verification), but
+  some Docker versions don't fall back from HTTPS to HTTP, so we serve
+  HTTPS with an ephemeral self-signed certificate generated via `openssl`
 - Blobs are stored as temp files during the push, then read and decompressed
   when yielding elements
 - Thread-safe shared state (`_RegistryState`) coordinates between the HTTP
