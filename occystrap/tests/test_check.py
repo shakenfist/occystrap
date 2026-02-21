@@ -684,7 +684,7 @@ class TestCheckCommand(unittest.TestCase):
             mock_builder.return_value.build_input \
                 .return_value = mock_input
 
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(
                 cli,
                 ['-O', 'json', 'check', '--fast',
@@ -715,7 +715,7 @@ class TestCheckCommand(unittest.TestCase):
             mock_builder.return_value.build_input \
                 .return_value = mock_input
 
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(
                 cli,
                 ['check', '--fast',
@@ -738,7 +738,7 @@ class TestCheckCommand(unittest.TestCase):
             mock_builder.return_value.build_input \
                 .return_value = mock_input
 
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(
                 cli,
                 ['check', '--fast',
@@ -748,7 +748,7 @@ class TestCheckCommand(unittest.TestCase):
 
     def test_check_invalid_uri(self):
         """Test check with invalid URI."""
-        runner = CliRunner()
+        runner = CliRunner(mix_stderr=False)
         result = runner.invoke(
             cli,
             ['check', 'invalid://bad'])
@@ -781,7 +781,7 @@ class TestCheckCommand(unittest.TestCase):
             mock_builder.return_value.build_input \
                 .return_value = mock_input
 
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(
                 cli,
                 ['-O', 'json', 'check',
@@ -832,7 +832,7 @@ class TestCheckCommand(unittest.TestCase):
                 tar.addfile(
                     ti, io.BytesIO(layer_tar))
 
-            runner = CliRunner()
+            runner = CliRunner(mix_stderr=False)
             result = runner.invoke(
                 cli,
                 ['-O', 'json', 'check',
