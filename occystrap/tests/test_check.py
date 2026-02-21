@@ -18,6 +18,19 @@ from occystrap.inputs.base import ImageInput
 from occystrap.main import cli
 
 
+def _make_cli_runner():
+    """Create a CliRunner with stderr separated from stdout.
+
+    Click 8.2+ removed the mix_stderr parameter (stderr is now
+    separate by default). Older versions default to mixing stderr
+    into stdout, which corrupts JSON output parsing in tests.
+    """
+    try:
+        return CliRunner(mix_stderr=False)
+    except TypeError:
+        return CliRunner()
+
+
 # --- Helpers ---
 
 def _make_layer_tar(files=None):
@@ -684,7 +697,7 @@ class TestCheckCommand(unittest.TestCase):
             mock_builder.return_value.build_input \
                 .return_value = mock_input
 
-            runner = CliRunner()
+            runner = _make_cli_runner()
             result = runner.invoke(
                 cli,
                 ['-O', 'json', 'check', '--fast',
@@ -715,7 +728,7 @@ class TestCheckCommand(unittest.TestCase):
             mock_builder.return_value.build_input \
                 .return_value = mock_input
 
-            runner = CliRunner()
+            runner = _make_cli_runner()
             result = runner.invoke(
                 cli,
                 ['check', '--fast',
@@ -738,7 +751,7 @@ class TestCheckCommand(unittest.TestCase):
             mock_builder.return_value.build_input \
                 .return_value = mock_input
 
-            runner = CliRunner()
+            runner = _make_cli_runner()
             result = runner.invoke(
                 cli,
                 ['check', '--fast',
@@ -748,7 +761,7 @@ class TestCheckCommand(unittest.TestCase):
 
     def test_check_invalid_uri(self):
         """Test check with invalid URI."""
-        runner = CliRunner()
+        runner = _make_cli_runner()
         result = runner.invoke(
             cli,
             ['check', 'invalid://bad'])
@@ -781,7 +794,7 @@ class TestCheckCommand(unittest.TestCase):
             mock_builder.return_value.build_input \
                 .return_value = mock_input
 
-            runner = CliRunner()
+            runner = _make_cli_runner()
             result = runner.invoke(
                 cli,
                 ['-O', 'json', 'check',
@@ -832,7 +845,7 @@ class TestCheckCommand(unittest.TestCase):
                 tar.addfile(
                     ti, io.BytesIO(layer_tar))
 
-            runner = CliRunner()
+            runner = _make_cli_runner()
             result = runner.invoke(
                 cli,
                 ['-O', 'json', 'check',

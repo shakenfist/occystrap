@@ -364,8 +364,11 @@ than `docker://` for multi-layer images because Docker's push mechanism
 transfers layers individually and in parallel, whereas the Docker Engine API
 (`docker://`) exports the entire image as a single sequential tarball.
 
-Since Docker 1.3.2, the entire `127.0.0.0/8` range is implicitly trusted as
-insecure, so no daemon.json changes or TLS certificates are needed.
+The embedded server uses HTTPS with an ephemeral self-signed certificate
+generated via the `openssl` command-line tool, which must be installed on the
+system (e.g. `apt-get install openssl`). Docker treats `127.0.0.0/8` as
+insecure (skips cert verification), so the self-signed certificate is accepted
+without daemon.json changes.
 
 For Podman:
 ```

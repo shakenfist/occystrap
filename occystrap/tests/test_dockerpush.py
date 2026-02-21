@@ -797,6 +797,43 @@ class TestDigestMapping(unittest.TestCase):
         self.assertIn('docker_comp_hex', skip)
 
 
+class TestTLSContextGeneration(unittest.TestCase):
+    """Tests for self-signed TLS certificate generation."""
+
+    def setUp(self):
+        import tempfile
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.temp_dir)
+
+    def test_generate_tls_context_returns_ssl_context(
+            self):
+        """Test that _generate_tls_context produces
+        a valid ssl.SSLContext."""
+        import ssl
+        img = Image(
+            'test', tag='latest',
+            temp_dir=self.temp_dir)
+        ctx = img._generate_tls_context()
+        self.assertIsInstance(ctx, ssl.SSLContext)
+
+    def test_generate_tls_context_cleans_up_files(
+            self):
+        """Test that cert/key files are deleted after
+        loading into context."""
+        img = Image(
+            'test', tag='latest',
+            temp_dir=self.temp_dir)
+        img._generate_tls_context()
+        # No .pem files should remain
+        pem_files = [
+            f for f in os.listdir(self.temp_dir)
+            if f.endswith('.pem')]
+        self.assertEqual(pem_files, [])
+
+
 class TestURIParsing(unittest.TestCase):
     """Tests for dockerpush URI parsing."""
 
