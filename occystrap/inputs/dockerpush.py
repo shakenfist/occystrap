@@ -33,6 +33,7 @@ import http.server
 import io
 import json
 import os
+import shutil
 import ssl
 import subprocess
 import tempfile
@@ -619,6 +620,14 @@ class Image(ImageInput):
         self-signed certificate valid for 1 day. The cert
         files are deleted after loading into the context.
         """
+        if not shutil.which('openssl'):
+            raise FileNotFoundError(
+                'The openssl command-line tool is required for '
+                'dockerpush:// but was not found on PATH. '
+                'Install it with: apt-get install openssl '
+                '(Debian/Ubuntu) or yum install openssl '
+                '(RHEL/CentOS).')
+
         cert_fd, cert_path = tempfile.mkstemp(
             suffix='.pem', dir=self.temp_dir)
         key_fd, key_path = tempfile.mkstemp(
