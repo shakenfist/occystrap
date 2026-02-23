@@ -1,0 +1,8 @@
+[
+    {
+        "enforcement": "active",
+        "id": 12461172,
+        "name": "Release tags",
+        "target": "tag"
+    }
+]
