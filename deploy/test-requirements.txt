@@ -1,2 +1,2 @@
-testtools<2.8.3     # mit; stestr uses _b removed in 2.8
+testtools<2.8.5     # mit; stestr uses _b removed in 2.8
 stestr==4.2.0       # apache2
