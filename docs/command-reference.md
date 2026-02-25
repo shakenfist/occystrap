@@ -139,6 +139,63 @@ occystrap --architecture arm64 --variant v8 \
     info registry://docker.io/library/busybox:latest
 ```
 
+### proxy
+
+Run a persistent filtering registry proxy that receives Docker pushes,
+applies filters, and forwards images to a downstream registry. The proxy
+runs until interrupted (Ctrl+C or SIGTERM).
+
+```bash
+occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--downstream REGISTRY`, `-d` | Downstream registry host (required, e.g., `ghcr.io/myorg`) |
+| `--listen HOST:PORT`, `-l` | Listen address (default: `127.0.0.1:5050`) |
+| `-f FILTER` | Filter(s) to apply (can be specified multiple times) |
+
+The proxy also respects global options `--layer-cache`, `--temp-dir`,
+`--username`, `--password`, `--insecure`, `--compression`, and
+`--parallel`.
+
+**Behavior:**
+
+- The proxy implements the Docker Registry V2 push-path API
+- When a manifest is received, the proxy blocks the HTTP response
+  while processing the image through the filter pipeline and pushing
+  to the downstream registry
+- Docker sees 201 on success and 500 on failure
+- Repository names from the push are passed through to the downstream
+  registry as-is (e.g., `localhost:5050/kolla/nova-api:latest` becomes
+  `REGISTRY/kolla/nova-api:latest`)
+- Manifest lists (multi-arch) are rejected (single-platform only)
+- On shutdown, the layer cache is saved and temporary files are cleaned
+
+**Examples:**
+
+```bash
+# Start proxy with timestamp normalization
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    -f normalize-timestamps
+
+# Start with layer cache for cross-image dedup
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --layer-cache /tmp/layer-cache.json \
+    -f normalize-timestamps
+
+# Push to the proxy from Docker
+docker tag myimage:latest localhost:5050/myimage:latest
+docker push localhost:5050/myimage:latest
+
+# Use with kolla-build
+kolla-build --registry 127.0.0.1:5050 --push ...
+```
+
 ### check
 
 Check validity of a container image. Validates structural integrity,

@@ -20,6 +20,7 @@ from occystrap.outputs import ocibundle as output_ocibundle
 from occystrap.outputs import tarfile as output_tarfile
 from occystrap.filters import SearchFilter, TimestampNormalizer
 from occystrap.pipeline import PipelineBuilder, PipelineError
+from occystrap import proxy as proxy_module
 from occystrap import uri
 from occystrap.util import format_size
 
@@ -640,6 +641,74 @@ def check_cmd(ctx, source, fast):
 
 
 cli.add_command(check_cmd)
+
+
+@click.command('proxy')
+@click.option('--listen', '-l', default='127.0.0.1:5050',
+              help='Address to listen on (default: 127.0.0.1:5050)')
+@click.option('--downstream', '-d', required=True,
+              help='Downstream registry host'
+              ' (e.g., ghcr.io, registry.example.com)')
+@click.option('--filter', '-f', 'filters', multiple=True,
+              help='Apply filter (can be specified'
+              ' multiple times)')
+@click.pass_context
+def proxy_cmd(ctx, listen, downstream, filters):
+    """Run a filtering registry proxy.
+
+    Starts a Docker Registry V2 server that receives
+    pushes, applies filters, and forwards images to a
+    downstream registry. Runs until interrupted.
+
+    \b
+    The proxy listens on localhost by default, which is
+    trusted by Docker without TLS configuration.
+
+    \b
+    Filters (use -f, can chain multiple):
+      normalize-timestamps         - Normalize timestamps
+      normalize-timestamps:ts=N    - Use specific timestamp
+      exclude:pattern=GLOB         - Exclude files
+
+    \b
+    Examples:
+      occystrap proxy -d ghcr.io/myorg
+      occystrap proxy -l 127.0.0.1:5050 -d ghcr.io/myorg -f normalize-timestamps
+      occystrap proxy -d registry.example.com -f "exclude:pattern=/tmp/*"
+
+    \b
+    Usage with kolla-build:
+      occystrap proxy -d ghcr.io/myorg --layer-cache /tmp/cache.json -f normalize-timestamps &
+      kolla-build --registry 127.0.0.1:5050 --push ...
+    """
+    # Parse listen address
+    if ':' in listen:
+        host, port_str = listen.rsplit(':', 1)
+        try:
+            port = int(port_str)
+        except ValueError:
+            click.echo(
+                'Error: invalid port: %s' % port_str,
+                err=True)
+            sys.exit(1)
+    else:
+        host = listen
+        port = 5050
+
+    layer_cache_path = ctx.obj.get('LAYER_CACHE')
+
+    try:
+        proxy_module.run_proxy(
+            host, port, downstream,
+            filter_strs=list(filters),
+            layer_cache_path=layer_cache_path,
+            ctx=ctx)
+    except Exception as e:
+        click.echo('Error: %s' % e, err=True)
+        sys.exit(1)
+
+
+cli.add_command(proxy_cmd)
 
 
 # =============================================================================

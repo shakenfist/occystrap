@@ -472,6 +472,42 @@ occystrap process docker://myimage:v1 "registry://myregistry/myimage:v1?compress
 When pulling images, occystrap automatically detects and handles both gzip and
 zstd compressed layers from registries or OCI tarballs.
 
+## The `proxy` Command
+
+Run a filtering registry proxy that receives Docker pushes, applies
+filters, and forwards images to a downstream registry:
+
+```
+occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT]
+```
+
+The proxy runs as a persistent process, accepting pushes from Docker
+or any V2 registry client. This is useful when processing many images
+(e.g., a Kolla build) because:
+
+- Build and push can overlap (the proxy runs before the build starts)
+- Shared base layers are pushed to the downstream registry only once
+  via the layer cache
+
+```
+# Start proxy before a batch build
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --layer-cache /tmp/layer-cache.json \
+    -f normalize-timestamps &
+
+# Tell the build tool to push to the proxy
+kolla-build --registry 127.0.0.1:5050 --push ...
+
+# Or push individual images
+docker tag myimage:latest localhost:5050/myimage:latest
+docker push localhost:5050/myimage:latest
+```
+
+The proxy listens on `127.0.0.1:5050` by default, which is trusted
+by Docker without TLS configuration. Repository names from the push
+are passed through to the downstream registry as-is.
+
 ## Cross-Invocation Layer Cache
 
 When pushing multiple images that share base layers (common in CI), occystrap

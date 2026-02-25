@@ -16,6 +16,7 @@ occystrap/
     util.py              # Additional utilities
     uri.py               # URI parsing for pipeline specification
     pipeline.py          # Pipeline builder from URIs
+    proxy.py             # Persistent filtering registry proxy server
     layer_cache.py       # Cross-invocation layer cache for registry push
     progress.py          # tqdm progress bars with non-TTY fallback
     docker_extract.py    # Layer extraction utilities
@@ -51,6 +52,7 @@ occystrap/
         test_registry_output.py
         test_layer_cache.py
         test_dockerpush.py
+        test_proxy.py
         test_tarformat.py
 
 deploy/
@@ -446,6 +448,71 @@ Key design considerations:
   to skip their upload entirely. A persistent digest mapping file
   (`{cache_path}.digests`) translates between Docker's compressed digests
   and the DiffIDs used as cache keys
+
+### Filtering Registry Proxy
+
+The `proxy` command (`proxy.py`) runs a persistent Docker Registry V2 server
+on localhost that receives pushes, applies filters, and forwards images to a
+downstream registry. Unlike `dockerpush://` (which is a single-image-per-session
+embedded registry), the proxy handles multiple images sequentially across its
+lifetime.
+
+```
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    -f normalize-timestamps
+```
+
+**Architecture:**
+
+The proxy consists of four main components:
+
+- `_ProxyState` - Shared state between HTTP handler threads and the main
+  process. Holds temp_dir, downstream_uri, filter_strs, layer_cache, in-progress
+  uploads, completed blobs, and statistics. All mutations protected by a lock.
+
+- `_ProxyInput(ImageInput)` - Synthetic input that yields `ImageElement`s from
+  already-received blobs. Decompresses layers via `StreamingDecompressor` to
+  feed uncompressed tar data into the pipeline, matching the interface that
+  filters and outputs expect.
+
+- `ProxyRegistryHandler` - HTTP request handler implementing the V2 push-path
+  endpoints. The manifest PUT blocks the HTTP response while the image is
+  processed through the pipeline and pushed downstream. Returns 201 on success,
+  500 on failure, giving Docker direct error feedback.
+
+- `_KeepAliveHTTPServer` - `ThreadingHTTPServer` subclass that enables
+  `SO_KEEPALIVE` on accepted connections, preventing TCP drops during long
+  manifest processing.
+
+**Manifest processing flow:**
+
+```
+1. Client pushes blobs (layers + config) via standard V2 upload flow
+2. Client PUTs manifest
+3. Handler parses manifest, snapshots referenced blobs
+4. Handler creates _ProxyInput from received blobs
+5. PipelineBuilder builds output + filters (fresh per image)
+6. Pipeline runs: _ProxyInput.fetch() -> filters -> RegistryWriter
+7. On success: 201 to client, clean up blobs
+8. On failure: 500 to client, clean up blobs
+```
+
+**Key design considerations:**
+
+- Blocking manifest processing provides natural backpressure and error
+  propagation. Docker sees success or failure directly.
+- Each image gets a fresh pipeline (PipelineBuilder creates new instances),
+  so there is no cross-image state leakage in filters or outputs.
+- A shared `LayerCache` across images enables cross-image layer dedup:
+  the first image pays full cost, subsequent images with shared base
+  layers skip those layers entirely.
+- Blob namespace is flat and content-addressed. Two images sharing a
+  base layer push the same digest, giving cross-image dedup for free.
+- Blobs are cleaned up after each manifest is processed (safe in
+  sequential mode since only one manifest processes at a time).
+- `run_proxy()` handles SIGINT/SIGTERM gracefully, saving the layer
+  cache before exiting.
 
 ### Parallel Downloads
 

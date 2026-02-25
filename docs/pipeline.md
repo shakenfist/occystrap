@@ -536,6 +536,25 @@ This is particularly beneficial for the registry-to-registry pipeline,
 where layers can start uploading as soon as they finish downloading
 rather than waiting for earlier layers to complete first.
 
+### Pipeline Reuse in Proxy Mode
+
+The `proxy` command demonstrates that the pipeline is fully reusable.
+Each received image gets a fresh pipeline built by `PipelineBuilder`:
+
+```
+Proxy receives image push
+    └── _handle_manifest_put() blocks HTTP response
+    └── Create _ProxyInput (synthetic ImageInput from received blobs)
+    └── PipelineBuilder builds fresh output + filters
+    └── Run pipeline: fetch() → filters → RegistryWriter
+    └── Return 201/500 to client
+```
+
+`PipelineBuilder.build_pipeline()` creates new input/output/filter
+instances on each call with no shared mutable state, so running the
+pipeline multiple times in one process is safe. The proxy keeps a
+single `LayerCache` across images for cross-image layer dedup.
+
 ### Hash Recalculation
 
 When filters modify layer content (timestamps, file exclusion), the SHA256
