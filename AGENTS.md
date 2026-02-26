@@ -120,10 +120,11 @@ and `tox -epy3` (unit tests). Install with `pre-commit install`.
   `main.py` (`proxy_cmd`) -- add a Click command that doesn't use the
   standard `process` SOURCE/DESTINATION arguments. The proxy command builds
   its own pipeline per received image using `PipelineBuilder` directly
-- **Extend the proxy**: The proxy (`proxy.py`) processes images sequentially
-  (blocking manifest PUT). To add concurrent processing, add a thread pool
-  in `_handle_manifest_put()` and implement blob reference counting (the
-  current cleanup in the `finally` block assumes exclusive access)
+- **Extend the proxy**: The proxy (`proxy.py`) processes images concurrently
+  (multiple manifest PUTs run in parallel, limited by a semaphore). Blob
+  reference counting prevents shared blobs from being deleted while still
+  in use. `LayerCache` is internally thread-safe. To add new proxy features,
+  ensure shared state mutations are under `state.lock`
 - **Create a synthetic input**: Follow `_ProxyInput` in `proxy.py` as a
   reference for creating an `ImageInput` subclass that yields
   `ImageElement`s from data already in memory or on disk (rather than

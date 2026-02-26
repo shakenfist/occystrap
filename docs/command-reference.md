@@ -146,7 +146,7 @@ applies filters, and forwards images to a downstream registry. The proxy
 runs until interrupted (Ctrl+C or SIGTERM).
 
 ```bash
-occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT]
+occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT] [--concurrency N]
 ```
 
 **Options:**
@@ -156,6 +156,7 @@ occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT]
 | `--downstream REGISTRY`, `-d` | Downstream registry host (required, e.g., `ghcr.io/myorg`) |
 | `--listen HOST:PORT`, `-l` | Listen address (default: `127.0.0.1:5050`) |
 | `-f FILTER` | Filter(s) to apply (can be specified multiple times) |
+| `--concurrency N`, `-c` | Max concurrent image processing (default: 4) |
 
 The proxy also respects global options `--layer-cache`, `--temp-dir`,
 `--username`, `--password`, `--insecure`, `--compression`, and
@@ -167,12 +168,15 @@ The proxy also respects global options `--layer-cache`, `--temp-dir`,
 - When a manifest is received, the proxy blocks the HTTP response
   while processing the image through the filter pipeline and pushing
   to the downstream registry
+- Multiple images are processed concurrently (limited by `--concurrency`)
 - Docker sees 201 on success and 500 on failure
 - Repository names from the push are passed through to the downstream
   registry as-is (e.g., `localhost:5050/kolla/nova-api:latest` becomes
   `REGISTRY/kolla/nova-api:latest`)
 - Manifest lists (multi-arch) are rejected (single-platform only)
-- On shutdown, the layer cache is saved and temporary files are cleaned
+- On shutdown, the proxy waits for in-flight processing to complete
+  (up to 5 minutes), saves the layer cache, and cleans up temporary
+  files
 
 **Examples:**
 

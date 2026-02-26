@@ -478,14 +478,16 @@ Run a filtering registry proxy that receives Docker pushes, applies
 filters, and forwards images to a downstream registry:
 
 ```
-occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT]
+occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT] [--concurrency N]
 ```
 
 The proxy runs as a persistent process, accepting pushes from Docker
-or any V2 registry client. This is useful when processing many images
-(e.g., a Kolla build) because:
+or any V2 registry client. Multiple images are processed concurrently
+(default 4, configurable via `--concurrency`). This is useful when
+processing many images (e.g., a Kolla build) because:
 
 - Build and push can overlap (the proxy runs before the build starts)
+- Multiple images are processed in parallel for higher throughput
 - Shared base layers are pushed to the downstream registry only once
   via the layer cache
 

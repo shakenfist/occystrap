@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 import unittest
 
 from occystrap.layer_cache import LayerCache
@@ -177,3 +178,95 @@ class LayerCacheTestCase(unittest.TestCase):
                 'ccc', 'none',
                 'sha256:ddd', 2, 'x')
             self.assertEqual(2, len(cache))
+
+
+class LayerCacheThreadSafetyTestCase(unittest.TestCase):
+    """Tests for LayerCache thread-safety."""
+
+    def test_concurrent_record_and_lookup(self):
+        """Concurrent record() and lookup() calls
+        from multiple threads do not corrupt state."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'cache.json')
+            cache = LayerCache(path)
+
+            errors = []
+            num_threads = 8
+            entries_per_thread = 50
+
+            def writer(thread_id):
+                try:
+                    for i in range(entries_per_thread):
+                        key = 't%d_k%d' % (
+                            thread_id, i)
+                        cache.record(
+                            key, 'none',
+                            'sha256:v%d_%d' % (
+                                thread_id, i),
+                            i, 'media/type')
+                except Exception as e:
+                    errors.append(e)
+
+            def reader(thread_id):
+                try:
+                    for i in range(entries_per_thread):
+                        key = 't%d_k%d' % (
+                            thread_id, i)
+                        cache.lookup(key, 'none')
+                except Exception as e:
+                    errors.append(e)
+
+            threads = []
+            for tid in range(num_threads):
+                threads.append(threading.Thread(
+                    target=writer, args=(tid,)))
+                threads.append(threading.Thread(
+                    target=reader, args=(tid,)))
+
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=10)
+
+            self.assertEqual(errors, [])
+
+            # All entries should be recorded
+            self.assertEqual(
+                num_threads * entries_per_thread,
+                len(cache))
+
+    def test_concurrent_save(self):
+        """Concurrent save() calls do not corrupt
+        the cache file."""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'cache.json')
+            cache = LayerCache(path)
+
+            # Pre-populate
+            for i in range(20):
+                cache.record(
+                    'key%d' % i, 'none',
+                    'sha256:val%d' % i, i,
+                    'media/type')
+
+            errors = []
+
+            def saver():
+                try:
+                    cache.save()
+                except Exception as e:
+                    errors.append(e)
+
+            threads = [
+                threading.Thread(target=saver)
+                for _ in range(8)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=10)
+
+            self.assertEqual(errors, [])
+
+            # File should be valid JSON
+            loaded = LayerCache(path)
+            self.assertEqual(20, len(loaded))

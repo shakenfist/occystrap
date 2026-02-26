@@ -6,9 +6,11 @@
 # configured filter chain, and forwards the result to a
 # downstream registry.
 #
-# The manifest PUT blocks until downstream processing is
-# complete, providing natural backpressure and error
-# propagation: Docker sees 201 on success, 500 on failure.
+# Multiple images can be processed concurrently: each manifest
+# PUT blocks its own HTTP response until processing completes,
+# but a configurable semaphore allows multiple manifests to be
+# processed in parallel. Blob reference counting prevents
+# shared blobs from being deleted while still in use.
 #
 # Docker Registry HTTP API V2:
 # https://distribution.github.io/distribution/spec/api/
@@ -22,6 +24,7 @@ import signal
 import socket
 import tempfile
 import threading
+import time
 import uuid
 from urllib.parse import urlparse, parse_qs
 
@@ -39,19 +42,24 @@ LOG = logs.setup_console(__name__)
 COPY_BUFSIZE = 1024 * 1024  # 1MB chunks
 
 
+DEFAULT_MAX_CONCURRENT = 4
+
+
 class _ProxyState:
     """Shared state between the proxy HTTP handler
     threads and the main process.
 
-    All mutations to uploads and blobs must be
-    protected by the lock.
+    All mutations to uploads, blobs, blob_refcounts,
+    active_processing, and statistics must be protected
+    by the lock.
     """
 
     def __init__(self, temp_dir=None,
                  downstream_uri=None,
                  filter_strs=None,
                  layer_cache=None,
-                 ctx=None):
+                 ctx=None,
+                 max_concurrent=DEFAULT_MAX_CONCURRENT):
         self.temp_dir = temp_dir
         self.downstream_uri = downstream_uri
         self.filter_strs = filter_strs or []
@@ -62,7 +70,21 @@ class _ProxyState:
         self.uploads = {}
         # Completed blobs: digest_hex -> temp file path
         self.blobs = {}
+        # Blob reference counts: digest_hex -> int.
+        # Incremented when a manifest references a blob,
+        # decremented when processing completes. Blobs
+        # are only deleted when refcount reaches 0.
+        self.blob_refcounts = {}
         self.lock = threading.Lock()
+
+        # Semaphore limiting concurrent manifest
+        # processing (backpressure).
+        self.processing_semaphore = (
+            threading.Semaphore(max_concurrent))
+
+        # Count of in-flight manifest processing
+        # operations (for graceful shutdown).
+        self.active_processing = 0
 
         # Statistics
         self.images_processed = 0
@@ -514,7 +536,9 @@ class ProxyRegistryHandler(
 
         Blocks the HTTP response until processing is
         complete. Returns 201 on success, 500 on
-        failure.
+        failure. Multiple manifests can be processed
+        concurrently, limited by the processing
+        semaphore.
         """
         data = self._read_body()
 
@@ -554,20 +578,73 @@ class ProxyRegistryHandler(
         referenced_blobs.add(
             config_digest.split(':')[1])
 
-        # Copy blob references under lock
+        # Under lock: increment refcounts, snapshot
+        # blob paths, and mark processing as active.
+        # Refcounts must be incremented before
+        # acquiring the semaphore so blobs are
+        # protected even while waiting for a slot.
         with self.state.lock:
+            for hex_digest in referenced_blobs:
+                rc = self.state.blob_refcounts
+                rc[hex_digest] = (
+                    rc.get(hex_digest, 0) + 1)
             blobs_snapshot = {
                 k: v
                 for k, v in self.state.blobs.items()
                 if k in referenced_blobs
             }
+            self.state.active_processing += 1
 
-        # Process through pipeline
+        # Acquire semaphore (blocks if too many
+        # images are processing concurrently)
+        self.state.processing_semaphore.acquire()
+
+        success = False
         try:
             self._process_image(
                 repo_name, tag, data,
                 blobs_snapshot)
-            self.state.images_processed += 1
+            success = True
+
+        except Exception as e:
+            with self.state.lock:
+                self.state.images_failed += 1
+
+            LOG.error(
+                'Failed to process %s:%s: %s',
+                repo_name, tag, e)
+
+        finally:
+            self.state.processing_semaphore.release()
+
+            # Decrement refcounts and clean up blobs
+            # that are no longer referenced by any
+            # in-flight manifest processing.
+            with self.state.lock:
+                for hex_digest in referenced_blobs:
+                    rc = self.state.blob_refcounts
+                    count = rc.get(hex_digest, 1) - 1
+                    if count <= 0:
+                        rc.pop(hex_digest, None)
+                        blob_path = (
+                            self.state.blobs.pop(
+                                hex_digest, None))
+                        if blob_path:
+                            try:
+                                os.unlink(blob_path)
+                            except OSError:
+                                pass
+                    else:
+                        rc[hex_digest] = count
+
+                self.state.active_processing -= 1
+
+        # Send HTTP response after cleanup so state
+        # is consistent when the client receives it.
+        if success:
+            with self.state.lock:
+                self.state.images_processed += 1
+
             LOG.info(
                 'Successfully processed %s:%s',
                 repo_name, tag)
@@ -578,31 +655,9 @@ class ProxyRegistryHandler(
                 'sha256:%s' % manifest_digest)
             self.send_header('Content-Length', '0')
             self.end_headers()
-
-        except Exception as e:
-            self.state.images_failed += 1
-            LOG.error(
-                'Failed to process %s:%s: %s',
-                repo_name, tag, e)
-
+        else:
             self.send_response(500)
             self.end_headers()
-
-        finally:
-            # Clean up blobs referenced only by this
-            # manifest. In sequential mode this is safe
-            # because only one manifest is being
-            # processed at a time.
-            with self.state.lock:
-                for hex_digest in referenced_blobs:
-                    blob_path = \
-                        self.state.blobs.pop(
-                            hex_digest, None)
-                    if blob_path:
-                        try:
-                            os.unlink(blob_path)
-                        except OSError:
-                            pass
 
     def _parse_manifest_path(self, path):
         """Extract repository name and tag from
@@ -717,7 +772,8 @@ class _KeepAliveHTTPServer(
 
 def run_proxy(listen_host, listen_port,
               downstream_uri, filter_strs=None,
-              layer_cache_path=None, ctx=None):
+              layer_cache_path=None, ctx=None,
+              max_concurrent=DEFAULT_MAX_CONCURRENT):
     """Start the proxy registry server.
 
     Runs until interrupted by SIGINT or SIGTERM.
@@ -733,6 +789,8 @@ def run_proxy(listen_host, listen_port,
         layer_cache_path: Path to layer cache JSON
             file (optional).
         ctx: Click context object.
+        max_concurrent: Maximum number of images to
+            process concurrently (default 4).
     """
     layer_cache = None
     if layer_cache_path:
@@ -744,7 +802,8 @@ def run_proxy(listen_host, listen_port,
         downstream_uri=downstream_uri,
         filter_strs=filter_strs or [],
         layer_cache=layer_cache,
-        ctx=ctx)
+        ctx=ctx,
+        max_concurrent=max_concurrent)
 
     server = _KeepAliveHTTPServer(
         (listen_host, listen_port),
@@ -791,6 +850,24 @@ def run_proxy(listen_host, listen_port,
 
     LOG.debug('Shutting down server...')
     server.shutdown()
+
+    # Wait for in-flight image processing to finish
+    # (up to 5 minutes).
+    deadline = time.time() + 300
+    with state.lock:
+        active = state.active_processing
+    if active > 0:
+        LOG.info(
+            'Waiting for %d in-flight image(s) to'
+            ' finish...', active)
+    while active > 0 and time.time() < deadline:
+        time.sleep(1)
+        with state.lock:
+            active = state.active_processing
+    if active > 0:
+        LOG.warning(
+            '%d image(s) still processing after'
+            ' shutdown timeout', active)
 
     # Save layer cache on exit
     if layer_cache:

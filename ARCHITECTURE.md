@@ -454,7 +454,7 @@ Key design considerations:
 The `proxy` command (`proxy.py`) runs a persistent Docker Registry V2 server
 on localhost that receives pushes, applies filters, and forwards images to a
 downstream registry. Unlike `dockerpush://` (which is a single-image-per-session
-embedded registry), the proxy handles multiple images sequentially across its
+embedded registry), the proxy handles multiple images concurrently across its
 lifetime.
 
 ```
@@ -469,7 +469,9 @@ The proxy consists of four main components:
 
 - `_ProxyState` - Shared state between HTTP handler threads and the main
   process. Holds temp_dir, downstream_uri, filter_strs, layer_cache, in-progress
-  uploads, completed blobs, and statistics. All mutations protected by a lock.
+  uploads, completed blobs, blob reference counts, and statistics. All mutations
+  protected by a lock. A processing semaphore limits concurrent manifest
+  processing (configurable via `--concurrency`, default 4).
 
 - `_ProxyInput(ImageInput)` - Synthetic input that yields `ImageElement`s from
   already-received blobs. Decompresses layers via `StreamingDecompressor` to
@@ -478,8 +480,9 @@ The proxy consists of four main components:
 
 - `ProxyRegistryHandler` - HTTP request handler implementing the V2 push-path
   endpoints. The manifest PUT blocks the HTTP response while the image is
-  processed through the pipeline and pushed downstream. Returns 201 on success,
-  500 on failure, giving Docker direct error feedback.
+  processed through the pipeline and pushed downstream. Multiple manifests
+  can be processed concurrently. Returns 201 on success, 500 on failure,
+  giving Docker direct error feedback.
 
 - `_KeepAliveHTTPServer` - `ThreadingHTTPServer` subclass that enables
   `SO_KEEPALIVE` on accepted connections, preventing TCP drops during long
@@ -490,13 +493,33 @@ The proxy consists of four main components:
 ```
 1. Client pushes blobs (layers + config) via standard V2 upload flow
 2. Client PUTs manifest
-3. Handler parses manifest, snapshots referenced blobs
-4. Handler creates _ProxyInput from received blobs
-5. PipelineBuilder builds output + filters (fresh per image)
-6. Pipeline runs: _ProxyInput.fetch() -> filters -> RegistryWriter
-7. On success: 201 to client, clean up blobs
-8. On failure: 500 to client, clean up blobs
+3. Handler parses manifest, extracts referenced blob set
+4. Under lock: increment blob refcounts, snapshot blob paths,
+   increment active_processing counter
+5. Acquire processing semaphore (backpressure)
+6. Handler creates _ProxyInput from received blobs
+7. PipelineBuilder builds output + filters (fresh per image)
+8. Pipeline runs: _ProxyInput.fetch() -> filters -> RegistryWriter
+9. Release semaphore, decrement refcounts, delete blobs at refcount 0,
+   decrement active_processing
+10. On success: 201 to client
+11. On failure: 500 to client
 ```
+
+**Concurrent processing and blob reference counting:**
+
+`ThreadingHTTPServer` creates a new thread for each HTTP request, so
+multiple manifest PUTs can arrive simultaneously. A configurable
+semaphore (`--concurrency`, default 4) limits how many manifests are
+processed concurrently, providing backpressure when many images are
+pushed at once.
+
+When two concurrent pushes share blob digests (common for base layers),
+reference counting prevents premature deletion. Blob refcounts are
+incremented *before* acquiring the semaphore, so blobs are protected
+even while a manifest is waiting for a processing slot. Blobs are only
+deleted when their refcount reaches zero (i.e., no in-flight manifest
+references them).
 
 **Key design considerations:**
 
@@ -506,13 +529,15 @@ The proxy consists of four main components:
   so there is no cross-image state leakage in filters or outputs.
 - A shared `LayerCache` across images enables cross-image layer dedup:
   the first image pays full cost, subsequent images with shared base
-  layers skip those layers entirely.
+  layers skip those layers entirely. `LayerCache` is internally
+  thread-safe via its own lock.
 - Blob namespace is flat and content-addressed. Two images sharing a
   base layer push the same digest, giving cross-image dedup for free.
-- Blobs are cleaned up after each manifest is processed (safe in
-  sequential mode since only one manifest processes at a time).
-- `run_proxy()` handles SIGINT/SIGTERM gracefully, saving the layer
-  cache before exiting.
+- Blob reference counting ensures shared blobs survive until all
+  referencing manifests complete processing.
+- `run_proxy()` handles SIGINT/SIGTERM gracefully, waiting up to 5
+  minutes for in-flight image processing to complete before saving
+  the layer cache and exiting.
 
 ### Parallel Downloads
 

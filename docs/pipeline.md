@@ -539,21 +539,28 @@ rather than waiting for earlier layers to complete first.
 ### Pipeline Reuse in Proxy Mode
 
 The `proxy` command demonstrates that the pipeline is fully reusable.
-Each received image gets a fresh pipeline built by `PipelineBuilder`:
+Each received image gets a fresh pipeline built by `PipelineBuilder`,
+and multiple images can be processed concurrently:
 
 ```
 Proxy receives image push
     └── _handle_manifest_put() blocks HTTP response
+    └── Increment blob refcounts (protects shared blobs)
+    └── Acquire processing semaphore (backpressure)
     └── Create _ProxyInput (synthetic ImageInput from received blobs)
     └── PipelineBuilder builds fresh output + filters
     └── Run pipeline: fetch() → filters → RegistryWriter
+    └── Decrement refcounts, delete blobs at refcount 0
     └── Return 201/500 to client
 ```
 
 `PipelineBuilder.build_pipeline()` creates new input/output/filter
 instances on each call with no shared mutable state, so running the
 pipeline multiple times in one process is safe. The proxy keeps a
-single `LayerCache` across images for cross-image layer dedup.
+single `LayerCache` (internally thread-safe) across images for
+cross-image layer dedup. Blob reference counting ensures shared
+blobs are not deleted while another concurrent manifest still
+references them.
 
 ### Hash Recalculation
 

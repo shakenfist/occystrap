@@ -14,6 +14,7 @@ import requests
 
 from occystrap import constants
 from occystrap.proxy import (
+    DEFAULT_MAX_CONCURRENT,
     _ProxyState,
     _ProxyInput,
     ProxyRegistryHandler,
@@ -626,3 +627,422 @@ class TestProxyState(unittest.TestCase):
         self.assertEqual(
             state.filter_strs,
             ['normalize-timestamps'])
+
+    def test_default_max_concurrent(self):
+        state = _ProxyState()
+        self.assertEqual(
+            DEFAULT_MAX_CONCURRENT, 4)
+        # Semaphore allows DEFAULT_MAX_CONCURRENT
+        # concurrent acquires
+        for _ in range(DEFAULT_MAX_CONCURRENT):
+            self.assertTrue(
+                state.processing_semaphore
+                .acquire(blocking=False))
+        # Next acquire should block (non-blocking
+        # returns False)
+        self.assertFalse(
+            state.processing_semaphore
+            .acquire(blocking=False))
+
+    def test_custom_max_concurrent(self):
+        state = _ProxyState(max_concurrent=2)
+        self.assertTrue(
+            state.processing_semaphore
+            .acquire(blocking=False))
+        self.assertTrue(
+            state.processing_semaphore
+            .acquire(blocking=False))
+        self.assertFalse(
+            state.processing_semaphore
+            .acquire(blocking=False))
+
+    def test_blob_refcounts_initialized(self):
+        state = _ProxyState()
+        self.assertEqual(state.blob_refcounts, {})
+
+    def test_active_processing_initialized(self):
+        state = _ProxyState()
+        self.assertEqual(state.active_processing, 0)
+
+
+class TestConcurrentManifests(unittest.TestCase):
+    """Tests for concurrent manifest processing."""
+
+    def setUp(self):
+        self.state = _ProxyState(
+            downstream_uri='localhost:9999',
+            max_concurrent=4)
+        self.server, self.port = _start_test_proxy(
+            self.state)
+        self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
+
+    def tearDown(self):
+        self.server.shutdown()
+        for path in self.state.blobs.values():
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    def test_concurrent_manifests_both_succeed(
+            self, mock_builder_cls):
+        """Two images pushed simultaneously both
+        succeed (201)."""
+        # Gate to hold processing until both
+        # manifests are in-flight.
+        gate = threading.Event()
+
+        def slow_build_output(*args, **kwargs):
+            gate.wait(timeout=10)
+            out = mock.MagicMock()
+            out.requires_ordered_layers = True
+            out.fetch_callback = mock.MagicMock(
+                return_value=True)
+            return out
+
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_builder.build_output.side_effect = \
+            slow_build_output
+
+        # Build two distinct images
+        img1 = _make_test_image([b'image-1-layer'])
+        img2 = _make_test_image([b'image-2-layer'])
+
+        # Upload blobs for image 1
+        _upload_blob(
+            self.sess, self.base, 'img1',
+            img1[1])
+        for c, _, _ in img1[3]:
+            _upload_blob(
+                self.sess, self.base, 'img1', c)
+
+        # Upload blobs for image 2
+        _upload_blob(
+            self.sess, self.base, 'img2',
+            img2[1])
+        for c, _, _ in img2[3]:
+            _upload_blob(
+                self.sess, self.base, 'img2', c)
+
+        results = [None, None]
+
+        def push_manifest(idx, repo, manifest):
+            s = _no_proxy_session()
+            results[idx] = s.put(
+                '%s/v2/%s/manifests/latest'
+                % (self.base, repo),
+                data=manifest,
+                headers={
+                    'Content-Type':
+                        constants
+                        .MEDIA_TYPE_DOCKER_MANIFEST_V2
+                })
+
+        t1 = threading.Thread(
+            target=push_manifest,
+            args=(0, 'img1', img1[0]))
+        t2 = threading.Thread(
+            target=push_manifest,
+            args=(1, 'img2', img2[0]))
+
+        t1.start()
+        t2.start()
+
+        # Let both threads enter processing
+        import time
+        time.sleep(0.3)
+
+        # Release the gate
+        gate.set()
+
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        self.assertEqual(results[0].status_code, 201)
+        self.assertEqual(results[1].status_code, 201)
+        self.assertEqual(
+            self.state.images_processed, 2)
+        self.assertEqual(
+            self.state.images_failed, 0)
+        self.assertEqual(
+            self.state.active_processing, 0)
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    def test_backpressure_serializes_manifests(
+            self, mock_builder_cls):
+        """With max_concurrent=1, two concurrent
+        manifests are serialized."""
+        # Recreate state with max_concurrent=1
+        self.state = _ProxyState(
+            downstream_uri='localhost:9999',
+            max_concurrent=1)
+        self.server.shutdown()
+        self.server, self.port = _start_test_proxy(
+            self.state)
+        self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
+
+        processing_order = []
+        gate1 = threading.Event()
+
+        call_count = [0]
+        call_lock = threading.Lock()
+
+        def tracked_build_output(*args, **kwargs):
+            with call_lock:
+                call_count[0] += 1
+                my_idx = call_count[0]
+            processing_order.append(
+                'start-%d' % my_idx)
+            if my_idx == 1:
+                # First call blocks until released
+                gate1.wait(timeout=10)
+            out = mock.MagicMock()
+            out.requires_ordered_layers = True
+            out.fetch_callback = mock.MagicMock(
+                return_value=True)
+            processing_order.append(
+                'end-%d' % my_idx)
+            return out
+
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_builder.build_output.side_effect = \
+            tracked_build_output
+
+        img1 = _make_test_image([b'ser-layer-1'])
+        img2 = _make_test_image([b'ser-layer-2'])
+
+        # Upload blobs for both
+        _upload_blob(
+            self.sess, self.base, 'a',
+            img1[1])
+        for c, _, _ in img1[3]:
+            _upload_blob(
+                self.sess, self.base, 'a', c)
+
+        _upload_blob(
+            self.sess, self.base, 'b',
+            img2[1])
+        for c, _, _ in img2[3]:
+            _upload_blob(
+                self.sess, self.base, 'b', c)
+
+        results = [None, None]
+
+        def push(idx, repo, manifest):
+            s = _no_proxy_session()
+            results[idx] = s.put(
+                '%s/v2/%s/manifests/latest'
+                % (self.base, repo),
+                data=manifest,
+                headers={
+                    'Content-Type':
+                        constants
+                        .MEDIA_TYPE_DOCKER_MANIFEST_V2
+                })
+
+        t1 = threading.Thread(
+            target=push,
+            args=(0, 'a', img1[0]))
+        t2 = threading.Thread(
+            target=push,
+            args=(1, 'b', img2[0]))
+
+        t1.start()
+        import time
+        time.sleep(0.3)
+        t2.start()
+        time.sleep(0.3)
+
+        # Release first manifest
+        gate1.set()
+
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        self.assertEqual(results[0].status_code, 201)
+        self.assertEqual(results[1].status_code, 201)
+
+        # Second processing must start after first
+        # due to max_concurrent=1
+        self.assertIn('start-1', processing_order)
+        self.assertIn('end-1', processing_order)
+        self.assertIn('start-2', processing_order)
+        idx_end1 = processing_order.index('end-1')
+        idx_start2 = processing_order.index(
+            'start-2')
+        self.assertLess(idx_end1, idx_start2)
+
+
+class TestBlobRefcounting(unittest.TestCase):
+    """Tests for blob reference counting during
+    concurrent processing."""
+
+    def setUp(self):
+        self.state = _ProxyState(
+            downstream_uri='localhost:9999',
+            max_concurrent=4)
+        self.server, self.port = _start_test_proxy(
+            self.state)
+        self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
+
+    def tearDown(self):
+        self.server.shutdown()
+        for path in self.state.blobs.values():
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    def test_shared_blob_survives_first_finish(
+            self, mock_builder_cls):
+        """A shared blob is not deleted when the first
+        manifest finishes but the second is still
+        processing."""
+        gate1 = threading.Event()
+        gate2 = threading.Event()
+
+        call_count = [0]
+        call_lock = threading.Lock()
+
+        shared_blob_exists = [None]
+
+        def gated_build_output(*args, **kwargs):
+            with call_lock:
+                call_count[0] += 1
+                my_idx = call_count[0]
+
+            if my_idx == 1:
+                # First finishes quickly
+                gate1.wait(timeout=10)
+            else:
+                # Second waits then checks blob
+                gate2.wait(timeout=10)
+                # Check if shared blob still exists
+                with self.state.lock:
+                    shared_blob_exists[0] = bool(
+                        self.state.blobs)
+
+            out = mock.MagicMock()
+            out.requires_ordered_layers = True
+            out.fetch_callback = mock.MagicMock(
+                return_value=True)
+            return out
+
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_builder.build_output.side_effect = \
+            gated_build_output
+
+        # Both images share the same layer blob
+        shared_layer = b'shared-layer-data'
+        img1 = _make_test_image([shared_layer])
+        img2 = _make_test_image([shared_layer])
+
+        # Upload shared blobs (upload once, both
+        # manifests reference same digests)
+        _upload_blob(
+            self.sess, self.base, 'x',
+            img1[1])
+        for c, _, _ in img1[3]:
+            _upload_blob(
+                self.sess, self.base, 'x', c)
+        # Upload config for second image (different
+        # config since different diff_ids layout)
+        _upload_blob(
+            self.sess, self.base, 'y',
+            img2[1])
+
+        results = [None, None]
+
+        def push(idx, repo, manifest):
+            s = _no_proxy_session()
+            results[idx] = s.put(
+                '%s/v2/%s/manifests/latest'
+                % (self.base, repo),
+                data=manifest,
+                headers={
+                    'Content-Type':
+                        constants
+                        .MEDIA_TYPE_DOCKER_MANIFEST_V2
+                })
+
+        t1 = threading.Thread(
+            target=push, args=(0, 'x', img1[0]))
+        t2 = threading.Thread(
+            target=push, args=(1, 'y', img2[0]))
+
+        t1.start()
+        t2.start()
+
+        import time
+        time.sleep(0.3)
+
+        # Release first manifest (it finishes)
+        gate1.set()
+        time.sleep(0.5)
+
+        # Now release second -- it checks blob
+        gate2.set()
+
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        # The shared blob should have survived
+        # the first manifest's cleanup because
+        # the refcount was > 1
+        self.assertTrue(
+            shared_blob_exists[0],
+            'Shared blob was deleted while '
+            'second manifest was still processing')
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    def test_refcounts_zero_after_completion(
+            self, mock_builder_cls):
+        """After all manifests complete, all blob
+        refcounts should be cleared."""
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        mock_output = mock.MagicMock()
+        mock_output.requires_ordered_layers = True
+        mock_output.fetch_callback = \
+            mock.MagicMock(return_value=True)
+        mock_builder.build_output.return_value = \
+            mock_output
+
+        (manifest_bytes, config_bytes,
+         config_hex, layer_blobs) = \
+            _make_test_image()
+
+        _upload_blob(
+            self.sess, self.base, 'test',
+            config_bytes)
+        for c, _, _ in layer_blobs:
+            _upload_blob(
+                self.sess, self.base, 'test', c)
+
+        r = self.sess.put(
+            '%s/v2/test/manifests/latest'
+            % self.base,
+            data=manifest_bytes,
+            headers={
+                'Content-Type':
+                    constants
+                    .MEDIA_TYPE_DOCKER_MANIFEST_V2
+            })
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(
+            self.state.blob_refcounts, {})
+        self.assertEqual(
+            self.state.active_processing, 0)

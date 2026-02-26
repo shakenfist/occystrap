@@ -652,8 +652,12 @@ cli.add_command(check_cmd)
 @click.option('--filter', '-f', 'filters', multiple=True,
               help='Apply filter (can be specified'
               ' multiple times)')
+@click.option('--concurrency', '-c', default=4, type=int,
+              help='Max concurrent image processing'
+              ' (default: 4)')
 @click.pass_context
-def proxy_cmd(ctx, listen, downstream, filters):
+def proxy_cmd(ctx, listen, downstream, filters,
+              concurrency):
     """Run a filtering registry proxy.
 
     Starts a Docker Registry V2 server that receives
@@ -702,7 +706,8 @@ def proxy_cmd(ctx, listen, downstream, filters):
             host, port, downstream,
             filter_strs=list(filters),
             layer_cache_path=layer_cache_path,
-            ctx=ctx)
+            ctx=ctx,
+            max_concurrent=concurrency)
     except Exception as e:
         click.echo('Error: %s' % e, err=True)
         sys.exit(1)
