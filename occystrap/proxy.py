@@ -6,6 +6,12 @@
 # configured filter chain, and forwards the result to a
 # downstream registry.
 #
+# When --upstream is configured, the proxy also serves pull
+# requests. On a pull, occystrap checks the downstream
+# registry (which acts as a persistent cache). On cache miss,
+# it fetches from the upstream registry, applies filters,
+# pushes to downstream, and serves the result to the client.
+#
 # Multiple images can be processed concurrently: each manifest
 # PUT blocks its own HTTP response until processing completes,
 # but a configurable semaphore allows multiple manifests to be
@@ -32,7 +38,9 @@ from shakenfist_utilities import logs
 
 from occystrap import compression
 from occystrap import constants
+from occystrap import uri as uri_module
 from occystrap.inputs.base import ImageInput
+from occystrap.inputs import registry as input_registry
 from occystrap.layer_cache import LayerCache
 from occystrap.pipeline import PipelineBuilder
 
@@ -50,8 +58,8 @@ class _ProxyState:
     threads and the main process.
 
     All mutations to uploads, blobs, blob_refcounts,
-    active_processing, and statistics must be protected
-    by the lock.
+    active_processing, pull_locks, downstream_images,
+    and statistics must be protected by the lock.
     """
 
     def __init__(self, temp_dir=None,
@@ -59,12 +67,20 @@ class _ProxyState:
                  filter_strs=None,
                  layer_cache=None,
                  ctx=None,
-                 max_concurrent=DEFAULT_MAX_CONCURRENT):
+                 max_concurrent=DEFAULT_MAX_CONCURRENT,
+                 upstream_uri=None,
+                 upstream_username=None,
+                 upstream_password=None):
         self.temp_dir = temp_dir
         self.downstream_uri = downstream_uri
         self.filter_strs = filter_strs or []
         self.layer_cache = layer_cache
         self.ctx = ctx
+
+        # Upstream registry for pull-through (optional)
+        self.upstream_uri = upstream_uri
+        self.upstream_username = upstream_username
+        self.upstream_password = upstream_password
 
         # In-progress uploads: uuid -> {path, offset}
         self.uploads = {}
@@ -86,9 +102,23 @@ class _ProxyState:
         # operations (for graceful shutdown).
         self.active_processing = 0
 
-        # Statistics
+        # Cached Image instances for downstream reads
+        # (pull-through). Keyed by repo_name.
+        self.downstream_images = {}
+
+        # Per-image locks for pull-through to prevent
+        # duplicate upstream fetches. Keyed by
+        # 'repo_name:tag'.
+        self.pull_locks = {}
+
+        # Push statistics
         self.images_processed = 0
         self.images_failed = 0
+
+        # Pull-through statistics
+        self.images_pulled = 0
+        self.pull_cache_hits = 0
+        self.pull_cache_misses = 0
 
 
 class _ProxyInput(ImageInput):
@@ -300,7 +330,13 @@ class ProxyRegistryHandler(
         return parsed.path, params
 
     def do_GET(self):
-        """Handle GET /v2/ version check."""
+        """Handle GET requests.
+
+        Routes:
+        - /v2/ — version check
+        - /v2/{name}/manifests/{ref} — pull manifest
+        - /v2/{name}/blobs/{digest} — pull blob
+        """
         path, _ = self._parse_path()
         if path == '/v2/' or path == '/v2':
             self.send_response(200)
@@ -311,23 +347,35 @@ class ProxyRegistryHandler(
                 'Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{}')
+        elif '/manifests/' in path:
+            self._handle_pull_manifest(path)
+        elif '/blobs/sha256:' in path:
+            self._handle_pull_blob(path)
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_HEAD(self):
-        """Handle HEAD /v2/{name}/blobs/{digest}.
+        """Handle HEAD requests.
 
-        Returns 200 if the blob has already been
-        uploaded in this session. Returns 404 otherwise
-        to force Docker to upload it.
+        Routes:
+        - /v2/{name}/blobs/{digest} — check local
+          push-path blobs, then downstream if
+          upstream is configured
+        - /v2/{name}/manifests/{ref} — check
+          downstream (pull-through only)
         """
         path, _ = self._parse_path()
+
+        if '/manifests/' in path:
+            self._handle_head_manifest(path)
+            return
 
         if '/blobs/sha256:' in path:
             digest_hex = path.split(
                 '/blobs/sha256:')[1]
 
+            # Check local push-path blobs first
             with self.state.lock:
                 blob_path = self.state.blobs.get(
                     digest_hex)
@@ -341,6 +389,11 @@ class ProxyRegistryHandler(
                     'Content-Length',
                     str(blob_size))
                 self.end_headers()
+                return
+
+            # Check downstream if pull-through
+            if self.state.upstream_uri:
+                self._handle_head_blob(path)
                 return
 
         self.send_response(404)
@@ -678,47 +731,23 @@ class ProxyRegistryHandler(
 
         return (parts[0], parts[1])
 
-    def _process_image(self, repo_name, tag,
-                       manifest_data, blobs):
-        """Process one image through the filter
-        pipeline and push to downstream registry.
+    def _build_output_pipeline(self, repo_name, tag):
+        """Build the output pipeline (filters + writer)
+        for a given repo/tag targeting downstream.
 
-        Args:
-            repo_name: Repository name from the push
-                (e.g., 'kolla/nova-api').
-            tag: Image tag (e.g., 'latest').
-            manifest_data: Raw manifest JSON bytes.
-            blobs: Dict of digest_hex -> temp file
-                path for blobs referenced by this
-                manifest.
+        Returns the outermost output wrapper. Reused
+        by both push-path and pull-path.
         """
-        # Build downstream URI with the repo name
-        # from the push, preserving the path.
         downstream = self.state.downstream_uri
         dest_uri = 'registry://%s/%s:%s' % (
             downstream, repo_name, tag)
 
-        LOG.info(
-            'Processing %s:%s -> %s',
-            repo_name, tag, dest_uri)
-
-        # Create synthetic input
-        proxy_input = _ProxyInput(
-            repo_name, tag, manifest_data,
-            blobs, temp_dir=self.state.temp_dir)
-
-        # Build output pipeline (filters + output)
         builder = PipelineBuilder(self.state.ctx)
-
-        # We need to build the output and filters
-        # manually since we have a custom input.
-        from occystrap import uri
-        dest_spec = uri.parse_uri(dest_uri)
+        dest_spec = uri_module.parse_uri(dest_uri)
         filter_specs = [
-            uri.parse_filter(f)
+            uri_module.parse_filter(f)
             for f in self.state.filter_strs]
 
-        # Set up layer cache
         layer_cache = self.state.layer_cache
         filters_hash = 'none'
         if layer_cache is not None:
@@ -736,20 +765,375 @@ class ProxyRegistryHandler(
             layer_cache=layer_cache,
             filters_hash=filters_hash)
 
-        # Wrap with filters (reverse order so first
-        # filter is outermost)
         for filter_spec in reversed(filter_specs):
             output = builder.build_filter(
                 filter_spec, output,
                 image=repo_name, tag=tag)
 
-        # Run the pipeline
+        return output
+
+    def _run_pipeline(self, input_source, output):
+        """Run a pipeline from input through output."""
         ordered = output.requires_ordered_layers
-        for element in proxy_input.fetch(
+        for element in input_source.fetch(
                 fetch_callback=output.fetch_callback,
                 ordered=ordered):
             output.process_image_element(element)
         output.finalize()
+
+    def _process_image(self, repo_name, tag,
+                       manifest_data, blobs):
+        """Process one image through the filter
+        pipeline and push to downstream registry.
+
+        Args:
+            repo_name: Repository name from the push
+                (e.g., 'kolla/nova-api').
+            tag: Image tag (e.g., 'latest').
+            manifest_data: Raw manifest JSON bytes.
+            blobs: Dict of digest_hex -> temp file
+                path for blobs referenced by this
+                manifest.
+        """
+        LOG.info(
+            'Processing %s:%s -> registry://%s/%s:%s',
+            repo_name, tag,
+            self.state.downstream_uri,
+            repo_name, tag)
+
+        proxy_input = _ProxyInput(
+            repo_name, tag, manifest_data,
+            blobs, temp_dir=self.state.temp_dir)
+
+        output = self._build_output_pipeline(
+            repo_name, tag)
+        self._run_pipeline(proxy_input, output)
+
+    # -- Pull-through support --
+
+    def _get_downstream_image(self, repo_name):
+        """Get or create a cached Image instance for
+        authenticated reads from the downstream
+        registry.
+
+        Thread-safe. Image instances are cached per
+        repo_name for auth token reuse.
+        """
+        with self.state.lock:
+            img = self.state.downstream_images.get(
+                repo_name)
+            if img is not None:
+                return img
+
+        ctx = self.state.ctx
+        ctx_obj = ctx.obj if ctx else {}
+        insecure = ctx_obj.get('INSECURE', False)
+
+        img = input_registry.Image(
+            self.state.downstream_uri,
+            repo_name, 'latest',
+            secure=(not insecure),
+            username=ctx_obj.get('USERNAME'),
+            password=ctx_obj.get('PASSWORD'),
+            max_workers=1)
+
+        with self.state.lock:
+            # Another thread may have created it
+            existing = self.state.downstream_images.get(
+                repo_name)
+            if existing is not None:
+                return existing
+            self.state.downstream_images[
+                repo_name] = img
+        return img
+
+    def _get_pull_lock(self, repo_name, tag):
+        """Get or create a per-image lock for
+        pull-through deduplication. Thread-safe."""
+        key = '%s:%s' % (repo_name, tag)
+        with self.state.lock:
+            if key not in self.state.pull_locks:
+                self.state.pull_locks[key] = (
+                    threading.Lock())
+            return self.state.pull_locks[key]
+
+    def _downstream_manifest_url(self, repo_name,
+                                 tag):
+        """Build the downstream manifest URL."""
+        ctx = self.state.ctx
+        ctx_obj = ctx.obj if ctx else {}
+        insecure = ctx_obj.get('INSECURE', False)
+        scheme = 'http' if insecure else 'https'
+        return '%s://%s/v2/%s/manifests/%s' % (
+            scheme, self.state.downstream_uri,
+            repo_name, tag)
+
+    def _downstream_blob_url(self, repo_name, digest):
+        """Build the downstream blob URL."""
+        ctx = self.state.ctx
+        ctx_obj = ctx.obj if ctx else {}
+        insecure = ctx_obj.get('INSECURE', False)
+        scheme = 'http' if insecure else 'https'
+        return '%s://%s/v2/%s/blobs/%s' % (
+            scheme, self.state.downstream_uri,
+            repo_name, digest)
+
+    def _pull_and_process(self, repo_name, tag):
+        """Fetch from upstream, filter, push to
+        downstream.
+
+        Creates a RegistryInput from the upstream
+        registry and runs it through the standard
+        filter pipeline targeting the downstream
+        registry.
+        """
+        ctx = self.state.ctx
+        ctx_obj = ctx.obj if ctx else {}
+        insecure = ctx_obj.get('INSECURE', False)
+
+        LOG.info(
+            'Pull-through: fetching %s:%s from'
+            ' upstream %s',
+            repo_name, tag,
+            self.state.upstream_uri)
+
+        upstream_input = input_registry.Image(
+            self.state.upstream_uri,
+            repo_name, tag,
+            secure=(not insecure),
+            username=self.state.upstream_username,
+            password=self.state.upstream_password,
+            temp_dir=self.state.temp_dir)
+
+        output = self._build_output_pipeline(
+            repo_name, tag)
+        self._run_pipeline(upstream_input, output)
+
+    def _proxy_downstream_response(self, resp):
+        """Stream a downstream registry response back
+        to the client."""
+        self.send_response(200)
+        for header in ('Content-Type',
+                       'Content-Length',
+                       'Docker-Content-Digest'):
+            val = resp.headers.get(header)
+            if val:
+                self.send_header(header, val)
+        self.end_headers()
+        for chunk in resp.iter_content(COPY_BUFSIZE):
+            self.wfile.write(chunk)
+
+    def _handle_pull_manifest(self, path):
+        """Handle GET /v2/{name}/manifests/{ref} for
+        pull-through.
+
+        Checks downstream (cache). On miss, fetches
+        from upstream, filters, pushes to downstream,
+        then serves from downstream.
+        """
+        if not self.state.upstream_uri:
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        repo_name, tag = (
+            self._parse_manifest_path(path))
+
+        downstream_img = (
+            self._get_downstream_image(repo_name))
+        manifest_url = (
+            self._downstream_manifest_url(
+                repo_name, tag))
+        accept = ','.join([
+            constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+            constants.MEDIA_TYPE_OCI_MANIFEST])
+
+        # Check downstream cache
+        try:
+            resp = downstream_img.request_url(
+                'GET', manifest_url,
+                headers={'Accept': accept})
+            # Cache hit
+            with self.state.lock:
+                self.state.pull_cache_hits += 1
+                self.state.images_pulled += 1
+            self._proxy_downstream_response(resp)
+            return
+        except Exception:
+            pass
+
+        # Cache miss — acquire per-image lock to
+        # prevent duplicate upstream fetches.
+        pull_lock = self._get_pull_lock(
+            repo_name, tag)
+        with pull_lock:
+            # Double-check after acquiring lock
+            try:
+                resp = downstream_img.request_url(
+                    'GET', manifest_url,
+                    headers={'Accept': accept})
+                with self.state.lock:
+                    self.state.pull_cache_hits += 1
+                    self.state.images_pulled += 1
+                self._proxy_downstream_response(resp)
+                return
+            except Exception:
+                pass
+
+            # Fetch from upstream, filter, push
+            # downstream.
+            self.state.processing_semaphore.acquire()
+            with self.state.lock:
+                self.state.active_processing += 1
+            try:
+                self._pull_and_process(
+                    repo_name, tag)
+            except Exception as e:
+                with self.state.lock:
+                    self.state.images_failed += 1
+                LOG.error(
+                    'Pull-through failed for'
+                    ' %s:%s: %s',
+                    repo_name, tag, e)
+                self.send_response(502)
+                self.end_headers()
+                return
+            finally:
+                self.state.processing_semaphore \
+                    .release()
+                with self.state.lock:
+                    self.state.active_processing -= 1
+
+        # Now serve from downstream. Clear cached
+        # manifest so the Image re-fetches.
+        downstream_img._manifest = None
+        try:
+            resp = downstream_img.request_url(
+                'GET', manifest_url,
+                headers={'Accept': accept})
+            with self.state.lock:
+                self.state.pull_cache_misses += 1
+                self.state.images_pulled += 1
+            self._proxy_downstream_response(resp)
+        except Exception as e:
+            LOG.error(
+                'Failed to serve %s:%s from'
+                ' downstream after processing: %s',
+                repo_name, tag, e)
+            self.send_response(502)
+            self.end_headers()
+
+    def _parse_blob_path(self, path):
+        """Extract repository name and digest from
+        blob path.
+
+        Path format: /v2/{name}/blobs/{digest}
+        where {name} can contain slashes.
+        """
+        rest = path
+        if rest.startswith('/v2/'):
+            rest = rest[4:]
+
+        parts = rest.split('/blobs/')
+        if len(parts) != 2:
+            return ('unknown', 'unknown')
+
+        return (parts[0], parts[1])
+
+    def _handle_pull_blob(self, path):
+        """Handle GET /v2/{name}/blobs/{digest} for
+        pull-through.
+
+        Proxies the blob from the downstream registry.
+        """
+        if not self.state.upstream_uri:
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        repo_name, digest = (
+            self._parse_blob_path(path))
+
+        downstream_img = (
+            self._get_downstream_image(repo_name))
+        blob_url = self._downstream_blob_url(
+            repo_name, digest)
+
+        try:
+            resp = downstream_img.request_url(
+                'GET', blob_url, stream=True)
+            self._proxy_downstream_response(resp)
+        except Exception:
+            self.send_response(404)
+            self.end_headers()
+
+    def _handle_head_manifest(self, path):
+        """Handle HEAD /v2/{name}/manifests/{ref}.
+
+        Returns 200 if the image exists in downstream,
+        404 otherwise. Does not trigger upstream fetch.
+        """
+        if not self.state.upstream_uri:
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        repo_name, tag = (
+            self._parse_manifest_path(path))
+
+        downstream_img = (
+            self._get_downstream_image(repo_name))
+        manifest_url = (
+            self._downstream_manifest_url(
+                repo_name, tag))
+        accept = ','.join([
+            constants.MEDIA_TYPE_DOCKER_MANIFEST_V2,
+            constants.MEDIA_TYPE_OCI_MANIFEST])
+
+        try:
+            resp = downstream_img.request_url(
+                'HEAD', manifest_url,
+                headers={'Accept': accept})
+            self.send_response(200)
+            for header in ('Content-Type',
+                           'Content-Length',
+                           'Docker-Content-Digest'):
+                val = resp.headers.get(header)
+                if val:
+                    self.send_header(header, val)
+            self.end_headers()
+        except Exception:
+            self.send_response(404)
+            self.end_headers()
+
+    def _handle_head_blob(self, path):
+        """Handle HEAD /v2/{name}/blobs/{digest} for
+        pull-through.
+
+        Checks downstream registry for the blob.
+        """
+        repo_name, digest = (
+            self._parse_blob_path(path))
+
+        downstream_img = (
+            self._get_downstream_image(repo_name))
+        blob_url = self._downstream_blob_url(
+            repo_name, digest)
+
+        try:
+            resp = downstream_img.request_url(
+                'HEAD', blob_url)
+            self.send_response(200)
+            self.send_header(
+                'Docker-Content-Digest', digest)
+            cl = resp.headers.get('Content-Length')
+            if cl:
+                self.send_header(
+                    'Content-Length', cl)
+            self.end_headers()
+        except Exception:
+            self.send_response(404)
+            self.end_headers()
 
 
 class _KeepAliveHTTPServer(
@@ -773,7 +1157,10 @@ class _KeepAliveHTTPServer(
 def run_proxy(listen_host, listen_port,
               downstream_uri, filter_strs=None,
               layer_cache_path=None, ctx=None,
-              max_concurrent=DEFAULT_MAX_CONCURRENT):
+              max_concurrent=DEFAULT_MAX_CONCURRENT,
+              upstream_uri=None,
+              upstream_username=None,
+              upstream_password=None):
     """Start the proxy registry server.
 
     Runs until interrupted by SIGINT or SIGTERM.
@@ -791,6 +1178,13 @@ def run_proxy(listen_host, listen_port,
         ctx: Click context object.
         max_concurrent: Maximum number of images to
             process concurrently (default 4).
+        upstream_uri: Upstream registry host for
+            pull-through (e.g., 'docker.io').
+            When set, enables pull-through proxying.
+        upstream_username: Credentials for upstream
+            registry (optional).
+        upstream_password: Credentials for upstream
+            registry (optional).
     """
     layer_cache = None
     if layer_cache_path:
@@ -803,7 +1197,10 @@ def run_proxy(listen_host, listen_port,
         filter_strs=filter_strs or [],
         layer_cache=layer_cache,
         ctx=ctx,
-        max_concurrent=max_concurrent)
+        max_concurrent=max_concurrent,
+        upstream_uri=upstream_uri,
+        upstream_username=upstream_username,
+        upstream_password=upstream_password)
 
     server = _KeepAliveHTTPServer(
         (listen_host, listen_port),
@@ -816,6 +1213,10 @@ def run_proxy(listen_host, listen_port,
         addr[0], addr[1])
     LOG.debug(
         'Downstream: %s', downstream_uri)
+    if upstream_uri:
+        LOG.debug(
+            'Upstream: %s (pull-through enabled)',
+            upstream_uri)
     if filter_strs:
         LOG.debug(
             'Filters: %s',
@@ -842,8 +1243,10 @@ def run_proxy(listen_host, listen_port,
         daemon=True)
     server_thread.start()
 
-    LOG.info('Ready to receive pushes. Press Ctrl+C'
-             ' to stop.')
+    ready_msg = 'Ready to receive pushes.'
+    if upstream_uri:
+        ready_msg = 'Ready for pushes and pulls.'
+    LOG.info('%s Press Ctrl+C to stop.', ready_msg)
 
     # Block until shutdown signal
     shutdown_event.wait()
@@ -874,10 +1277,14 @@ def run_proxy(listen_host, listen_port,
         layer_cache.save()
 
     LOG.info(
-        'Proxy stopped. Processed %d images'
-        ' (%d failed).',
+        'Proxy stopped. Pushed %d images'
+        ' (%d failed). Pulled %d images'
+        ' (%d cache hits, %d misses).',
         state.images_processed,
-        state.images_failed)
+        state.images_failed,
+        state.images_pulled,
+        state.pull_cache_hits,
+        state.pull_cache_misses)
 
     # Clean up any remaining blobs
     with state.lock:

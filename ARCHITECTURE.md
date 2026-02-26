@@ -539,6 +539,38 @@ references them).
   minutes for in-flight image processing to complete before saving
   the layer cache and exiting.
 
+**Pull-through / full proxy:**
+
+When `--upstream` is specified, the proxy also serves as a pull-through
+cache. Clients can pull images via standard Docker V2 GET endpoints.
+The proxy checks the downstream registry first (acting as a persistent
+cache), and on a cache miss, fetches from the upstream registry, applies
+filters, pushes the filtered image to downstream, then serves it.
+
+```
+Client GET manifest → proxy → downstream HEAD → 200 → serve from downstream
+                                              → 404 → acquire per-image lock
+                                                     → upstream fetch → filter
+                                                     → push downstream → serve
+```
+
+Pull-through reuses the existing pipeline infrastructure:
+- `_build_output_pipeline()` constructs the filter chain + registry
+  output (shared with the push path)
+- `_run_pipeline()` executes the fetch/filter/output loop
+- `input_registry.Image` provides authenticated upstream reads
+- Cached `input_registry.Image` instances per repo provide
+  authenticated downstream reads (token caching, streaming)
+
+Per-image locks (`pull_locks`) prevent duplicate upstream fetches
+when multiple clients request the same image concurrently. A
+double-check pattern re-verifies the downstream cache after
+acquiring the lock. The processing semaphore is shared between
+push and pull paths for unified backpressure.
+
+Pull statistics (`images_pulled`, `pull_cache_hits`,
+`pull_cache_misses`) are logged at shutdown alongside push stats.
+
 ### Parallel Downloads
 
 The registry input (`inputs/registry.py`) uses `ThreadPoolExecutor` for parallel

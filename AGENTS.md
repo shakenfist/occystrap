@@ -125,6 +125,13 @@ and `tox -epy3` (unit tests). Install with `pre-commit install`.
   reference counting prevents shared blobs from being deleted while still
   in use. `LayerCache` is internally thread-safe. To add new proxy features,
   ensure shared state mutations are under `state.lock`
+- **Pull-through proxy**: When `--upstream` is set, the proxy also handles
+  GET requests. `_handle_pull_manifest` checks downstream cache first, then
+  fetches from upstream on miss. `_handle_pull_blob` proxies blob GETs from
+  downstream. Per-image locks (`pull_locks`) prevent duplicate upstream
+  fetches. `_build_output_pipeline()` and `_run_pipeline()` are shared
+  between push and pull paths. Cached `input_registry.Image` instances
+  in `state.downstream_images` provide authenticated downstream reads
 - **Create a synthetic input**: Follow `_ProxyInput` in `proxy.py` as a
   reference for creating an `ImageInput` subclass that yields
   `ImageElement`s from data already in memory or on disk (rather than

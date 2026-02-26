@@ -655,14 +655,25 @@ cli.add_command(check_cmd)
 @click.option('--concurrency', '-c', default=4, type=int,
               help='Max concurrent image processing'
               ' (default: 4)')
+@click.option('--upstream', '-u', default=None,
+              help='Upstream registry for pull-through'
+              ' (e.g., docker.io,'
+              ' user:pass@registry.example.com)')
 @click.pass_context
 def proxy_cmd(ctx, listen, downstream, filters,
-              concurrency):
+              concurrency, upstream):
     """Run a filtering registry proxy.
 
     Starts a Docker Registry V2 server that receives
     pushes, applies filters, and forwards images to a
     downstream registry. Runs until interrupted.
+
+    \b
+    When --upstream is specified, the proxy also serves
+    pull requests. On pull, it checks the downstream
+    registry (cache). On cache miss, it fetches from
+    upstream, applies filters, pushes to downstream,
+    and serves the result.
 
     \b
     The proxy listens on localhost by default, which is
@@ -677,6 +688,7 @@ def proxy_cmd(ctx, listen, downstream, filters,
     \b
     Examples:
       occystrap proxy -d ghcr.io/myorg
+      occystrap proxy -d ghcr.io/myorg -u docker.io
       occystrap proxy -l 127.0.0.1:5050 -d ghcr.io/myorg -f normalize-timestamps
       occystrap proxy -d registry.example.com -f "exclude:pattern=/tmp/*"
 
@@ -701,13 +713,26 @@ def proxy_cmd(ctx, listen, downstream, filters,
 
     layer_cache_path = ctx.obj.get('LAYER_CACHE')
 
+    # Parse upstream credentials if embedded
+    upstream_host = upstream
+    upstream_user = None
+    upstream_pass = None
+    if upstream and '@' in upstream:
+        creds, upstream_host = upstream.rsplit('@', 1)
+        if ':' in creds:
+            upstream_user, upstream_pass = (
+                creds.split(':', 1))
+
     try:
         proxy_module.run_proxy(
             host, port, downstream,
             filter_strs=list(filters),
             layer_cache_path=layer_cache_path,
             ctx=ctx,
-            max_concurrent=concurrency)
+            max_concurrent=concurrency,
+            upstream_uri=upstream_host,
+            upstream_username=upstream_user,
+            upstream_password=upstream_pass)
     except Exception as e:
         click.echo('Error: %s' % e, err=True)
         sys.exit(1)

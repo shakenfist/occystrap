@@ -154,6 +154,7 @@ occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT] [--con
 | Option | Description |
 |--------|-------------|
 | `--downstream REGISTRY`, `-d` | Downstream registry host (required, e.g., `ghcr.io/myorg`) |
+| `--upstream REGISTRY`, `-u` | Upstream registry for pull-through (e.g., `docker.io`, `user:pass@registry.example.com`) |
 | `--listen HOST:PORT`, `-l` | Listen address (default: `127.0.0.1:5050`) |
 | `-f FILTER` | Filter(s) to apply (can be specified multiple times) |
 | `--concurrency N`, `-c` | Max concurrent image processing (default: 4) |
@@ -177,6 +178,16 @@ The proxy also respects global options `--layer-cache`, `--temp-dir`,
 - On shutdown, the proxy waits for in-flight processing to complete
   (up to 5 minutes), saves the layer cache, and cleans up temporary
   files
+- When `--upstream` is specified, the proxy also serves pull requests:
+  - `GET /v2/{name}/manifests/{ref}` checks the downstream registry
+    first; on a miss, fetches from upstream, applies filters, pushes
+    to downstream, then serves the result
+  - `GET /v2/{name}/blobs/sha256:{digest}` proxies blobs from
+    downstream
+  - `HEAD` requests check downstream for existence
+  - Upstream credentials can be embedded: `user:pass@host`
+  - Per-image locks prevent duplicate upstream fetches for concurrent
+    requests
 
 **Examples:**
 
@@ -198,6 +209,20 @@ docker push localhost:5050/myimage:latest
 
 # Use with kolla-build
 kolla-build --registry 127.0.0.1:5050 --push ...
+
+# Pull-through proxy with Docker Hub as upstream
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --upstream docker.io \
+    -f normalize-timestamps
+
+# Pull through the proxy
+docker pull localhost:5050/library/busybox:latest
+
+# Pull-through with authenticated upstream
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --upstream user:token@registry.example.com
 ```
 
 ### check

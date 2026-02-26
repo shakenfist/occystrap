@@ -510,6 +510,39 @@ The proxy listens on `127.0.0.1:5050` by default, which is trusted
 by Docker without TLS configuration. Repository names from the push
 are passed through to the downstream registry as-is.
 
+### Pull-Through Caching
+
+When `--upstream` is specified, the proxy also acts as a pull-through
+cache. Clients can pull images from the proxy using standard `docker
+pull`. On the first request, the proxy fetches from upstream, applies
+filters, pushes the filtered image to the downstream registry (which
+acts as a persistent cache), and serves it. Subsequent pulls for the
+same image are served directly from the downstream cache.
+
+```
+# Start proxy with pull-through from Docker Hub
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --upstream docker.io \
+    -f normalize-timestamps
+
+# Pull through the proxy (fetches from Docker Hub, filters, caches)
+docker pull localhost:5050/library/busybox:latest
+
+# Second pull is served from cache
+docker pull localhost:5050/library/busybox:latest
+```
+
+For authenticated upstream registries, embed credentials in the
+`--upstream` option:
+
+```
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --upstream user:token@registry.example.com \
+    -f normalize-timestamps
+```
+
 ## Cross-Invocation Layer Cache
 
 When pushing multiple images that share base layers (common in CI), occystrap

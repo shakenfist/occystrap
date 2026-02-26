@@ -1046,3 +1046,618 @@ class TestBlobRefcounting(unittest.TestCase):
             self.state.blob_refcounts, {})
         self.assertEqual(
             self.state.active_processing, 0)
+
+
+class TestPullThrough(unittest.TestCase):
+    """Tests for pull-through proxy support."""
+
+    def setUp(self):
+        self.state = _ProxyState(
+            downstream_uri='downstream.example.com',
+            upstream_uri='upstream.example.com')
+        self.server, self.port = _start_test_proxy(
+            self.state)
+        self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
+
+    def tearDown(self):
+        self.server.shutdown()
+
+    def test_pull_disabled_without_upstream(self):
+        """GET manifest returns 404 when no upstream
+        is configured."""
+        state = _ProxyState(
+            downstream_uri='downstream.example.com')
+        server, port = _start_test_proxy(state)
+        base = 'http://127.0.0.1:%d' % port
+        sess = _no_proxy_session()
+        try:
+            r = sess.get(
+                '%s/v2/test/manifests/latest' % base)
+            self.assertEqual(r.status_code, 404)
+        finally:
+            server.shutdown()
+
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_manifest_get_cache_hit(
+            self, mock_image_cls):
+        """When downstream has the image, serve it
+        directly without upstream fetch."""
+        manifest_data = json.dumps({
+            'schemaVersion': 2,
+            'config': {'digest': 'sha256:abc'},
+            'layers': [],
+        }).encode()
+        manifest_digest = (
+            'sha256:%s'
+            % hashlib.sha256(
+                manifest_data).hexdigest())
+
+        mock_img = mock.MagicMock()
+        mock_image_cls.return_value = mock_img
+
+        mock_resp = mock.MagicMock()
+        mock_resp.headers = {
+            'Content-Type':
+                constants
+                .MEDIA_TYPE_DOCKER_MANIFEST_V2,
+            'Docker-Content-Digest':
+                manifest_digest,
+            'Content-Length':
+                str(len(manifest_data)),
+        }
+        mock_resp.iter_content.return_value = [
+            manifest_data]
+
+        # First call is cache check (GET), succeeds
+        mock_img.request_url.return_value = mock_resp
+
+        r = self.sess.get(
+            '%s/v2/myimage/manifests/latest'
+            % self.base)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, manifest_data)
+
+        self.assertEqual(
+            self.state.pull_cache_hits, 1)
+        self.assertEqual(
+            self.state.images_pulled, 1)
+        self.assertEqual(
+            self.state.pull_cache_misses, 0)
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_manifest_get_cache_miss(
+            self, mock_image_cls,
+            mock_builder_cls):
+        """When downstream misses, fetch from upstream,
+        filter, push downstream, then serve."""
+        manifest_data = json.dumps({
+            'schemaVersion': 2,
+            'config': {'digest': 'sha256:abc'},
+            'layers': [],
+        }).encode()
+        manifest_digest = (
+            'sha256:%s'
+            % hashlib.sha256(
+                manifest_data).hexdigest())
+
+        call_count = [0]
+
+        def image_side_effect(*args, **kwargs):
+            img = mock.MagicMock()
+
+            def request_url_effect(
+                    method, url, headers=None,
+                    stream=False):
+                call_count[0] += 1
+                if call_count[0] <= 2:
+                    # First two calls: cache miss
+                    from occystrap.util import (
+                        APIException)
+                    raise APIException(
+                        'not found', 'GET', url,
+                        404, '', {})
+
+                # Third call: cache hit (after
+                # processing)
+                resp = mock.MagicMock()
+                resp.headers = {
+                    'Content-Type':
+                        constants
+                        .MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                    'Docker-Content-Digest':
+                        manifest_digest,
+                    'Content-Length':
+                        str(len(manifest_data)),
+                }
+                resp.iter_content.return_value = [
+                    manifest_data]
+                return resp
+
+            img.request_url.side_effect = (
+                request_url_effect)
+            return img
+
+        mock_image_cls.side_effect = (
+            image_side_effect)
+
+        # Mock the pipeline builder
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_output = mock.MagicMock()
+        mock_output.requires_ordered_layers = True
+        mock_output.fetch_callback = (
+            mock.MagicMock(return_value=True))
+        mock_builder.build_output.return_value = (
+            mock_output)
+
+        r = self.sess.get(
+            '%s/v2/myimage/manifests/latest'
+            % self.base)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, manifest_data)
+
+        self.assertEqual(
+            self.state.pull_cache_misses, 1)
+        self.assertEqual(
+            self.state.images_pulled, 1)
+
+    def test_blob_get_404_without_upstream(self):
+        """GET blob returns 404 when no upstream
+        configured."""
+        state = _ProxyState(
+            downstream_uri='downstream.example.com')
+        server, port = _start_test_proxy(state)
+        base = 'http://127.0.0.1:%d' % port
+        sess = _no_proxy_session()
+        try:
+            r = sess.get(
+                '%s/v2/test/blobs/sha256:%s'
+                % (base, 'a' * 64))
+            self.assertEqual(r.status_code, 404)
+        finally:
+            server.shutdown()
+
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_blob_get_proxies_from_downstream(
+            self, mock_image_cls):
+        """GET blob streams from downstream."""
+        blob_data = b'layer data content'
+
+        mock_img = mock.MagicMock()
+        mock_image_cls.return_value = mock_img
+
+        mock_resp = mock.MagicMock()
+        mock_resp.headers = {
+            'Content-Type':
+                'application/octet-stream',
+            'Content-Length':
+                str(len(blob_data)),
+            'Docker-Content-Digest':
+                'sha256:abc123',
+        }
+        mock_resp.iter_content.return_value = [
+            blob_data]
+        mock_img.request_url.return_value = mock_resp
+
+        r = self.sess.get(
+            '%s/v2/myimage/blobs/sha256:%s'
+            % (self.base, 'a' * 64))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, blob_data)
+
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_blob_get_returns_404_on_miss(
+            self, mock_image_cls):
+        """GET blob returns 404 when not in
+        downstream."""
+        mock_img = mock.MagicMock()
+        mock_image_cls.return_value = mock_img
+
+        from occystrap.util import APIException
+        mock_img.request_url.side_effect = (
+            APIException(
+                'not found', 'GET', 'url',
+                404, '', {}))
+
+        r = self.sess.get(
+            '%s/v2/myimage/blobs/sha256:%s'
+            % (self.base, 'a' * 64))
+        self.assertEqual(r.status_code, 404)
+
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_head_manifest_returns_200(
+            self, mock_image_cls):
+        """HEAD manifest returns 200 when image
+        exists in downstream."""
+        mock_img = mock.MagicMock()
+        mock_image_cls.return_value = mock_img
+
+        mock_resp = mock.MagicMock()
+        mock_resp.headers = {
+            'Content-Type':
+                constants
+                .MEDIA_TYPE_DOCKER_MANIFEST_V2,
+            'Docker-Content-Digest':
+                'sha256:abc123',
+            'Content-Length': '500',
+        }
+        mock_img.request_url.return_value = mock_resp
+
+        r = self.sess.head(
+            '%s/v2/myimage/manifests/latest'
+            % self.base)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(
+            r.headers.get(
+                'Docker-Content-Digest'),
+            'sha256:abc123')
+
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_head_manifest_returns_404(
+            self, mock_image_cls):
+        """HEAD manifest returns 404 when image not
+        in downstream."""
+        mock_img = mock.MagicMock()
+        mock_image_cls.return_value = mock_img
+
+        from occystrap.util import APIException
+        mock_img.request_url.side_effect = (
+            APIException(
+                'not found', 'HEAD', 'url',
+                404, '', {}))
+
+        r = self.sess.head(
+            '%s/v2/myimage/manifests/latest'
+            % self.base)
+        self.assertEqual(r.status_code, 404)
+
+    def test_pull_stats_initialized(self):
+        """Pull stats are initialized to zero."""
+        state = _ProxyState()
+        self.assertEqual(state.images_pulled, 0)
+        self.assertEqual(state.pull_cache_hits, 0)
+        self.assertEqual(state.pull_cache_misses, 0)
+
+    def test_upstream_fields_stored(self):
+        """Upstream URI and credentials are stored."""
+        state = _ProxyState(
+            upstream_uri='docker.io',
+            upstream_username='user',
+            upstream_password='pass')
+        self.assertEqual(
+            state.upstream_uri, 'docker.io')
+        self.assertEqual(
+            state.upstream_username, 'user')
+        self.assertEqual(
+            state.upstream_password, 'pass')
+
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_downstream_image_cached(
+            self, mock_image_cls):
+        """Downstream Image instances are cached
+        per repo_name."""
+        mock_img = mock.MagicMock()
+        mock_image_cls.return_value = mock_img
+
+        from occystrap.util import APIException
+        mock_img.request_url.side_effect = (
+            APIException(
+                'not found', 'GET', 'url',
+                404, '', {}))
+
+        # Two requests for the same repo
+        self.sess.get(
+            '%s/v2/myimage/blobs/sha256:%s'
+            % (self.base, 'a' * 64))
+        self.sess.get(
+            '%s/v2/myimage/blobs/sha256:%s'
+            % (self.base, 'b' * 64))
+
+        # Image class should be instantiated once
+        # for 'myimage'
+        self.assertEqual(
+            mock_image_cls.call_count, 1)
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_concurrent_pull_deduplicates(
+            self, mock_image_cls,
+            mock_builder_cls):
+        """Two concurrent pulls of the same image
+        only trigger one upstream fetch."""
+        manifest_data = json.dumps({
+            'schemaVersion': 2,
+            'config': {'digest': 'sha256:abc'},
+            'layers': [],
+        }).encode()
+        manifest_digest = (
+            'sha256:%s'
+            % hashlib.sha256(
+                manifest_data).hexdigest())
+
+        gate = threading.Event()
+        upstream_fetch_count = [0]
+        fetch_lock = threading.Lock()
+
+        def image_side_effect(*args, **kwargs):
+            img = mock.MagicMock()
+            # Track per-instance call count
+            img._call_count = [0]
+
+            def request_url_effect(
+                    method, url, headers=None,
+                    stream=False):
+                img._call_count[0] += 1
+                if img._call_count[0] <= 2:
+                    from occystrap.util import (
+                        APIException)
+                    raise APIException(
+                        'not found', 'GET', url,
+                        404, '', {})
+
+                resp = mock.MagicMock()
+                resp.headers = {
+                    'Content-Type':
+                        constants
+                        .MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                    'Docker-Content-Digest':
+                        manifest_digest,
+                    'Content-Length':
+                        str(len(manifest_data)),
+                }
+                resp.iter_content.return_value = [
+                    manifest_data]
+                return resp
+
+            img.request_url.side_effect = (
+                request_url_effect)
+            return img
+
+        mock_image_cls.side_effect = (
+            image_side_effect)
+
+        # Mock pipeline builder to track
+        # upstream fetches
+        def slow_build_output(*args, **kwargs):
+            with fetch_lock:
+                upstream_fetch_count[0] += 1
+            gate.wait(timeout=10)
+            out = mock.MagicMock()
+            out.requires_ordered_layers = True
+            out.fetch_callback = mock.MagicMock(
+                return_value=True)
+            return out
+
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_builder.build_output.side_effect = (
+            slow_build_output)
+
+        results = [None, None]
+
+        def pull(idx):
+            s = _no_proxy_session()
+            results[idx] = s.get(
+                '%s/v2/myimage/manifests/latest'
+                % self.base)
+
+        t1 = threading.Thread(
+            target=pull, args=(0,))
+        t2 = threading.Thread(
+            target=pull, args=(1,))
+
+        t1.start()
+        import time
+        time.sleep(0.3)
+        t2.start()
+        time.sleep(0.3)
+
+        gate.set()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        # Only one upstream fetch should have
+        # happened
+        self.assertEqual(
+            upstream_fetch_count[0], 1)
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    @mock.patch(
+        'occystrap.proxy.input_registry.Image')
+    def test_pull_uses_processing_semaphore(
+            self, mock_image_cls,
+            mock_builder_cls):
+        """Pull-through respects the processing
+        semaphore for backpressure."""
+        # Recreate with max_concurrent=1
+        self.server.shutdown()
+        self.state = _ProxyState(
+            downstream_uri='downstream.example.com',
+            upstream_uri='upstream.example.com',
+            max_concurrent=1)
+        self.server, self.port = _start_test_proxy(
+            self.state)
+        self.base = 'http://127.0.0.1:%d' % self.port
+
+        manifest_data = json.dumps({
+            'schemaVersion': 2,
+            'config': {'digest': 'sha256:abc'},
+            'layers': [],
+        }).encode()
+        manifest_digest = (
+            'sha256:%s'
+            % hashlib.sha256(
+                manifest_data).hexdigest())
+
+        def image_side_effect(*args, **kwargs):
+            img = mock.MagicMock()
+            img._call_count = [0]
+
+            def request_url_effect(
+                    method, url, headers=None,
+                    stream=False):
+                img._call_count[0] += 1
+                if img._call_count[0] <= 2:
+                    from occystrap.util import (
+                        APIException)
+                    raise APIException(
+                        'not found', 'GET', url,
+                        404, '', {})
+
+                resp = mock.MagicMock()
+                resp.headers = {
+                    'Content-Type':
+                        constants
+                        .MEDIA_TYPE_DOCKER_MANIFEST_V2,
+                    'Docker-Content-Digest':
+                        manifest_digest,
+                    'Content-Length':
+                        str(len(manifest_data)),
+                }
+                resp.iter_content.return_value = [
+                    manifest_data]
+                return resp
+
+            img.request_url.side_effect = (
+                request_url_effect)
+            return img
+
+        mock_image_cls.side_effect = (
+            image_side_effect)
+
+        gate = threading.Event()
+        processing_order = []
+        call_count = [0]
+        call_lock = threading.Lock()
+
+        def tracked_build_output(*args, **kwargs):
+            with call_lock:
+                call_count[0] += 1
+                my_idx = call_count[0]
+            processing_order.append(
+                'start-%d' % my_idx)
+            if my_idx == 1:
+                gate.wait(timeout=10)
+            out = mock.MagicMock()
+            out.requires_ordered_layers = True
+            out.fetch_callback = mock.MagicMock(
+                return_value=True)
+            processing_order.append(
+                'end-%d' % my_idx)
+            return out
+
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_builder.build_output.side_effect = (
+            tracked_build_output)
+
+        results = [None, None]
+
+        def pull(idx, repo):
+            s = _no_proxy_session()
+            results[idx] = s.get(
+                '%s/v2/%s/manifests/latest'
+                % (self.base, repo))
+
+        t1 = threading.Thread(
+            target=pull, args=(0, 'img1'))
+        t2 = threading.Thread(
+            target=pull, args=(1, 'img2'))
+
+        t1.start()
+        import time
+        time.sleep(0.3)
+        t2.start()
+        time.sleep(0.3)
+
+        gate.set()
+        t1.join(timeout=10)
+        t2.join(timeout=10)
+
+        self.assertEqual(results[0].status_code, 200)
+        self.assertEqual(results[1].status_code, 200)
+
+        # With max_concurrent=1, second pull must
+        # start after first finishes
+        self.assertIn('start-1', processing_order)
+        self.assertIn('end-1', processing_order)
+        self.assertIn('start-2', processing_order)
+        idx_end1 = processing_order.index('end-1')
+        idx_start2 = processing_order.index(
+            'start-2')
+        self.assertLess(idx_end1, idx_start2)
+
+
+class TestBuildOutputPipeline(unittest.TestCase):
+    """Tests for the _build_output_pipeline
+    refactor."""
+
+    def setUp(self):
+        self.state = _ProxyState(
+            downstream_uri='localhost:9999')
+        self.server, self.port = _start_test_proxy(
+            self.state)
+        self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
+
+    def tearDown(self):
+        self.server.shutdown()
+        for path in self.state.blobs.values():
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    def test_push_still_works_after_refactor(
+            self, mock_builder_cls):
+        """Existing push path still works after
+        _process_image refactoring."""
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+
+        mock_output = mock.MagicMock()
+        mock_output.requires_ordered_layers = True
+        mock_output.fetch_callback = \
+            mock.MagicMock(return_value=True)
+        mock_builder.build_output.return_value = \
+            mock_output
+
+        (manifest_bytes, config_bytes,
+         config_hex, layer_blobs) = \
+            _make_test_image()
+
+        _upload_blob(
+            self.sess, self.base, 'test/img',
+            config_bytes)
+        for compressed, _, _ in layer_blobs:
+            _upload_blob(
+                self.sess, self.base,
+                'test/img', compressed)
+
+        r = self.sess.put(
+            '%s/v2/test/img/manifests/latest'
+            % self.base,
+            data=manifest_bytes,
+            headers={
+                'Content-Type':
+                    constants
+                    .MEDIA_TYPE_DOCKER_MANIFEST_V2
+            })
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(
+            self.state.images_processed, 1)
