@@ -712,6 +712,25 @@ class ProxyRegistryHandler(
             self.send_response(500)
             self.end_headers()
 
+    def _parse_v2_path(self, path, separator):
+        """Extract repository name and reference from
+        a V2 API path.
+
+        Strips /v2/ prefix and splits on separator
+        (e.g. '/manifests/' or '/blobs/'). Returns
+        (repo_name, reference) or ('unknown', 'unknown')
+        if the path doesn't match.
+        """
+        rest = path
+        if rest.startswith('/v2/'):
+            rest = rest[4:]
+
+        parts = rest.split(separator)
+        if len(parts) != 2:
+            return ('unknown', 'unknown')
+
+        return (parts[0], parts[1])
+
     def _parse_manifest_path(self, path):
         """Extract repository name and tag from
         manifest path.
@@ -719,17 +738,8 @@ class ProxyRegistryHandler(
         Path format: /v2/{name}/manifests/{tag}
         where {name} can contain slashes.
         """
-        # Strip /v2/ prefix
-        rest = path
-        if rest.startswith('/v2/'):
-            rest = rest[4:]
-
-        # Split on /manifests/
-        parts = rest.split('/manifests/')
-        if len(parts) != 2:
-            return ('unknown', 'unknown')
-
-        return (parts[0], parts[1])
+        return self._parse_v2_path(
+            path, '/manifests/')
 
     def _build_output_pipeline(self, repo_name, tag):
         """Build the output pipeline (filters + writer)
@@ -857,26 +867,28 @@ class ProxyRegistryHandler(
                     threading.Lock())
             return self.state.pull_locks[key]
 
+    def _downstream_url(self, path):
+        """Build a downstream registry URL for the
+        given path (e.g. /v2/repo/manifests/tag)."""
+        ctx = self.state.ctx
+        ctx_obj = ctx.obj if ctx else {}
+        insecure = ctx_obj.get('INSECURE', False)
+        scheme = 'http' if insecure else 'https'
+        return '%s://%s%s' % (
+            scheme, self.state.downstream_uri, path)
+
     def _downstream_manifest_url(self, repo_name,
                                  tag):
         """Build the downstream manifest URL."""
-        ctx = self.state.ctx
-        ctx_obj = ctx.obj if ctx else {}
-        insecure = ctx_obj.get('INSECURE', False)
-        scheme = 'http' if insecure else 'https'
-        return '%s://%s/v2/%s/manifests/%s' % (
-            scheme, self.state.downstream_uri,
-            repo_name, tag)
+        return self._downstream_url(
+            '/v2/%s/manifests/%s'
+            % (repo_name, tag))
 
     def _downstream_blob_url(self, repo_name, digest):
         """Build the downstream blob URL."""
-        ctx = self.state.ctx
-        ctx_obj = ctx.obj if ctx else {}
-        insecure = ctx_obj.get('INSECURE', False)
-        scheme = 'http' if insecure else 'https'
-        return '%s://%s/v2/%s/blobs/%s' % (
-            scheme, self.state.downstream_uri,
-            repo_name, digest)
+        return self._downstream_url(
+            '/v2/%s/blobs/%s'
+            % (repo_name, digest))
 
     def _pull_and_process(self, repo_name, tag):
         """Fetch from upstream, filter, push to
@@ -909,16 +921,22 @@ class ProxyRegistryHandler(
             repo_name, tag)
         self._run_pipeline(upstream_input, output)
 
-    def _proxy_downstream_response(self, resp):
-        """Stream a downstream registry response back
-        to the client."""
-        self.send_response(200)
+    def _forward_headers(self, resp):
+        """Copy registry response headers (Content-Type,
+        Content-Length, Docker-Content-Digest) to the
+        outgoing HTTP response."""
         for header in ('Content-Type',
                        'Content-Length',
                        'Docker-Content-Digest'):
             val = resp.headers.get(header)
             if val:
                 self.send_header(header, val)
+
+    def _proxy_downstream_response(self, resp):
+        """Stream a downstream registry response back
+        to the client."""
+        self.send_response(200)
+        self._forward_headers(resp)
         self.end_headers()
         for chunk in resp.iter_content(COPY_BUFSIZE):
             self.wfile.write(chunk)
@@ -1030,15 +1048,8 @@ class ProxyRegistryHandler(
         Path format: /v2/{name}/blobs/{digest}
         where {name} can contain slashes.
         """
-        rest = path
-        if rest.startswith('/v2/'):
-            rest = rest[4:]
-
-        parts = rest.split('/blobs/')
-        if len(parts) != 2:
-            return ('unknown', 'unknown')
-
-        return (parts[0], parts[1])
+        return self._parse_v2_path(
+            path, '/blobs/')
 
     def _handle_pull_blob(self, path):
         """Handle GET /v2/{name}/blobs/{digest} for
@@ -1095,12 +1106,7 @@ class ProxyRegistryHandler(
                 'HEAD', manifest_url,
                 headers={'Accept': accept})
             self.send_response(200)
-            for header in ('Content-Type',
-                           'Content-Length',
-                           'Docker-Content-Digest'):
-                val = resp.headers.get(header)
-                if val:
-                    self.send_header(header, val)
+            self._forward_headers(resp)
             self.end_headers()
         except Exception:
             self.send_response(404)
