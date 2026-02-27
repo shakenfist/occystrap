@@ -130,6 +130,19 @@ def execute(command, check_exit_code=[0], env_variables=None,
         env_variables=env_variables, shell=True, cwd=cwd)
 
 
+def sanitize_header_value(value):
+    """Strip CR/LF from an HTTP header value to
+    prevent HTTP response splitting (CWE-113).
+
+    Call this on any user-controlled or external value
+    before passing it to send_header(). This ensures
+    CodeQL's taint tracking sees the sanitization on
+    the data flow path before the sink.
+    """
+    return str(value).replace('\r', '').replace(
+        '\n', '')
+
+
 class SafeHeaderMixin:
     """Mixin for BaseHTTPRequestHandler subclasses
     that sanitizes header values to prevent HTTP

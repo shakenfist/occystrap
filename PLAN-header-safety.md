@@ -12,21 +12,30 @@ and upstream registry response headers flows into
 Rather than fixing each call site individually, we want a holistic
 approach that fixes all current alerts AND prevents future ones.
 
-## Approach: SafeHeaderMixin
+## Approach: Two-Layer Defense
 
-Override `send_header()` via a shared mixin class that both HTTP
-handler classes inherit from. The mixin strips `\r` and `\n` from
-header values before delegating to `BaseHTTPRequestHandler`.
+### Layer 1: `sanitize_header_value()` at call sites
 
-This is the most "mandatory" approach -- impossible to bypass
-without deliberately calling `super().send_header()` from two
-levels up. All existing and future `send_header()` calls are
-automatically protected.
+CodeQL's sink for `py/http-response-splitting` is the value
+argument at the `send_header()` call site. Its
+`ReplaceLineBreaksSanitizer` recognizes `.replace('\n', ...)`
+calls on the data flow path *before* the sink. A
+`sanitize_header_value()` function in `util.py` strips `\r`
+and `\n` from values, and is called at each tainted call site
+so CodeQL sees the sanitization before the sink.
 
-CodeQL's `ReplaceLineBreaksSanitizer` recognizes `.replace('\n',
-...)` calls as sanitizers, and its interprocedural taint tracking
-follows through method calls, so the mixin pattern should clear
-the alerts.
+### Layer 2: `SafeHeaderMixin` as defense in depth
+
+Override `send_header()` via a shared mixin class that both
+HTTP handler classes inherit from. The mixin strips `\r` and
+`\n` from header values before delegating to
+`BaseHTTPRequestHandler`. This catches any call site that
+forgets to use `sanitize_header_value()`.
+
+Note: CodeQL does not recognize the mixin as a sanitizer
+because it tracks taint to the call site argument (the sink),
+not through the method override. The mixin provides real
+security but does not suppress CodeQL alerts.
 
 Other shakenfist projects (kerbside, shakenfist, agent-python)
 use Flask/Werkzeug, which already rejects header values containing
@@ -34,36 +43,32 @@ line breaks. Only occystrap uses raw `http.server`.
 
 ## Changes
 
-### 1. `occystrap/util.py` -- add SafeHeaderMixin
+### 1. `occystrap/util.py` -- add helpers
 
-```python
-class SafeHeaderMixin:
-    """Mixin for BaseHTTPRequestHandler subclasses
-    that sanitizes header values to prevent HTTP
-    response splitting (CWE-113).
+`sanitize_header_value(value)`: strips `\r` and `\n` from
+a header value. Used at tainted call sites so CodeQL sees
+the `.replace()` on the data flow path before the sink.
 
-    Strips CR and LF from header values before
-    passing to BaseHTTPRequestHandler.send_header().
-    """
+`SafeHeaderMixin`: overrides `send_header()` to sanitize
+values automatically. Defense in depth for any call site
+that forgets `sanitize_header_value()`.
 
-    def send_header(self, keyword, value):
-        """Strip CR/LF from values to prevent HTTP
-        response splitting."""
-        value = str(value).replace(
-            '\r', '').replace('\n', '')
-        super().send_header(keyword, value)
-```
+### 2. `occystrap/inputs/dockerpush.py`
 
-### 2. `occystrap/inputs/dockerpush.py` -- use mixin
+- Inherit from `SafeHeaderMixin` (first in MRO)
+- Call `sanitize_header_value()` on `digest_hex` (from
+  URL path), `location` (from URL path), and
+  `expected_hex` (from query parameter)
 
-- Add `from occystrap.util import SafeHeaderMixin`
-- Change class definition to:
-  `class EmbeddedRegistryHandler(SafeHeaderMixin,
-  http.server.BaseHTTPRequestHandler):`
-- Mixin **must** come first in MRO
+Fixes 7 open CodeQL alerts.
 
-Fixes 7 open CodeQL alerts (lines 201, 216, 263, 320, 322,
-428, 432).
+### 3. `occystrap/proxy.py`
+
+- Inherit from `SafeHeaderMixin` (first in MRO)
+- Call `sanitize_header_value()` on `digest_hex`,
+  `location`, `expected_hex`, forwarded upstream headers
+  (in `_forward_headers`), and `digest`/`cl` in
+  `_handle_head_blob`
 
 ### 3. `occystrap/proxy.py` -- use mixin
 

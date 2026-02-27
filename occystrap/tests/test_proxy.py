@@ -22,7 +22,8 @@ from occystrap.proxy import (
     _ProxyInput,
     ProxyRegistryHandler,
 )
-from occystrap.util import SafeHeaderMixin
+from occystrap.util import (
+    SafeHeaderMixin, sanitize_header_value)
 
 
 def _start_test_proxy(state=None):
@@ -1764,3 +1765,40 @@ class TestSafeHeaderMixin(unittest.TestCase):
         self.assertLess(
             mro.index('SafeHeaderMixin'),
             mro.index('BaseHTTPRequestHandler'))
+
+
+class TestSanitizeHeaderValue(unittest.TestCase):
+    """Tests for sanitize_header_value() function."""
+
+    def test_strips_newline(self):
+        self.assertEqual(
+            sanitize_header_value(
+                'value\nInjected'),
+            'valueInjected')
+
+    def test_strips_carriage_return(self):
+        self.assertEqual(
+            sanitize_header_value(
+                'value\rInjected'),
+            'valueInjected')
+
+    def test_strips_crlf(self):
+        self.assertEqual(
+            sanitize_header_value(
+                'value\r\nInjected'),
+            'valueInjected')
+
+    def test_preserves_clean_value(self):
+        self.assertEqual(
+            sanitize_header_value(
+                'sha256:abc123def456'),
+            'sha256:abc123def456')
+
+    def test_handles_integer(self):
+        self.assertEqual(
+            sanitize_header_value(12345),
+            '12345')
+
+    def test_returns_string(self):
+        result = sanitize_header_value('test')
+        self.assertIsInstance(result, str)

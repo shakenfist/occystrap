@@ -43,7 +43,8 @@ from occystrap.inputs.base import ImageInput
 from occystrap.inputs import registry as input_registry
 from occystrap.layer_cache import LayerCache
 from occystrap.pipeline import PipelineBuilder
-from occystrap.util import SafeHeaderMixin
+from occystrap.util import (
+    SafeHeaderMixin, sanitize_header_value)
 
 
 LOG = logs.setup_console(__name__)
@@ -374,8 +375,8 @@ class ProxyRegistryHandler(
             return
 
         if '/blobs/sha256:' in path:
-            digest_hex = path.split(
-                '/blobs/sha256:')[1]
+            digest_hex = sanitize_header_value(
+                path.split('/blobs/sha256:')[1])
 
             # Check local push-path blobs first
             with self.state.lock:
@@ -426,7 +427,7 @@ class ProxyRegistryHandler(
         parts = path.split('/blobs/uploads')
         repo_path = parts[0] if parts else '/v2/_'
 
-        location = (
+        location = sanitize_header_value(
             '%s/blobs/uploads/%s'
             % (repo_path, upload_uuid))
 
@@ -476,7 +477,7 @@ class ProxyRegistryHandler(
 
         repo_path = path.split(
             '/blobs/uploads/')[0]
-        location = (
+        location = sanitize_header_value(
             '%s/blobs/uploads/%s'
             % (repo_path, upload_uuid))
 
@@ -537,9 +538,11 @@ class ProxyRegistryHandler(
 
         expected_digest = digest_list[0]
         if expected_digest.startswith('sha256:'):
-            expected_hex = expected_digest[7:]
+            expected_hex = sanitize_header_value(
+                expected_digest[7:])
         else:
-            expected_hex = expected_digest
+            expected_hex = sanitize_header_value(
+                expected_digest)
 
         h = hashlib.sha256()
         with open(upload_path, 'rb') as f:
@@ -932,7 +935,9 @@ class ProxyRegistryHandler(
                        'Docker-Content-Digest'):
             val = resp.headers.get(header)
             if val:
-                self.send_header(header, val)
+                self.send_header(
+                    header,
+                    sanitize_header_value(val))
 
     def _proxy_downstream_response(self, resp):
         """Stream a downstream registry response back
@@ -1133,11 +1138,13 @@ class ProxyRegistryHandler(
                 'HEAD', blob_url)
             self.send_response(200)
             self.send_header(
-                'Docker-Content-Digest', digest)
+                'Docker-Content-Digest',
+                sanitize_header_value(digest))
             cl = resp.headers.get('Content-Length')
             if cl:
                 self.send_header(
-                    'Content-Length', cl)
+                    'Content-Length',
+                    sanitize_header_value(cl))
             self.end_headers()
         except Exception:
             self.send_response(404)
