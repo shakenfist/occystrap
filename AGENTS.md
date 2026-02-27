@@ -101,6 +101,9 @@ and `tox -epy3` (unit tests). Install with `pre-commit install`.
   (record new entries). Cache is filter-aware via `filters_hash`.
 - **Handle layer compression**: Use `compression.py` module for detecting and
   handling gzip/zstd compressed layers. Media type constants are in `constants.py`.
+- **Add HTTP server endpoints**: Any `BaseHTTPRequestHandler` subclass must
+  inherit from `SafeHeaderMixin` (in `util.py`) as the first base class.
+  This strips `\r`/`\n` from header values to prevent HTTP response splitting.
 - **Add new compression format**: Extend `compression.py` with detection magic,
   `StreamingDecompressor`/`StreamingCompressor` classes, and media type mapping
 - **Access image metadata without downloading layers**: Use

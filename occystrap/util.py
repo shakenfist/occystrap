@@ -128,3 +128,22 @@ def execute(command, check_exit_code=[0], env_variables=None,
     return processutils.execute(
         command, check_exit_code=check_exit_code,
         env_variables=env_variables, shell=True, cwd=cwd)
+
+
+class SafeHeaderMixin:
+    """Mixin for BaseHTTPRequestHandler subclasses
+    that sanitizes header values to prevent HTTP
+    response splitting (CWE-113).
+
+    Strips CR and LF from header values before
+    passing to BaseHTTPRequestHandler.send_header().
+    Must be listed first in class bases for correct
+    MRO.
+    """
+
+    def send_header(self, keyword, value):
+        """Strip CR/LF from values to prevent HTTP
+        response splitting."""
+        value = str(value).replace(
+            '\r', '').replace('\n', '')
+        super().send_header(keyword, value)

@@ -43,6 +43,7 @@ from occystrap.inputs.base import ImageInput
 from occystrap.inputs import registry as input_registry
 from occystrap.layer_cache import LayerCache
 from occystrap.pipeline import PipelineBuilder
+from occystrap.util import SafeHeaderMixin
 
 
 LOG = logs.setup_console(__name__)
@@ -273,6 +274,7 @@ class _ProxyInput(ImageInput):
 
 
 class ProxyRegistryHandler(
+        SafeHeaderMixin,
         http.server.BaseHTTPRequestHandler):
     """HTTP handler implementing the Docker Registry V2
     push-path endpoints for the proxy.

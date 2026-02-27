@@ -441,6 +441,9 @@ Key design considerations:
   when yielding elements
 - Thread-safe shared state (`_RegistryState`) coordinates between the HTTP
   handler threads and the main fetch() thread
+- Both `EmbeddedRegistryHandler` and `ProxyRegistryHandler` inherit from
+  `SafeHeaderMixin` (`util.py`), which overrides `send_header()` to strip
+  `\r` and `\n` from values, preventing HTTP response splitting (CWE-113)
 - Cleanup is robust: untag, stop server, and delete temp files all happen
   in nested try/finally blocks
 - When `--layer-cache` is used with a `registry://` output, the embedded

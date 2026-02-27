@@ -13,12 +13,16 @@ from unittest import mock
 import requests
 
 from occystrap import constants
+from occystrap.inputs.dockerpush import (
+    EmbeddedRegistryHandler,
+)
 from occystrap.proxy import (
     DEFAULT_MAX_CONCURRENT,
     _ProxyState,
     _ProxyInput,
     ProxyRegistryHandler,
 )
+from occystrap.util import SafeHeaderMixin
 
 
 def _start_test_proxy(state=None):
@@ -1661,3 +1665,102 @@ class TestBuildOutputPipeline(unittest.TestCase):
         self.assertEqual(r.status_code, 201)
         self.assertEqual(
             self.state.images_processed, 1)
+
+
+class TestSafeHeaderMixin(unittest.TestCase):
+    """Tests for SafeHeaderMixin HTTP response
+    splitting prevention."""
+
+    def _make_test_handler(self):
+        """Create a handler class using the mixin
+        that records sent headers."""
+        class RecordingHandler(
+                SafeHeaderMixin,
+                http.server.BaseHTTPRequestHandler):
+            pass
+
+        # Create a minimal instance without a real
+        # socket connection
+        handler = RecordingHandler.__new__(
+            RecordingHandler)
+        handler._headers_buffer = []
+        handler.request_version = 'HTTP/1.1'
+        return handler
+
+    def test_mixin_strips_newline(self):
+        """Newline in header value is stripped."""
+        handler = self._make_test_handler()
+        handler.send_header(
+            'X-Test', 'value\nInjected: evil')
+        header_line = (
+            handler._headers_buffer[-1].decode())
+        self.assertIn(
+            'valueInjected: evil', header_line)
+        self.assertNotIn('\n', header_line.split(
+            '\r\n')[0])
+
+    def test_mixin_strips_carriage_return(self):
+        """Carriage return in header value is
+        stripped."""
+        handler = self._make_test_handler()
+        handler.send_header(
+            'X-Test', 'value\rInjected: evil')
+        header_line = (
+            handler._headers_buffer[-1].decode())
+        self.assertIn(
+            'valueInjected: evil', header_line)
+
+    def test_mixin_strips_crlf(self):
+        """CRLF sequence in header value is
+        stripped."""
+        handler = self._make_test_handler()
+        handler.send_header(
+            'X-Test', 'value\r\nInjected: evil')
+        header_line = (
+            handler._headers_buffer[-1].decode())
+        self.assertIn(
+            'valueInjected: evil', header_line)
+        # Only one CRLF should exist (the terminator)
+        parts = header_line.split('\r\n')
+        self.assertEqual(len(parts), 2)
+        self.assertEqual(parts[1], '')
+
+    def test_mixin_preserves_clean_value(self):
+        """Clean header values pass through
+        unchanged."""
+        handler = self._make_test_handler()
+        handler.send_header(
+            'Docker-Content-Digest',
+            'sha256:abc123def456')
+        header_line = (
+            handler._headers_buffer[-1].decode())
+        self.assertIn(
+            'sha256:abc123def456', header_line)
+
+    def test_mixin_handles_non_string(self):
+        """Integer values are converted to string."""
+        handler = self._make_test_handler()
+        handler.send_header('Content-Length', 12345)
+        header_line = (
+            handler._headers_buffer[-1].decode())
+        self.assertIn('12345', header_line)
+
+    def test_mro_order_proxy(self):
+        """SafeHeaderMixin precedes
+        BaseHTTPRequestHandler in
+        ProxyRegistryHandler MRO."""
+        mro = [c.__name__ for c in
+               ProxyRegistryHandler.__mro__]
+        self.assertLess(
+            mro.index('SafeHeaderMixin'),
+            mro.index('BaseHTTPRequestHandler'))
+
+    def test_mro_order_dockerpush(self):
+        """SafeHeaderMixin precedes
+        BaseHTTPRequestHandler in
+        EmbeddedRegistryHandler MRO."""
+        mro = [c.__name__ for c in
+               EmbeddedRegistryHandler.__mro__]
+        self.assertLess(
+            mro.index('SafeHeaderMixin'),
+            mro.index('BaseHTTPRequestHandler'))

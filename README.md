@@ -508,7 +508,9 @@ docker push localhost:5050/myimage:latest
 
 The proxy listens on `127.0.0.1:5050` by default, which is trusted
 by Docker without TLS configuration. Repository names from the push
-are passed through to the downstream registry as-is.
+are passed through to the downstream registry as-is. Both the proxy
+and embedded registry handlers use `SafeHeaderMixin` to sanitize
+HTTP response headers, preventing response splitting attacks.
 
 ### Pull-Through Caching
 

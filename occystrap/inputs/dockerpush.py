@@ -48,6 +48,7 @@ from shakenfist_utilities import logs
 from occystrap import compression
 from occystrap import constants
 from occystrap.inputs.base import ImageInput, always_fetch
+from occystrap.util import SafeHeaderMixin
 
 
 LOG = logs.setup_console(__name__)
@@ -89,6 +90,7 @@ class _RegistryState:
 
 
 class EmbeddedRegistryHandler(
+        SafeHeaderMixin,
         http.server.BaseHTTPRequestHandler):
     """HTTP handler implementing the Docker Registry V2
     push-path endpoints.
