@@ -157,6 +157,5 @@ class SafeHeaderMixin:
     def send_header(self, keyword, value):
         """Strip CR/LF from values to prevent HTTP
         response splitting."""
-        value = str(value).replace(
-            '\r', '').replace('\n', '')
-        super().send_header(keyword, value)
+        super().send_header(
+            keyword, sanitize_header_value(value))
