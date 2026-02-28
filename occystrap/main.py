@@ -20,6 +20,7 @@ from occystrap.outputs import ocibundle as output_ocibundle
 from occystrap.outputs import tarfile as output_tarfile
 from occystrap.filters import SearchFilter, TimestampNormalizer
 from occystrap.pipeline import PipelineBuilder, PipelineError
+from occystrap import proxy as proxy_module
 from occystrap import uri
 from occystrap.util import format_size
 
@@ -640,6 +641,119 @@ def check_cmd(ctx, source, fast):
 
 
 cli.add_command(check_cmd)
+
+
+@click.command('proxy')
+@click.option('--listen', '-l', default='127.0.0.1:5050',
+              help='Address to listen on (default: 127.0.0.1:5050)')
+@click.option('--downstream', '-d', required=True,
+              help='Downstream registry host'
+              ' (e.g., ghcr.io, registry.example.com)')
+@click.option('--filter', '-f', 'filters', multiple=True,
+              help='Apply filter (can be specified'
+              ' multiple times)')
+@click.option('--concurrency', '-c', default=4, type=int,
+              help='Max concurrent image processing'
+              ' (default: 4)')
+@click.option('--upstream', '-u', default=None,
+              help='Upstream registry for pull-through'
+              ' (e.g., docker.io,'
+              ' user:pass@registry.example.com)')
+@click.option('--upstream-username', default=None,
+              envvar='OCCYSTRAP_UPSTREAM_USERNAME',
+              help='Username for upstream registry'
+              ' (overrides user:pass@ in --upstream)')
+@click.option('--upstream-password', default=None,
+              envvar='OCCYSTRAP_UPSTREAM_PASSWORD',
+              help='Password for upstream registry'
+              ' (overrides user:pass@ in --upstream)')
+@click.pass_context
+def proxy_cmd(ctx, listen, downstream, filters,
+              concurrency, upstream, upstream_username,
+              upstream_password):
+    """Run a filtering registry proxy.
+
+    Starts a Docker Registry V2 server that receives
+    pushes, applies filters, and forwards images to a
+    downstream registry. Runs until interrupted.
+
+    \b
+    When --upstream is specified, the proxy also serves
+    pull requests. On pull, it checks the downstream
+    registry (cache). On cache miss, it fetches from
+    upstream, applies filters, pushes to downstream,
+    and serves the result.
+
+    \b
+    The proxy listens on localhost by default, which is
+    trusted by Docker without TLS configuration.
+
+    \b
+    Filters (use -f, can chain multiple):
+      normalize-timestamps         - Normalize timestamps
+      normalize-timestamps:ts=N    - Use specific timestamp
+      exclude:pattern=GLOB         - Exclude files
+
+    \b
+    Examples:
+      occystrap proxy -d ghcr.io/myorg
+      occystrap proxy -d ghcr.io/myorg -u docker.io
+      occystrap proxy -l 127.0.0.1:5050 -d ghcr.io/myorg -f normalize-timestamps
+      occystrap proxy -d registry.example.com -f "exclude:pattern=/tmp/*"
+
+    \b
+    Usage with kolla-build:
+      occystrap proxy -d ghcr.io/myorg --layer-cache /tmp/cache.json -f normalize-timestamps &
+      kolla-build --registry 127.0.0.1:5050 --push ...
+    """
+    # Parse listen address
+    if ':' in listen:
+        host, port_str = listen.rsplit(':', 1)
+        try:
+            port = int(port_str)
+        except ValueError:
+            click.echo(
+                'Error: invalid port: %s' % port_str,
+                err=True)
+            sys.exit(1)
+    else:
+        host = listen
+        port = 5050
+
+    layer_cache_path = ctx.obj.get('LAYER_CACHE')
+
+    # Parse upstream credentials if embedded
+    upstream_host = upstream
+    upstream_user = None
+    upstream_pass = None
+    if upstream and '@' in upstream:
+        creds, upstream_host = upstream.rsplit('@', 1)
+        if ':' in creds:
+            upstream_user, upstream_pass = (
+                creds.split(':', 1))
+
+    # Explicit options override embedded credentials
+    if upstream_username is not None:
+        upstream_user = upstream_username
+    if upstream_password is not None:
+        upstream_pass = upstream_password
+
+    try:
+        proxy_module.run_proxy(
+            host, port, downstream,
+            filter_strs=list(filters),
+            layer_cache_path=layer_cache_path,
+            ctx=ctx,
+            max_concurrent=concurrency,
+            upstream_uri=upstream_host,
+            upstream_username=upstream_user,
+            upstream_password=upstream_pass)
+    except Exception as e:
+        click.echo('Error: %s' % e, err=True)
+        sys.exit(1)
+
+
+cli.add_command(proxy_cmd)
 
 
 # =============================================================================

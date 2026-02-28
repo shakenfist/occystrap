@@ -8,6 +8,7 @@ import shutil
 from occystrap.constants import RUNC_SPEC_TEMPLATE
 from occystrap import common
 from occystrap.outputs.directory import DirWriter
+from occystrap.util import safe_path_join
 from shakenfist_utilities import logs
 
 
@@ -36,15 +37,18 @@ class OCIBundleWriter(DirWriter):
 
         # Remove parts of the output directory which are not present in OCI
         for layer_file in self.tar_manifest[0]['Layers']:
-            shutil.rmtree(os.path.join(self.image_path,
-                                       os.path.split(layer_file)[0]))
+            shutil.rmtree(safe_path_join(
+                self.image_path,
+                os.path.split(layer_file)[0]))
 
         # Rename the container configuration to a well known location. This is
         # not part of the OCI specification, but is convenient for now.
         container_config_filename = os.path.join(self.image_path,
                                                  'container-config.json')
         runtime_config_filename = os.path.join(self.image_path, 'config.json')
-        os.rename(os.path.join(self.image_path, self.tar_manifest[0]['Config']),
+        os.rename(safe_path_join(
+                      self.image_path,
+                      self.tar_manifest[0]['Config']),
                   container_config_filename)
 
         common.write_container_config(container_config_filename,

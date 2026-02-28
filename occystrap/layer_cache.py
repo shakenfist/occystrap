@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import tempfile
+import threading
 
 from shakenfist_utilities import logs
 
@@ -26,10 +27,9 @@ class LayerCache:
     """Persistent cache mapping input DiffIDs to compressed digests.
 
     The cache is stored as a JSON file on disk and loaded/saved
-    across invocations. The lookup() method is called from the main
-    thread (via fetch_callback). The record() method is called from
-    thread pool workers but is protected by the registry writer's
-    _timing_lock to ensure thread safety.
+    across invocations. All public methods are thread-safe via an
+    internal lock, allowing a single LayerCache to be shared across
+    concurrent pipeline instances (e.g., in the proxy).
 
     Note: the cache currently has no eviction policy or size
     limit. For typical container image workloads the cache stays
@@ -48,6 +48,7 @@ class LayerCache:
         self._path = path
         self._dirty = False
         self._data = {'version': 1, 'layers': {}}
+        self._lock = threading.Lock()
 
         if os.path.exists(path):
             try:
@@ -80,19 +81,19 @@ class LayerCache:
             Dict with cached metadata (compressed_digest,
             compressed_size, media_type) or None if not found.
         """
-        entry = self._data['layers'].get(diffid)
-        if entry is None:
-            return None
-        if entry.get('filters_hash') != filters_hash:
-            return None
-        return entry
+        with self._lock:
+            entry = self._data['layers'].get(diffid)
+            if entry is None:
+                return None
+            if entry.get('filters_hash') != filters_hash:
+                return None
+            return entry
 
     def record(self, diffid, filters_hash, compressed_digest,
                compressed_size, media_type):
         """Record a layer mapping in the cache.
 
-        Must be called under the registry writer's _timing_lock
-        when called from a thread pool worker.
+        Thread-safe: protected by an internal lock.
 
         Args:
             diffid: The input layer DiffID as bare hex.
@@ -101,45 +102,52 @@ class LayerCache:
             compressed_size: Size of the compressed blob in bytes.
             media_type: Media type of the compressed blob.
         """
-        self._data['layers'][diffid] = {
-            'compressed_digest': compressed_digest,
-            'compressed_size': compressed_size,
-            'media_type': media_type,
-            'filters_hash': filters_hash,
-            'timestamp': datetime.datetime.now(
-                datetime.timezone.utc).isoformat(),
-        }
-        self._dirty = True
+        with self._lock:
+            self._data['layers'][diffid] = {
+                'compressed_digest': compressed_digest,
+                'compressed_size': compressed_size,
+                'media_type': media_type,
+                'filters_hash': filters_hash,
+                'timestamp': datetime.datetime.now(
+                    datetime.timezone.utc).isoformat(),
+            }
+            self._dirty = True
 
     def save(self):
         """Save the cache to disk atomically.
 
         Uses a temporary file and rename to avoid corruption if
-        the process is interrupted during write.
+        the process is interrupted during write. Thread-safe.
         """
-        if not self._dirty:
-            return
+        with self._lock:
+            if not self._dirty:
+                return
 
-        cache_dir = os.path.dirname(self._path)
-        if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
+            cache_dir = os.path.dirname(self._path)
+            if cache_dir:
+                os.makedirs(cache_dir, exist_ok=True)
 
-        try:
-            fd, tmp_path = tempfile.mkstemp(
-                dir=cache_dir or '.', suffix='.tmp')
             try:
-                with os.fdopen(fd, 'w') as f:
-                    json.dump(self._data, f, indent=2)
-                os.replace(tmp_path, self._path)
-                self._dirty = False
-                LOG.info(
-                    'Saved layer cache with %d entries to %s',
-                    len(self._data['layers']), self._path)
-            except BaseException:
-                os.unlink(tmp_path)
-                raise
-        except OSError as e:
-            LOG.warning('Could not save layer cache: %s', e)
+                fd, tmp_path = tempfile.mkstemp(
+                    dir=cache_dir or '.', suffix='.tmp')
+                try:
+                    with os.fdopen(fd, 'w') as f:
+                        json.dump(
+                            self._data, f, indent=2)
+                    os.replace(tmp_path, self._path)
+                    self._dirty = False
+                    LOG.info(
+                        'Saved layer cache with %d'
+                        ' entries to %s',
+                        len(self._data['layers']),
+                        self._path)
+                except BaseException:
+                    os.unlink(tmp_path)
+                    raise
+            except OSError as e:
+                LOG.warning(
+                    'Could not save layer cache:'
+                    ' %s', e)
 
     @property
     def path(self):
@@ -148,4 +156,5 @@ class LayerCache:
 
     def __len__(self):
         """Return the number of cached entries."""
-        return len(self._data['layers'])
+        with self._lock:
+            return len(self._data['layers'])

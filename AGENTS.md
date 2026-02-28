@@ -101,6 +101,16 @@ and `tox -epy3` (unit tests). Install with `pre-commit install`.
   (record new entries). Cache is filter-aware via `filters_hash`.
 - **Handle layer compression**: Use `compression.py` module for detecting and
   handling gzip/zstd compressed layers. Media type constants are in `constants.py`.
+- **Add HTTP server endpoints**: Any `BaseHTTPRequestHandler` subclass must
+  inherit from `SafeHeaderMixin` (in `util.py`) as the first base class.
+  This strips `\r`/`\n` from header values to prevent HTTP response splitting.
+  Additionally, wrap user-controlled values in `sanitize_header_value()`
+  at each call site so CodeQL sees the sanitization on the data flow path.
+- **Construct file paths from user input**: Use `safe_path_join()` from
+  `util.py` instead of bare `os.path.join()` when any path component comes
+  from external data (image names, tags, digests, layer paths). This
+  validates the resolved path stays within the base directory, preventing
+  path traversal (CWE-22).
 - **Add new compression format**: Extend `compression.py` with detection magic,
   `StreamingDecompressor`/`StreamingCompressor` classes, and media type mapping
 - **Access image metadata without downloading layers**: Use
@@ -116,6 +126,26 @@ and `tox -epy3` (unit tests). Install with `pre-commit install`.
   use `check.py` module with `CheckResults` accumulator for errors/warnings/
   info, separate metadata checks (fast mode) from layer checks (full mode),
   and exit non-zero on errors for CI integration
+- **Add a new standalone command**: Follow the `proxy` command pattern in
+  `main.py` (`proxy_cmd`) -- add a Click command that doesn't use the
+  standard `process` SOURCE/DESTINATION arguments. The proxy command builds
+  its own pipeline per received image using `PipelineBuilder` directly
+- **Extend the proxy**: The proxy (`proxy.py`) processes images concurrently
+  (multiple manifest PUTs run in parallel, limited by a semaphore). Blob
+  reference counting prevents shared blobs from being deleted while still
+  in use. `LayerCache` is internally thread-safe. To add new proxy features,
+  ensure shared state mutations are under `state.lock`
+- **Pull-through proxy**: When `--upstream` is set, the proxy also handles
+  GET requests. `_handle_pull_manifest` checks downstream cache first, then
+  fetches from upstream on miss. `_handle_pull_blob` proxies blob GETs from
+  downstream. Per-image locks (`pull_locks`) prevent duplicate upstream
+  fetches. `_build_output_pipeline()` and `_run_pipeline()` are shared
+  between push and pull paths. Cached `input_registry.Image` instances
+  in `state.downstream_images` provide authenticated downstream reads
+- **Create a synthetic input**: Follow `_ProxyInput` in `proxy.py` as a
+  reference for creating an `ImageInput` subclass that yields
+  `ImageElement`s from data already in memory or on disk (rather than
+  fetching from a remote source)
 
 ### CliRunner and JSON Output
 

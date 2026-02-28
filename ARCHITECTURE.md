@@ -16,6 +16,7 @@ occystrap/
     util.py              # Additional utilities
     uri.py               # URI parsing for pipeline specification
     pipeline.py          # Pipeline builder from URIs
+    proxy.py             # Persistent filtering registry proxy server
     layer_cache.py       # Cross-invocation layer cache for registry push
     progress.py          # tqdm progress bars with non-TTY fallback
     docker_extract.py    # Layer extraction utilities
@@ -51,6 +52,7 @@ occystrap/
         test_registry_output.py
         test_layer_cache.py
         test_dockerpush.py
+        test_proxy.py
         test_tarformat.py
 
 deploy/
@@ -203,10 +205,12 @@ Output writer implementations:
 - `outputs/registry.py` - Pushes images to Docker/OCI registries via HTTP API,
   with parallel layer uploads using ThreadPoolExecutor
 - `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
-- `outputs/directory.py` - Extracts to directory with optional layer deduplication
+- `outputs/directory.py` - Extracts to directory with optional layer deduplication;
+  uses `safe_path_join()` to prevent path traversal (CWE-22)
 - `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from
-  DirWriter)
-- `outputs/mounts.py` - Creates overlay mount-based extraction
+  DirWriter); uses `safe_path_join()` for user-controlled paths
+- `outputs/mounts.py` - Creates overlay mount-based extraction; uses
+  `safe_path_join()` for user-controlled paths
 
 ### Element Types
 
@@ -439,6 +443,11 @@ Key design considerations:
   when yielding elements
 - Thread-safe shared state (`_RegistryState`) coordinates between the HTTP
   handler threads and the main fetch() thread
+- Both `EmbeddedRegistryHandler` and `ProxyRegistryHandler` inherit from
+  `SafeHeaderMixin` (`util.py`), which overrides `send_header()` to strip
+  `\r` and `\n` from values, preventing HTTP response splitting (CWE-113).
+  User-controlled values are also wrapped in `sanitize_header_value()` at
+  each call site so CodeQL sees the sanitization on the data flow path
 - Cleanup is robust: untag, stop server, and delete temp files all happen
   in nested try/finally blocks
 - When `--layer-cache` is used with a `registry://` output, the embedded
@@ -446,6 +455,128 @@ Key design considerations:
   to skip their upload entirely. A persistent digest mapping file
   (`{cache_path}.digests`) translates between Docker's compressed digests
   and the DiffIDs used as cache keys
+
+### Filtering Registry Proxy
+
+The `proxy` command (`proxy.py`) runs a persistent Docker Registry V2 server
+on localhost that receives pushes, applies filters, and forwards images to a
+downstream registry. Unlike `dockerpush://` (which is a single-image-per-session
+embedded registry), the proxy handles multiple images concurrently across its
+lifetime.
+
+```
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    -f normalize-timestamps
+```
+
+**Architecture:**
+
+The proxy consists of four main components:
+
+- `_ProxyState` - Shared state between HTTP handler threads and the main
+  process. Holds temp_dir, downstream_uri, filter_strs, layer_cache, in-progress
+  uploads, completed blobs, blob reference counts, and statistics. All mutations
+  protected by a lock. A processing semaphore limits concurrent manifest
+  processing (configurable via `--concurrency`, default 4).
+
+- `_ProxyInput(ImageInput)` - Synthetic input that yields `ImageElement`s from
+  already-received blobs. Decompresses layers via `StreamingDecompressor` to
+  feed uncompressed tar data into the pipeline, matching the interface that
+  filters and outputs expect.
+
+- `ProxyRegistryHandler` - HTTP request handler implementing the V2 push-path
+  endpoints. The manifest PUT blocks the HTTP response while the image is
+  processed through the pipeline and pushed downstream. Multiple manifests
+  can be processed concurrently. Returns 201 on success, 500 on failure,
+  giving Docker direct error feedback.
+
+- `_KeepAliveHTTPServer` - `ThreadingHTTPServer` subclass that enables
+  `SO_KEEPALIVE` on accepted connections, preventing TCP drops during long
+  manifest processing.
+
+**Manifest processing flow:**
+
+```
+1. Client pushes blobs (layers + config) via standard V2 upload flow
+2. Client PUTs manifest
+3. Handler parses manifest, extracts referenced blob set
+4. Under lock: increment blob refcounts, snapshot blob paths,
+   increment active_processing counter
+5. Acquire processing semaphore (backpressure)
+6. Handler creates _ProxyInput from received blobs
+7. PipelineBuilder builds output + filters (fresh per image)
+8. Pipeline runs: _ProxyInput.fetch() -> filters -> RegistryWriter
+9. Release semaphore, decrement refcounts, delete blobs at refcount 0,
+   decrement active_processing
+10. On success: 201 to client
+11. On failure: 500 to client
+```
+
+**Concurrent processing and blob reference counting:**
+
+`ThreadingHTTPServer` creates a new thread for each HTTP request, so
+multiple manifest PUTs can arrive simultaneously. A configurable
+semaphore (`--concurrency`, default 4) limits how many manifests are
+processed concurrently, providing backpressure when many images are
+pushed at once.
+
+When two concurrent pushes share blob digests (common for base layers),
+reference counting prevents premature deletion. Blob refcounts are
+incremented *before* acquiring the semaphore, so blobs are protected
+even while a manifest is waiting for a processing slot. Blobs are only
+deleted when their refcount reaches zero (i.e., no in-flight manifest
+references them).
+
+**Key design considerations:**
+
+- Blocking manifest processing provides natural backpressure and error
+  propagation. Docker sees success or failure directly.
+- Each image gets a fresh pipeline (PipelineBuilder creates new instances),
+  so there is no cross-image state leakage in filters or outputs.
+- A shared `LayerCache` across images enables cross-image layer dedup:
+  the first image pays full cost, subsequent images with shared base
+  layers skip those layers entirely. `LayerCache` is internally
+  thread-safe via its own lock.
+- Blob namespace is flat and content-addressed. Two images sharing a
+  base layer push the same digest, giving cross-image dedup for free.
+- Blob reference counting ensures shared blobs survive until all
+  referencing manifests complete processing.
+- `run_proxy()` handles SIGINT/SIGTERM gracefully, waiting up to 5
+  minutes for in-flight image processing to complete before saving
+  the layer cache and exiting.
+
+**Pull-through / full proxy:**
+
+When `--upstream` is specified, the proxy also serves as a pull-through
+cache. Clients can pull images via standard Docker V2 GET endpoints.
+The proxy checks the downstream registry first (acting as a persistent
+cache), and on a cache miss, fetches from the upstream registry, applies
+filters, pushes the filtered image to downstream, then serves it.
+
+```
+Client GET manifest → proxy → downstream HEAD → 200 → serve from downstream
+                                              → 404 → acquire per-image lock
+                                                     → upstream fetch → filter
+                                                     → push downstream → serve
+```
+
+Pull-through reuses the existing pipeline infrastructure:
+- `_build_output_pipeline()` constructs the filter chain + registry
+  output (shared with the push path)
+- `_run_pipeline()` executes the fetch/filter/output loop
+- `input_registry.Image` provides authenticated upstream reads
+- Cached `input_registry.Image` instances per repo provide
+  authenticated downstream reads (token caching, streaming)
+
+Per-image locks (`pull_locks`) prevent duplicate upstream fetches
+when multiple clients request the same image concurrently. A
+double-check pattern re-verifies the downstream cache after
+acquiring the lock. The processing semaphore is shared between
+push and pull paths for unified backpressure.
+
+Pull statistics (`images_pulled`, `pull_cache_hits`,
+`pull_cache_misses`) are logged at shutdown alongside push stats.
 
 ### Parallel Downloads
 

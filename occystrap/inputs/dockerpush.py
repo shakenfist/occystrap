@@ -48,6 +48,8 @@ from shakenfist_utilities import logs
 from occystrap import compression
 from occystrap import constants
 from occystrap.inputs.base import ImageInput, always_fetch
+from occystrap.util import (
+    SafeHeaderMixin, sanitize_header_value)
 
 
 LOG = logs.setup_console(__name__)
@@ -89,6 +91,7 @@ class _RegistryState:
 
 
 class EmbeddedRegistryHandler(
+        SafeHeaderMixin,
         http.server.BaseHTTPRequestHandler):
     """HTTP handler implementing the Docker Registry V2
     push-path endpoints.
@@ -191,8 +194,8 @@ class EmbeddedRegistryHandler(
         # Extract digest from path
         # Format: /v2/{name}/blobs/sha256:{hex}
         if '/blobs/sha256:' in path:
-            digest_hex = path.split(
-                '/blobs/sha256:')[1]
+            digest_hex = sanitize_header_value(
+                path.split('/blobs/sha256:')[1])
             if digest_hex in \
                     self.state.skip_digests:
                 self.send_response(200)
@@ -255,7 +258,7 @@ class EmbeddedRegistryHandler(
         parts = path.split('/blobs/uploads')
         repo_path = parts[0] if parts else '/v2/_'
 
-        location = (
+        location = sanitize_header_value(
             '%s/blobs/uploads/%s'
             % (repo_path, upload_uuid))
 
@@ -312,7 +315,7 @@ class EmbeddedRegistryHandler(
         # Build location for response
         repo_path = path.split(
             '/blobs/uploads/')[0]
-        location = (
+        location = sanitize_header_value(
             '%s/blobs/uploads/%s'
             % (repo_path, upload_uuid))
 
@@ -383,9 +386,11 @@ class EmbeddedRegistryHandler(
 
         expected_digest = digest_list[0]
         if expected_digest.startswith('sha256:'):
-            expected_hex = expected_digest[7:]
+            expected_hex = sanitize_header_value(
+                expected_digest[7:])
         else:
-            expected_hex = expected_digest
+            expected_hex = sanitize_header_value(
+                expected_digest)
 
         # Verify SHA256
         h = hashlib.sha256()

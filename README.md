@@ -472,6 +472,79 @@ occystrap process docker://myimage:v1 "registry://myregistry/myimage:v1?compress
 When pulling images, occystrap automatically detects and handles both gzip and
 zstd compressed layers from registries or OCI tarballs.
 
+## The `proxy` Command
+
+Run a filtering registry proxy that receives Docker pushes, applies
+filters, and forwards images to a downstream registry:
+
+```
+occystrap proxy --downstream REGISTRY [-f FILTER]... [--listen HOST:PORT] [--concurrency N]
+```
+
+The proxy runs as a persistent process, accepting pushes from Docker
+or any V2 registry client. Multiple images are processed concurrently
+(default 4, configurable via `--concurrency`). This is useful when
+processing many images (e.g., a Kolla build) because:
+
+- Build and push can overlap (the proxy runs before the build starts)
+- Multiple images are processed in parallel for higher throughput
+- Shared base layers are pushed to the downstream registry only once
+  via the layer cache
+
+```
+# Start proxy before a batch build
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --layer-cache /tmp/layer-cache.json \
+    -f normalize-timestamps &
+
+# Tell the build tool to push to the proxy
+kolla-build --registry 127.0.0.1:5050 --push ...
+
+# Or push individual images
+docker tag myimage:latest localhost:5050/myimage:latest
+docker push localhost:5050/myimage:latest
+```
+
+The proxy listens on `127.0.0.1:5050` by default, which is trusted
+by Docker without TLS configuration. Repository names from the push
+are passed through to the downstream registry as-is. Both the proxy
+and embedded registry handlers use `SafeHeaderMixin` to sanitize
+HTTP response headers, preventing response splitting attacks.
+
+### Pull-Through Caching
+
+When `--upstream` is specified, the proxy also acts as a pull-through
+cache. Clients can pull images from the proxy using standard `docker
+pull`. On the first request, the proxy fetches from upstream, applies
+filters, pushes the filtered image to the downstream registry (which
+acts as a persistent cache), and serves it. Subsequent pulls for the
+same image are served directly from the downstream cache.
+
+```
+# Start proxy with pull-through from Docker Hub
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --upstream docker.io \
+    -f normalize-timestamps
+
+# Pull through the proxy (fetches from Docker Hub, filters, caches)
+docker pull localhost:5050/library/busybox:latest
+
+# Second pull is served from cache
+docker pull localhost:5050/library/busybox:latest
+```
+
+For authenticated upstream registries, embed credentials in the
+`--upstream` option:
+
+```
+occystrap proxy --listen 127.0.0.1:5050 \
+    --downstream ghcr.io/myorg \
+    --upstream user:token@registry.example.com \
+    -f normalize-timestamps
+```
+
 ## Cross-Invocation Layer Cache
 
 When pushing multiple images that share base layers (common in CI), occystrap

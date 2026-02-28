@@ -1,4 +1,5 @@
 import json
+import os
 
 from oslo_concurrency import processutils
 from pbr.version import VersionInfo
@@ -128,3 +129,63 @@ def execute(command, check_exit_code=[0], env_variables=None,
     return processutils.execute(
         command, check_exit_code=check_exit_code,
         env_variables=env_variables, shell=True, cwd=cwd)
+
+
+def sanitize_header_value(value):
+    """Strip CR/LF from an HTTP header value to
+    prevent HTTP response splitting (CWE-113).
+
+    Call this on any user-controlled or external value
+    before passing it to send_header(). This ensures
+    CodeQL's taint tracking sees the sanitization on
+    the data flow path before the sink.
+    """
+    return str(value).replace('\r', '').replace(
+        '\n', '')
+
+
+class PathEscapeError(Exception):
+    """Raised when a constructed path escapes its
+    intended base directory."""
+    pass
+
+
+def safe_path_join(base, *components):
+    """Join path components and verify the result stays
+    within the base directory (CWE-22 prevention).
+
+    Resolves the joined path to an absolute path and
+    checks it is still under base. Raises
+    PathEscapeError if the result would escape.
+
+    Use this on any path constructed from
+    user-controlled data (image names, tags, digests)
+    before passing it to open() or os.makedirs().
+    """
+    base = os.path.realpath(base)
+    joined = os.path.realpath(
+        os.path.join(base, *components))
+    if not joined.startswith(base + os.sep) \
+            and joined != base:
+        raise PathEscapeError(
+            'Path %r escapes base directory %r'
+            % (joined, base))
+    return joined
+
+
+class SafeHeaderMixin:
+    """Mixin for BaseHTTPRequestHandler subclasses
+    that sanitizes header values to prevent HTTP
+    response splitting (CWE-113).
+
+    Strips CR and LF from header values before
+    passing to BaseHTTPRequestHandler.send_header().
+    Must be listed first in class bases for correct
+    MRO.
+    """
+
+    def send_header(self, keyword, value):
+        """Strip CR/LF from values to prevent HTTP
+        response splitting."""
+        super().send_header(
+            keyword, sanitize_header_value(value))

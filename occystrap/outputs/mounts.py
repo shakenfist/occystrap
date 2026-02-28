@@ -7,6 +7,7 @@ from occystrap import common
 from occystrap import constants
 from occystrap import util
 from occystrap.outputs.base import ImageOutput
+from occystrap.util import safe_path_join
 from shakenfist_utilities import logs
 
 
@@ -44,14 +45,15 @@ class MountWriter(ImageOutput):
         return 'manifest'
 
     def fetch_callback(self, digest):
-        layer_file_in_dir = os.path.join(self.image_path, digest, 'layer.tar')
+        layer_file_in_dir = safe_path_join(
+            self.image_path, digest, 'layer.tar')
         LOG.debug('Layer file is %s' % layer_file_in_dir)
         return not os.path.exists(layer_file_in_dir)
 
     def process_image_element(self, element):
         if element.element_type == constants.CONFIG_FILE:
             config_data = element.data.read()
-            with open(os.path.join(
+            with open(safe_path_join(
                     self.image_path,
                     element.name), 'wb') as f:
                 d = json.loads(config_data)
@@ -65,7 +67,7 @@ class MountWriter(ImageOutput):
 
         elif element.element_type == \
                 constants.IMAGE_LAYER:
-            layer_dir = os.path.join(
+            layer_dir = safe_path_join(
                 self.image_path, element.name)
             if not os.path.exists(layer_dir):
                 os.makedirs(layer_dir)
@@ -80,7 +82,7 @@ class MountWriter(ImageOutput):
                 self.tar_manifest[0][
                     'Layers'].append(layer_file)
 
-            layer_file_in_dir = os.path.join(
+            layer_file_in_dir = safe_path_join(
                 self.image_path, layer_file)
             layer_size = 0
             if os.path.exists(layer_file_in_dir):
@@ -98,7 +100,7 @@ class MountWriter(ImageOutput):
                         f.write(d)
                         d = element.data.read(102400)
 
-                layer_dir_in_dir = os.path.join(
+                layer_dir_in_dir = safe_path_join(
                     self.image_path, element.name,
                     'layer')
                 os.makedirs(layer_dir_in_dir)
@@ -153,7 +155,8 @@ class MountWriter(ImageOutput):
                 in self._indexed_layers]
 
         manifest_filename = self._manifest_filename() + '.json'
-        manifest_path = os.path.join(self.image_path, manifest_filename)
+        manifest_path = safe_path_join(
+            self.image_path, manifest_filename)
         with open(manifest_path, 'wb') as f:
             f.write(json.dumps(self.tar_manifest, indent=4,
                                sort_keys=True).encode('ascii'))
@@ -193,8 +196,9 @@ class MountWriter(ImageOutput):
         layer_dirs = []
         self.tar_manifest[0]['Layers'].reverse()
         for layer in self.tar_manifest[0]['Layers']:
-            layer_dirs.append(os.path.join(
-                self.image_path, layer.replace('.tar', '')))
+            layer_dirs.append(safe_path_join(
+                self.image_path,
+                layer.replace('.tar', '')))
 
         # Extract the rootfs as overlay mounts
         util.execute('mount -t overlay overlay -o lowerdir=%(layers)s,'
@@ -211,7 +215,9 @@ class MountWriter(ImageOutput):
         container_config_filename = os.path.join(self.image_path,
                                                  'container-config.json')
         runtime_config_filename = os.path.join(self.image_path, 'config.json')
-        os.rename(os.path.join(self.image_path, self.tar_manifest[0]['Config']),
+        os.rename(safe_path_join(
+                      self.image_path,
+                      self.tar_manifest[0]['Config']),
                   container_config_filename)
 
         common.write_container_config(container_config_filename,
