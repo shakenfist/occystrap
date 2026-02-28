@@ -846,6 +846,10 @@ class ProxyRegistryHandler(
         ctx_obj = ctx.obj if ctx else {}
         insecure = ctx_obj.get('INSECURE', False)
 
+        # Tag is unused: callers only use
+        # request_url() which does not reference the
+        # tag. Auth tokens are scoped per repository,
+        # not per tag, so one Image per repo suffices.
         img = input_registry.Image(
             self.state.downstream_uri,
             repo_name, 'latest',
