@@ -571,3 +571,30 @@ hash changes. Filters that modify content:
 2. Calculate the new SHA256 hash
 3. Update the layer name to use the new hash
 4. Update the manifest to reference the new hash
+
+## Security Sanitization
+
+Occystrap includes two security helpers in `occystrap/util.py`
+for preventing common injection attacks when handling
+user-controlled data from HTTP requests and file paths.
+
+### HTTP Response Splitting (CWE-113)
+
+HTTP handler classes (`EmbeddedRegistryHandler`,
+`ProxyRegistryHandler`) inherit from `SafeHeaderMixin`,
+which overrides `send_header()` to strip `\r` and `\n`
+from header values. Additionally, `sanitize_header_value()`
+is called at each call site where user-controlled data
+flows into headers, satisfying CodeQL's taint analysis.
+
+### Path Traversal (CWE-22)
+
+Output writers that construct file paths from image names,
+tags, digests, or layer paths use `safe_path_join()` instead
+of bare `os.path.join()`. This resolves the joined path via
+`os.path.realpath()` and validates it stays within the
+intended base directory, raising `PathEscapeError` if
+traversal is detected.
+
+See `PLAN-header-safety.md` in the project root for full
+design rationale.

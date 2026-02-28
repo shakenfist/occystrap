@@ -73,6 +73,11 @@ which CodeQL recognizes as a path validation guard.
   `PathEscapeError`
 - `occystrap/outputs/directory.py`: all user-controlled
   `os.path.join()` calls replaced with `safe_path_join()`
+  (both `DirWriter` and `DirReader`)
+- `occystrap/outputs/mounts.py`: all user-controlled
+  `os.path.join()` calls replaced with `safe_path_join()`
+- `occystrap/outputs/ocibundle.py`: user-controlled
+  `os.path.join()` calls replaced with `safe_path_join()`
 
 ## Unit Tests
 

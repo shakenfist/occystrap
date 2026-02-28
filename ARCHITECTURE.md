@@ -208,8 +208,9 @@ Output writer implementations:
 - `outputs/directory.py` - Extracts to directory with optional layer deduplication;
   uses `safe_path_join()` to prevent path traversal (CWE-22)
 - `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from
-  DirWriter)
-- `outputs/mounts.py` - Creates overlay mount-based extraction
+  DirWriter); uses `safe_path_join()` for user-controlled paths
+- `outputs/mounts.py` - Creates overlay mount-based extraction; uses
+  `safe_path_join()` for user-controlled paths
 
 ### Element Types
 

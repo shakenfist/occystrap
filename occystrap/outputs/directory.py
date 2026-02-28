@@ -385,20 +385,20 @@ class DirReader(object):
         self.manifest_filename = c[self.image][self.tag]
 
     def fetch(self):
-        with open(os.path.join(
+        with open(safe_path_join(
                 self.path,
                 self.manifest_filename)) as f:
             manifest = json.loads(f.read())
 
         config_filename = manifest[0]['Config']
-        with open(os.path.join(
+        with open(safe_path_join(
                 self.path, config_filename), 'rb') as f:
             yield constants.ImageElement(
                 constants.CONFIG_FILE,
                 config_filename, f)
 
         for layer in manifest[0]['Layers']:
-            with open(os.path.join(
+            with open(safe_path_join(
                     self.path, layer), 'rb') as f:
                 yield constants.ImageElement(
                     constants.IMAGE_LAYER, layer, f)
