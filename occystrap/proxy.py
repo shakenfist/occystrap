@@ -44,7 +44,8 @@ from occystrap.inputs import registry as input_registry
 from occystrap.layer_cache import LayerCache
 from occystrap.pipeline import PipelineBuilder
 from occystrap.util import (
-    SafeHeaderMixin, sanitize_header_value)
+    APIException, SafeHeaderMixin,
+    sanitize_header_value)
 
 
 LOG = logs.setup_console(__name__)
@@ -985,8 +986,10 @@ class ProxyRegistryHandler(
                 self.state.images_pulled += 1
             self._proxy_downstream_response(resp)
             return
-        except Exception:
-            pass
+        except APIException as e:
+            if e.args[3] != 404:
+                raise
+            # 404 means cache miss — fall through
 
         # Cache miss — acquire per-image lock to
         # prevent duplicate upstream fetches.
@@ -1003,8 +1006,10 @@ class ProxyRegistryHandler(
                     self.state.images_pulled += 1
                 self._proxy_downstream_response(resp)
                 return
-            except Exception:
-                pass
+            except APIException as e:
+                if e.args[3] != 404:
+                    raise
+                # 404 means cache miss — fall through
 
             # Fetch from upstream, filter, push
             # downstream.
