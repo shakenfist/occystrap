@@ -1019,6 +1019,9 @@ class ProxyRegistryHandler(
             try:
                 self._pull_and_process(
                     repo_name, tag)
+                with self.state.lock:
+                    self.state.pull_cache_misses += 1
+                    self.state.images_pulled += 1
             except Exception as e:
                 with self.state.lock:
                     self.state.images_failed += 1
@@ -1042,9 +1045,6 @@ class ProxyRegistryHandler(
             resp = downstream_img.request_url(
                 'GET', manifest_url,
                 headers={'Accept': accept})
-            with self.state.lock:
-                self.state.pull_cache_misses += 1
-                self.state.images_pulled += 1
             self._proxy_downstream_response(resp)
         except Exception as e:
             LOG.error(
