@@ -194,8 +194,7 @@ class _ProxyInput(ImageInput):
 
         for layer_idx, (layer_meta, diff_id) \
                 in enumerate(zip(layers, diff_ids)):
-            idx = (layer_idx
-                   if not ordered else None)
+            idx = None if ordered else layer_idx
 
             if not fetch_callback(diff_id):
                 LOG.debug(
