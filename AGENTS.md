@@ -104,6 +104,13 @@ and `tox -epy3` (unit tests). Install with `pre-commit install`.
 - **Add HTTP server endpoints**: Any `BaseHTTPRequestHandler` subclass must
   inherit from `SafeHeaderMixin` (in `util.py`) as the first base class.
   This strips `\r`/`\n` from header values to prevent HTTP response splitting.
+  Additionally, wrap user-controlled values in `sanitize_header_value()`
+  at each call site so CodeQL sees the sanitization on the data flow path.
+- **Construct file paths from user input**: Use `safe_path_join()` from
+  `util.py` instead of bare `os.path.join()` when any path component comes
+  from external data (image names, tags, digests, layer paths). This
+  validates the resolved path stays within the base directory, preventing
+  path traversal (CWE-22).
 - **Add new compression format**: Extend `compression.py` with detection magic,
   `StreamingDecompressor`/`StreamingCompressor` classes, and media type mapping
 - **Access image metadata without downloading layers**: Use

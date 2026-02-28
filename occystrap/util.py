@@ -1,4 +1,5 @@
 import json
+import os
 
 from oslo_concurrency import processutils
 from pbr.version import VersionInfo
@@ -141,6 +142,35 @@ def sanitize_header_value(value):
     """
     return str(value).replace('\r', '').replace(
         '\n', '')
+
+
+class PathEscapeError(Exception):
+    """Raised when a constructed path escapes its
+    intended base directory."""
+    pass
+
+
+def safe_path_join(base, *components):
+    """Join path components and verify the result stays
+    within the base directory (CWE-22 prevention).
+
+    Resolves the joined path to an absolute path and
+    checks it is still under base. Raises
+    PathEscapeError if the result would escape.
+
+    Use this on any path constructed from
+    user-controlled data (image names, tags, digests)
+    before passing it to open() or os.makedirs().
+    """
+    base = os.path.realpath(base)
+    joined = os.path.realpath(
+        os.path.join(base, *components))
+    if not joined.startswith(base + os.sep) \
+            and joined != base:
+        raise PathEscapeError(
+            'Path %r escapes base directory %r'
+            % (joined, base))
+    return joined
 
 
 class SafeHeaderMixin:

@@ -23,7 +23,8 @@ from occystrap.proxy import (
     ProxyRegistryHandler,
 )
 from occystrap.util import (
-    SafeHeaderMixin, sanitize_header_value)
+    PathEscapeError, SafeHeaderMixin,
+    safe_path_join, sanitize_header_value)
 
 
 def _start_test_proxy(state=None):
@@ -1802,3 +1803,50 @@ class TestSanitizeHeaderValue(unittest.TestCase):
     def test_returns_string(self):
         result = sanitize_header_value('test')
         self.assertIsInstance(result, str)
+
+
+class TestSafePathJoin(unittest.TestCase):
+    """Tests for safe_path_join() function."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        os.rmdir(self.tmpdir)
+
+    def test_normal_join(self):
+        result = safe_path_join(
+            self.tmpdir, 'subdir', 'file.txt')
+        expected = os.path.join(
+            self.tmpdir, 'subdir', 'file.txt')
+        self.assertEqual(result, expected)
+
+    def test_rejects_parent_traversal(self):
+        self.assertRaises(
+            PathEscapeError,
+            safe_path_join,
+            self.tmpdir, '..', 'etc', 'passwd')
+
+    def test_rejects_absolute_escape(self):
+        self.assertRaises(
+            PathEscapeError,
+            safe_path_join,
+            self.tmpdir, '/etc/passwd')
+
+    def test_allows_base_itself(self):
+        result = safe_path_join(self.tmpdir, '.')
+        self.assertEqual(
+            result, os.path.realpath(self.tmpdir))
+
+    def test_normalizes_path(self):
+        result = safe_path_join(
+            self.tmpdir, 'a', '..', 'b')
+        expected = os.path.join(self.tmpdir, 'b')
+        self.assertEqual(result, expected)
+
+    def test_rejects_double_dot_escape(self):
+        self.assertRaises(
+            PathEscapeError,
+            safe_path_join,
+            self.tmpdir, 'a', '..', '..',
+            '..', 'etc')

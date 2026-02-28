@@ -484,7 +484,8 @@ class ProxyRegistryHandler(
         self.send_response(202)
         self.send_header('Location', location)
         self.send_header(
-            'Docker-Upload-UUID', upload_uuid)
+            'Docker-Upload-UUID',
+            sanitize_header_value(upload_uuid))
         self.send_header(
             'Range', '0-%d' % (new_offset - 1))
         self.send_header('Content-Length', '0')

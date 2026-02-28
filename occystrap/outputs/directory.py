@@ -4,6 +4,7 @@ import tarfile
 
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
+from occystrap.util import safe_path_join
 from shakenfist_utilities import logs
 
 
@@ -143,13 +144,14 @@ class DirWriter(ImageOutput):
         return d
 
     def fetch_callback(self, digest):
-        layer_file_in_dir = os.path.join(self.image_path, digest, 'layer.tar')
+        layer_file_in_dir = safe_path_join(
+            self.image_path, digest, 'layer.tar')
         LOG.debug('Layer file is %s' % layer_file_in_dir)
         return not os.path.exists(layer_file_in_dir)
 
     def process_image_element(self, element):
         if element.element_type == constants.CONFIG_FILE:
-            config_file = os.path.join(
+            config_file = safe_path_join(
                 self.image_path, element.name)
             config_dir = os.path.dirname(config_file)
             os.makedirs(config_dir, exist_ok=True)
@@ -165,7 +167,7 @@ class DirWriter(ImageOutput):
                 element.element_type, len(config_data))
 
         elif element.element_type == constants.IMAGE_LAYER:
-            layer_dir = os.path.join(
+            layer_dir = safe_path_join(
                 self.image_path, element.name)
             os.makedirs(layer_dir, exist_ok=True)
 
@@ -179,7 +181,7 @@ class DirWriter(ImageOutput):
                 self.tar_manifest[0][
                     'Layers'].append(layer_file)
 
-            layer_file_in_dir = os.path.join(
+            layer_file_in_dir = safe_path_join(
                 self.image_path, layer_file)
             layer_size = 0
             if os.path.exists(layer_file_in_dir):
@@ -294,7 +296,8 @@ class DirWriter(ImageOutput):
             self._log_bundle()
 
         manifest_filename = self._manifest_filename() + '.json'
-        manifest_path = os.path.join(self.image_path, manifest_filename)
+        manifest_path = safe_path_join(
+            self.image_path, manifest_filename)
         with open(manifest_path, 'wb') as f:
             f.write(json.dumps(self.tar_manifest, indent=4,
                                sort_keys=True).encode('ascii'))
@@ -340,18 +343,19 @@ class DirWriter(ImageOutput):
             entities_by_layer[ent.tarpath].append(ent)
 
         for tarpath in entities_by_layer:
-            with tarfile.open(os.path.join(self.image_path, tarpath)) as layer:
+            with tarfile.open(safe_path_join(self.image_path, tarpath)) as layer:
                 for ent in entities_by_layer[tarpath]:
                     layer.extract(ent.name, path=rootfs_path)
 
         for tarpath in deferred_by_layer:
-            with tarfile.open(os.path.join(self.image_path, tarpath)) as layer:
+            with tarfile.open(safe_path_join(self.image_path, tarpath)) as layer:
                 for ent in deferred_by_layer[tarpath]:
                     layer.extract(ent.name, path=rootfs_path)
 
     def write_bundle(self):
         manifest_filename = self._manifest_filename()
-        manifest_path = os.path.join(self.image_path, manifest_filename)
+        manifest_path = safe_path_join(
+            self.image_path, manifest_filename)
         os.makedirs(manifest_path, exist_ok=True)
         LOG.info('Writing image bundle to %s' % manifest_path)
         self._extract_rootfs(manifest_path)

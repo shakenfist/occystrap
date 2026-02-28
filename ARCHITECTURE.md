@@ -205,7 +205,8 @@ Output writer implementations:
 - `outputs/registry.py` - Pushes images to Docker/OCI registries via HTTP API,
   with parallel layer uploads using ThreadPoolExecutor
 - `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
-- `outputs/directory.py` - Extracts to directory with optional layer deduplication
+- `outputs/directory.py` - Extracts to directory with optional layer deduplication;
+  uses `safe_path_join()` to prevent path traversal (CWE-22)
 - `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from
   DirWriter)
 - `outputs/mounts.py` - Creates overlay mount-based extraction
@@ -443,7 +444,9 @@ Key design considerations:
   handler threads and the main fetch() thread
 - Both `EmbeddedRegistryHandler` and `ProxyRegistryHandler` inherit from
   `SafeHeaderMixin` (`util.py`), which overrides `send_header()` to strip
-  `\r` and `\n` from values, preventing HTTP response splitting (CWE-113)
+  `\r` and `\n` from values, preventing HTTP response splitting (CWE-113).
+  User-controlled values are also wrapped in `sanitize_header_value()` at
+  each call site so CodeQL sees the sanitization on the data flow path
 - Cleanup is robust: untag, stop server, and delete temp files all happen
   in nested try/finally blocks
 - When `--layer-cache` is used with a `registry://` output, the embedded
