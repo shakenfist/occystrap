@@ -61,6 +61,11 @@ class Image(ImageInput):
         self._config = None
         self._config_bytes = None
 
+    def clear_manifest_cache(self):
+        """Clear cached manifest so the next get_manifest() re-fetches."""
+        self._manifest = None
+        self._manifest_media_type = None
+
     @property
     def image(self):
         """Return the image name."""

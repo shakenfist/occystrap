@@ -1032,7 +1032,7 @@ class ProxyRegistryHandler(
 
         # Now serve from downstream. Clear cached
         # manifest so the Image re-fetches.
-        downstream_img._manifest = None
+        downstream_img.clear_manifest_cache()
         try:
             resp = downstream_img.request_url(
                 'GET', manifest_url,
