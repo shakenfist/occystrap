@@ -659,9 +659,18 @@ cli.add_command(check_cmd)
               help='Upstream registry for pull-through'
               ' (e.g., docker.io,'
               ' user:pass@registry.example.com)')
+@click.option('--upstream-username', default=None,
+              envvar='OCCYSTRAP_UPSTREAM_USERNAME',
+              help='Username for upstream registry'
+              ' (overrides user:pass@ in --upstream)')
+@click.option('--upstream-password', default=None,
+              envvar='OCCYSTRAP_UPSTREAM_PASSWORD',
+              help='Password for upstream registry'
+              ' (overrides user:pass@ in --upstream)')
 @click.pass_context
 def proxy_cmd(ctx, listen, downstream, filters,
-              concurrency, upstream):
+              concurrency, upstream, upstream_username,
+              upstream_password):
     """Run a filtering registry proxy.
 
     Starts a Docker Registry V2 server that receives
@@ -722,6 +731,12 @@ def proxy_cmd(ctx, listen, downstream, filters,
         if ':' in creds:
             upstream_user, upstream_pass = (
                 creds.split(':', 1))
+
+    # Explicit options override embedded credentials
+    if upstream_username is not None:
+        upstream_user = upstream_username
+    if upstream_password is not None:
+        upstream_pass = upstream_password
 
     try:
         proxy_module.run_proxy(
