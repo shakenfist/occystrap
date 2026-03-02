@@ -216,14 +216,15 @@ server = "http://127.0.0.1:5050"
 TOML
 ```
 
-Then point Docker at this directory and restart:
+Then tell containerd where the host configs live by adding this to
+`/etc/containerd/config.toml` (containerd 2.x syntax):
 
-```json
-{
-    "features": {"containerd-snapshotter": true},
-    "registry-config-dir": "/etc/containerd/certs.d"
-}
+```toml
+[plugins."io.containerd.cri.v1.images".registry]
+  config_path = "/etc/containerd/certs.d"
 ```
+
+Restart containerd and Docker after making these changes.
 
 This differs from the `dockerpush://` input, which uses HTTPS with an
 ephemeral self-signed certificate. Docker skips certificate
