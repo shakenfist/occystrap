@@ -404,6 +404,17 @@ The proxy:
 - Overlaps build and push (images push as soon as they are built,
   rather than waiting for the entire build to complete)
 
+**TLS behavior difference:** The `dockerpush://` input starts an
+embedded HTTPS server with a self-signed certificate. Docker skips
+certificate verification for `127.0.0.0/8`, so it works without any
+daemon.json changes. The proxy, on the other hand, listens on plain
+HTTP. Docker normally allows insecure access to localhost, but when
+`containerd-snapshotter: true` is enabled in daemon.json this
+exception is not honored. In that case, add the proxy address
+(e.g., `127.0.0.1:5050`) to `insecure-registries` in daemon.json
+and restart Docker. See the
+[proxy command reference](command-reference.md#proxy) for details.
+
 ### Push Multiple Images with Layer Dedup
 
 ```bash

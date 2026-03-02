@@ -189,6 +189,32 @@ The proxy also respects global options `--layer-cache`, `--temp-dir`,
   - Per-image locks prevent duplicate upstream fetches for concurrent
     requests
 
+**Docker insecure-registry configuration:**
+
+The proxy listens on plain HTTP. Docker normally allows insecure
+(non-TLS) access to `127.0.0.0/8` and `::1` without extra
+configuration. However, when the Docker daemon is configured with
+`containerd-snapshotter: true` in `daemon.json` (the default on some
+distributions), this localhost exception is **not honored**. In that
+case you must explicitly add the proxy listen address to
+`insecure-registries` in `daemon.json`:
+
+```json
+{
+    "insecure-registries": ["127.0.0.1:5050"]
+}
+```
+
+Restart the Docker daemon after making this change.
+
+This differs from the `dockerpush://` input, which uses HTTPS with an
+ephemeral self-signed certificate. Docker skips certificate
+verification for `127.0.0.0/8` addresses regardless of the
+containerd-snapshotter setting, so `dockerpush://` works without any
+daemon.json changes. The proxy uses plain HTTP because it is a
+standard registry server, not an embedded shim inside the occystrap
+process.
+
 **Examples:**
 
 ```bash
