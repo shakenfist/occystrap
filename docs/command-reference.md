@@ -195,17 +195,35 @@ The proxy listens on plain HTTP. Docker normally allows insecure
 (non-TLS) access to `127.0.0.0/8` and `::1` without extra
 configuration. However, when the Docker daemon is configured with
 `containerd-snapshotter: true` in `daemon.json` (the default on some
-distributions), this localhost exception is **not honored**. In that
-case you must explicitly add the proxy listen address to
-`insecure-registries` in `daemon.json`:
+distributions), this localhost exception is **not honored** and Docker
+will attempt HTTPS, producing errors like:
+
+```
+tls: first record does not look like a TLS handshake
+```
+
+The `insecure-registries` setting in `daemon.json` is also not
+propagated to containerd's push path. To fix this, configure
+containerd's host-based registry config directly:
+
+```bash
+sudo mkdir -p /etc/containerd/certs.d/127.0.0.1:5050
+cat <<'TOML' | sudo tee /etc/containerd/certs.d/127.0.0.1:5050/hosts.toml
+server = "http://127.0.0.1:5050"
+
+[host."http://127.0.0.1:5050"]
+  capabilities = ["pull", "resolve", "push"]
+TOML
+```
+
+Then point Docker at this directory and restart:
 
 ```json
 {
-    "insecure-registries": ["127.0.0.1:5050"]
+    "features": {"containerd-snapshotter": true},
+    "registry-config-dir": "/etc/containerd/certs.d"
 }
 ```
-
-Restart the Docker daemon after making this change.
 
 This differs from the `dockerpush://` input, which uses HTTPS with an
 ephemeral self-signed certificate. Docker skips certificate
