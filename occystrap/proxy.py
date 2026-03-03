@@ -118,6 +118,12 @@ class _ProxyState:
         self.images_processed = 0
         self.images_failed = 0
 
+        # Cross-image diff_id mapping: original_hex -> filtered_hex.
+        # Populated by filters when they process layers, consulted
+        # when subsequent images skip layers that were already
+        # filtered for a previous image.
+        self.diff_id_map = {}
+
         # Pull-through statistics
         self.images_pulled = 0
         self.pull_cache_hits = 0
@@ -784,7 +790,8 @@ class ProxyRegistryHandler(
         for filter_spec in reversed(filter_specs):
             output = builder.build_filter(
                 filter_spec, output,
-                image=repo_name, tag=tag)
+                image=repo_name, tag=tag,
+                diff_id_map=self.state.diff_id_map)
 
         return output
 

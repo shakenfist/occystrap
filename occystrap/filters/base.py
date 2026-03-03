@@ -41,7 +41,8 @@ class ImageFilter(ImageOutput, ABC):
     the actual layer content before forwarding it.
     """
 
-    def __init__(self, wrapped_output, temp_dir=None):
+    def __init__(self, wrapped_output, temp_dir=None,
+                 diff_id_map=None):
         """Wrap another output (or filter) to form a
         chain.
 
@@ -52,9 +53,17 @@ class ImageFilter(ImageOutput, ABC):
                 output (e.g., search-only mode).
             temp_dir: Directory for temporary files
                 (default: system temp directory).
+            diff_id_map: Shared dict mapping original
+                diff_id hex to filtered diff_id hex.
+                Used by the proxy to track how filters
+                transform layer identities across
+                images (default: empty dict).
         """
         self._wrapped = wrapped_output
         self.temp_dir = temp_dir
+        self._diff_id_map = (
+            diff_id_map if diff_id_map is not None
+            else {})
 
         # Config buffering for diff_id updates.
         # Content-modifying filters buffer the config
@@ -119,7 +128,8 @@ class ImageFilter(ImageOutput, ABC):
         self._buffered_config = element
 
     def _record_new_diff_id(
-            self, sha256_hex, layer_index):
+            self, sha256_hex, layer_index,
+            original_hex=None):
         """Record a new diff_id for a modified layer.
 
         Args:
@@ -128,12 +138,20 @@ class ImageFilter(ImageOutput, ABC):
                 (without 'sha256:' prefix).
             layer_index: The layer's position index,
                 or None for ordered delivery.
+            original_hex: Original diff_id hex before
+                filtering. When provided and different
+                from sha256_hex, records the mapping in
+                _diff_id_map for cross-image lookups.
         """
         idx = (layer_index
                if layer_index is not None
                else self._layer_counter)
         self._new_diff_ids[idx] = sha256_hex
         self._layer_counter += 1
+
+        if (original_hex is not None
+                and original_hex != sha256_hex):
+            self._diff_id_map[original_hex] = sha256_hex
 
     def _skip_layer(self, layer_index):
         """Advance the layer counter for an unmodified
@@ -182,6 +200,21 @@ class ImageFilter(ImageOutput, ABC):
             if idx < len(updated_ids):
                 updated_ids[idx] = (
                     'sha256:%s' % sha)
+
+        # Consult the cross-image diff_id_map for
+        # skipped layers whose base was filtered in
+        # a previous image push
+        for idx in range(len(updated_ids)):
+            if idx not in self._new_diff_ids:
+                old_id = updated_ids[idx]
+                if old_id.startswith('sha256:'):
+                    old_hex = old_id[7:]
+                else:
+                    old_hex = old_id
+                if old_hex in self._diff_id_map:
+                    updated_ids[idx] = (
+                        'sha256:%s'
+                        % self._diff_id_map[old_hex])
 
         if updated_ids == original_ids:
             self._buffered_config.data.seek(0)

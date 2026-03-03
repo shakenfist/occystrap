@@ -25,7 +25,8 @@ class TimestampNormalizer(ImageFilter):
     files were originally created or modified.
     """
 
-    def __init__(self, wrapped_output, timestamp=0, temp_dir=None):
+    def __init__(self, wrapped_output, timestamp=0,
+                 temp_dir=None, diff_id_map=None):
         """Initialize the timestamp normalizer.
 
         Args:
@@ -35,8 +36,12 @@ class TimestampNormalizer(ImageFilter):
                 (default: 0).
             temp_dir: Directory for temporary files (default:
                 system temp directory).
+            diff_id_map: Shared dict for cross-image diff_id tracking
+                (default: None).
         """
-        super().__init__(wrapped_output, temp_dir=temp_dir)
+        super().__init__(
+            wrapped_output, temp_dir=temp_dir,
+            diff_id_map=diff_id_map)
         self.timestamp = timestamp
 
     def _normalize_layer(self, layer_data):
@@ -121,7 +126,8 @@ class TimestampNormalizer(ImageFilter):
             normalized_data, new_name = \
                 self._normalize_layer(element.data)
             self._record_new_diff_id(
-                new_name, element.layer_index)
+                new_name, element.layer_index,
+                original_hex=element.name)
 
             try:
                 self._wrapped.process_image_element(
