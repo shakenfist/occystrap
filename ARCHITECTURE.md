@@ -139,13 +139,25 @@ keeping the config's `rootfs.diff_ids` in sync:
 
 - `_buffer_config(element)` - Buffers the config element instead of forwarding
   it immediately. The config is forwarded in `finalize()` with updated diff_ids.
-- `_record_new_diff_id(sha256_hex, layer_index)` - Records the new SHA256 for
-  a modified layer.
+- `_record_new_diff_id(sha256_hex, layer_index, original_hex=None)` - Records
+  the new SHA256 for a modified layer. When `original_hex` is provided and
+  differs from `sha256_hex`, the mapping is also recorded in the cross-image
+  `_diff_id_map` for use by subsequent images in proxy mode.
 - `_skip_layer(layer_index)` - Advances the layer counter for unmodified
   layers (data=None, skipped by fetch_callback).
 - `_forward_buffered_config()` - Called by `finalize()` to update the config's
-  `rootfs.diff_ids` and forward it to the wrapped output. If no diff_ids
-  changed, the original config is forwarded unchanged.
+  `rootfs.diff_ids` and forward it to the wrapped output. For skipped layers
+  (not in `_new_diff_ids`), consults `_diff_id_map` to translate original
+  diff_ids to their filtered equivalents. If no diff_ids changed, the original
+  config is forwarded unchanged.
+
+**Cross-image diff_id mapping:** When the proxy processes child images that
+share base layers with a previously pushed parent, Docker only uploads new
+layers. The base layers already exist in the downstream registry in their
+filtered form. The `_diff_id_map` (a dict passed via `diff_id_map=` to filter
+constructors) maps `original_hex -> filtered_hex` across images. In proxy
+mode, `_ProxyState.diff_id_map` provides this shared dict. Non-proxy
+pipelines use an empty dict (no cross-image state needed).
 
 Content-modifying filters (ExcludeFilter, TimestampNormalizer) use these methods.
 Non-modifying filters (InspectFilter, SearchFilter) pass config through unchanged.
@@ -476,7 +488,8 @@ The proxy consists of four main components:
 
 - `_ProxyState` - Shared state between HTTP handler threads and the main
   process. Holds temp_dir, downstream_uri, filter_strs, layer_cache, in-progress
-  uploads, completed blobs, blob reference counts, and statistics. All mutations
+  uploads, completed blobs, blob reference counts, diff_id_map (cross-image
+  diff_id tracking for filtered layers), and statistics. All mutations
   protected by a lock. A processing semaphore limits concurrent manifest
   processing (configurable via `--concurrency`, default 4).
 
@@ -533,7 +546,9 @@ references them).
 - Blocking manifest processing provides natural backpressure and error
   propagation. Docker sees success or failure directly.
 - Each image gets a fresh pipeline (PipelineBuilder creates new instances),
-  so there is no cross-image state leakage in filters or outputs.
+  so there is no cross-image state leakage in filters or outputs -- except
+  for `diff_id_map`, which intentionally persists across images to track
+  how filters transform layer identities.
 - A shared `LayerCache` across images enables cross-image layer dedup:
   the first image pays full cost, subsequent images with shared base
   layers skip those layers entirely. `LayerCache` is internally

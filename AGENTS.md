@@ -26,15 +26,22 @@ from occystrap import constants
 from occystrap.filters.base import ImageFilter
 
 class MyFilter(ImageFilter):
-    def __init__(self, wrapped_output, option=None):
-        super().__init__(wrapped_output)
+    def __init__(self, wrapped_output, option=None,
+                 temp_dir=None, diff_id_map=None):
+        super().__init__(wrapped_output, temp_dir=temp_dir,
+                         diff_id_map=diff_id_map)
         self.option = option
 
     def process_image_element(self, element):
-        if (element.element_type == constants.IMAGE_LAYER
+        if element.element_type == constants.CONFIG_FILE:
+            self._buffer_config(element)
+        elif (element.element_type == constants.IMAGE_LAYER
                 and element.data is not None):
             # Process the layer, return modified data and new name
             new_data, new_name = self._process_layer(element.data)
+            self._record_new_diff_id(
+                new_name, element.layer_index,
+                original_hex=element.name)
             try:
                 self._wrapped.process_image_element(
                     constants.ImageElement(
@@ -45,8 +52,16 @@ class MyFilter(ImageFilter):
                 # Clean up temporary files
                 pass
         else:
+            if element.element_type == constants.IMAGE_LAYER:
+                self._skip_layer(element.layer_index)
             self._wrapped.process_image_element(element)
 ```
+
+Content-modifying filters must accept `diff_id_map` and forward it to the
+base class. This enables cross-image diff_id tracking in proxy mode (see
+`_forward_buffered_config` in `filters/base.py`). The `original_hex`
+parameter to `_record_new_diff_id` records the `original -> filtered`
+mapping. Register the `diff_id_map` kwarg in `PipelineBuilder.build_filter`.
 
 ### Adding a New Input Source
 

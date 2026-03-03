@@ -25,7 +25,8 @@ class ExcludeFilter(ImageFilter):
     __pycache__ folders, or other files before writing output.
     """
 
-    def __init__(self, wrapped_output, patterns, temp_dir=None):
+    def __init__(self, wrapped_output, patterns,
+                 temp_dir=None, diff_id_map=None):
         """Initialize the exclude filter.
 
         Args:
@@ -34,8 +35,12 @@ class ExcludeFilter(ImageFilter):
                 matched against the full path using fnmatch.
             temp_dir: Directory for temporary files (default:
                 system temp directory).
+            diff_id_map: Shared dict for cross-image diff_id tracking
+                (default: None).
         """
-        super().__init__(wrapped_output, temp_dir=temp_dir)
+        super().__init__(
+            wrapped_output, temp_dir=temp_dir,
+            diff_id_map=diff_id_map)
         self.patterns = patterns
 
     def _matches_exclusion(self, path):
@@ -133,7 +138,8 @@ class ExcludeFilter(ImageFilter):
             filtered_data, new_name = \
                 self._filter_layer(element.data)
             self._record_new_diff_id(
-                new_name, element.layer_index)
+                new_name, element.layer_index,
+                original_hex=element.name)
 
             try:
                 self._wrapped.process_image_element(

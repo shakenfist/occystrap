@@ -213,7 +213,9 @@ class PipelineBuilder:
         else:
             raise PipelineError('Unknown output scheme: %s' % uri_spec.scheme)
 
-    def build_filter(self, filter_spec, wrapped_output, image=None, tag=None):
+    def build_filter(self, filter_spec, wrapped_output,
+                     image=None, tag=None,
+                     diff_id_map=None):
         """Wrap an output with a filter.
 
         Args:
@@ -221,6 +223,8 @@ class PipelineBuilder:
             wrapped_output: The ImageOutput to wrap
             image: Image name (for search filter output)
             tag: Image tag (for search filter output)
+            diff_id_map: Shared dict for cross-image
+                diff_id tracking (proxy mode only).
 
         Returns:
             An ImageFilter wrapping the output.
@@ -237,7 +241,8 @@ class PipelineBuilder:
                 'timestamp', filter_spec.options.get('ts', 0))
             return TimestampNormalizer(
                 wrapped_output, timestamp=timestamp,
-                temp_dir=temp_dir)
+                temp_dir=temp_dir,
+                diff_id_map=diff_id_map)
 
         elif name == 'search':
             pattern = filter_spec.options.get('pattern')
@@ -265,7 +270,8 @@ class PipelineBuilder:
             patterns = [p.strip() for p in pattern_str.split(',')]
             return ExcludeFilter(
                 wrapped_output, patterns=patterns,
-                temp_dir=temp_dir)
+                temp_dir=temp_dir,
+                diff_id_map=diff_id_map)
 
         elif name == 'inspect':
             output_file = filter_spec.options.get('file')
