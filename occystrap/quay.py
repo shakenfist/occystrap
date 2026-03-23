@@ -71,16 +71,24 @@ class QuayClient:
                 'accessing private organizations.'
             )
 
-    def list_repositories(self, namespace):
-        """List all repositories in a quay.io namespace.
+    def list_repositories(self, namespace, since_ts=None):
+        """List repositories in a quay.io namespace.
 
         Handles pagination automatically using the opaque cursor
         tokens returned by the API. The quay.io API returns pages
         of 100 repositories.
 
+        When since_ts is provided, the API is asked for
+        last_modified timestamps and repositories older than
+        since_ts are filtered out during listing. This avoids
+        expensive per-repo tag checks on stale repositories.
+
         Args:
             namespace: The organization / namespace name
                 (e.g., 'kolla').
+            since_ts: Optional Unix timestamp. If set, only
+                return repositories whose last_modified is
+                on or after this timestamp.
 
         Returns:
             A list of repository name strings (the name within
@@ -88,8 +96,11 @@ class QuayClient:
             For example, ['nova-api', 'keystone', 'glance-api'].
         """
         repos = []
-        url = '%s/repository?namespace=%s&public=true' % (
-            QUAY_API_BASE, namespace)
+        skipped = 0
+        base_params = 'namespace=%s&public=true' % namespace
+        if since_ts is not None:
+            base_params += '&last_modified=true'
+        url = '%s/repository?%s' % (QUAY_API_BASE, base_params)
 
         page_num = 0
         while url:
@@ -102,20 +113,29 @@ class QuayClient:
 
             page_repos = data.get('repositories', [])
             for repo in page_repos:
+                if since_ts is not None:
+                    repo_ts = repo.get('last_modified', 0)
+                    if repo_ts < since_ts:
+                        skipped += 1
+                        continue
                 repos.append(repo['name'])
 
             next_page = data.get('next_page')
             if next_page:
                 url = (
-                    '%s/repository?namespace=%s&public=true'
-                    '&next_page=%s'
-                    % (QUAY_API_BASE, namespace, next_page)
+                    '%s/repository?%s&next_page=%s'
+                    % (QUAY_API_BASE, base_params, next_page)
                 )
             else:
                 url = None
 
-        LOG.info('Found %d repositories in %s'
-                 % (len(repos), namespace))
+        if skipped:
+            LOG.info('Found %d repositories in %s '
+                     '(%d skipped as older than since)'
+                     % (len(repos), namespace, skipped))
+        else:
+            LOG.info('Found %d repositories in %s'
+                     % (len(repos), namespace))
         return repos
 
     def has_tag(self, namespace, repo, tag):
@@ -191,12 +211,17 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
         for each repo that matches the glob and has the tag.
     """
     client = QuayClient(token=token)
-    all_repos = client.list_repositories(namespace)
 
     # Convert since date to unix timestamp for comparison
     since_ts = None
     if since is not None:
         since_ts = calendar.timegm(since.timetuple())
+
+    # Pass since_ts to list_repositories so stale repos are
+    # filtered during listing, avoiding expensive per-repo
+    # tag checks.
+    all_repos = client.list_repositories(
+        namespace, since_ts=since_ts)
 
     # Filter by glob pattern
     matching_repos = [r for r in all_repos if fnmatch(r, repo_glob)]

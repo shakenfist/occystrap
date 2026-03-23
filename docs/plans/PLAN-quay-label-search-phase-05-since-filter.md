@@ -151,17 +151,56 @@ Update `docs/command-reference.md`:
 - Add `since=YYYY-MM-DD` to the quay:// query options table.
 - Add an example showing the `since` parameter.
 
+### Iteration: early filtering at repo listing stage
+
+After initial testing against a quay.io organization with 1,876
+repositories, we discovered that applying `since` only at the
+tag-check stage was too slow — it still required 1,876 individual
+`has_tag()` API calls before any filtering happened.
+
+The quay.io repository listing API supports a `last_modified=true`
+query parameter that returns a `last_modified` Unix timestamp on
+each repository object. This timestamp reflects when *any* tag
+in the repository was last updated.
+
+**Change 1b: `list_repositories()` accepts `since_ts`**
+
+When `since_ts` is provided:
+1. The `last_modified=true` parameter is added to the API request.
+2. During pagination, repos with `last_modified < since_ts` are
+   skipped immediately — they never enter the list.
+3. The log message reports how many repos were skipped.
+
+This filtering happens at the listing stage (pages of 100), so
+the expensive per-repo `has_tag()` calls are only made for repos
+that have been recently modified. For the 1,876-repo org, this
+reduced the candidate set to a fraction of the total.
+
+The tag-level `since` check in `resolve_quay_uri()` is retained
+as a second filter. The repo-level `last_modified` is "any tag
+was updated recently", but the specific tag we want might still
+be older than `since`. The two-stage filter ensures correctness:
+repo-level for speed, tag-level for precision.
+
+**Additional tests:**
+- `test_since_ts_filters_old_repos` — mock repos with different
+  `last_modified` timestamps, verify old ones are excluded.
+- `test_since_ts_none_returns_all` — verify no filtering and no
+  `last_modified=true` in the URL when `since_ts` is None.
+
 ## Changes summary
 
 | File | Changes |
 |------|---------|
-| `occystrap/quay.py` | `has_tag()` returns dict or None; `resolve_quay_uri()` accepts `since` |
+| `occystrap/quay.py` | `has_tag()` returns dict or None; `list_repositories()` accepts `since_ts`; `resolve_quay_uri()` accepts `since` and passes `since_ts` to listing |
 | `occystrap/main.py` | `_resolve_quay_images()` parses `since` from URI options |
-| `occystrap/tests/test_quay.py` | Update 3 existing tests, add 4 new tests |
+| `occystrap/tests/test_quay.py` | Update 3 existing tests, add 6 new tests |
 | `deploy/occystrap_ci/tests/test_quay_bulk.py` | Add 1 new functional test |
 | `docs/command-reference.md` | Add `since` to quay:// docs |
 
 ## Commit plan
 
-A single commit containing all changes — this is a small,
-self-contained feature addition.
+Two commits:
+1. Initial `since` implementation (tag-level filtering)
+2. Early filtering at repo listing stage (after testing revealed
+   the performance issue)

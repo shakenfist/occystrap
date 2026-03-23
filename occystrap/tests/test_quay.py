@@ -125,6 +125,46 @@ class TestListRepositories(unittest.TestCase):
             client.list_repositories('privateorg')
         self.assertIn('quay.io API token', str(cm.exception))
 
+    @mock.patch('occystrap.quay.util.request_url')
+    def test_since_ts_filters_old_repos(self, mock_request):
+        """Repos older than since_ts are excluded during listing."""
+        # 2025-03-15 and 2021-06-15 as unix timestamps
+        new_ts = 1742025600
+        old_ts = 1623772800
+        mock_request.return_value = _mock_response({
+            'repositories': [
+                {'name': 'new-repo', 'namespace': 'kolla',
+                 'last_modified': new_ts},
+                {'name': 'old-repo', 'namespace': 'kolla',
+                 'last_modified': old_ts},
+            ]
+        })
+
+        client = QuayClient()
+        # since_ts = 2024-01-01
+        repos = client.list_repositories('kolla', since_ts=1704067200)
+
+        self.assertEqual(repos, ['new-repo'])
+        call_url = mock_request.call_args[0][1]
+        self.assertIn('last_modified=true', call_url)
+
+    @mock.patch('occystrap.quay.util.request_url')
+    def test_since_ts_none_returns_all(self, mock_request):
+        """Without since_ts, all repos are returned."""
+        mock_request.return_value = _mock_response({
+            'repositories': [
+                {'name': 'new-repo', 'namespace': 'kolla'},
+                {'name': 'old-repo', 'namespace': 'kolla'},
+            ]
+        })
+
+        client = QuayClient()
+        repos = client.list_repositories('kolla', since_ts=None)
+
+        self.assertEqual(repos, ['new-repo', 'old-repo'])
+        call_url = mock_request.call_args[0][1]
+        self.assertNotIn('last_modified', call_url)
+
 
 class TestHasTag(unittest.TestCase):
     """Tests for QuayClient.has_tag()."""
