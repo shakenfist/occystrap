@@ -249,7 +249,7 @@ as sub-documents.
 | 2. quay:// URI parsing and multi-image resolution | PLAN-quay-label-search-phase-02-uri-and-input.md | Complete |
 | 3. info and process multi-image support | PLAN-quay-label-search-phase-03-commands.md | Complete |
 | 4. Functional tests and documentation | PLAN-quay-label-search-phase-04-tests-docs.md | Complete |
-| 5. Filter by tag age (`since` parameter) | PLAN-quay-label-search-phase-05-since-filter.md | Not started |
+| 5. Filter by tag age (`since` parameter) | PLAN-quay-label-search-phase-05-since-filter.md | Complete |
 
 ### Phase 1: Quay.io API client
 
