@@ -405,6 +405,7 @@ quay://ORG/GLOB:TAG[?token=TOKEN]
 | Option | Description |
 |--------|-------------|
 | `token=TOKEN` | Quay.io API token for private organizations |
+| `since=YYYY-MM-DD` | Only include images whose tag was created/updated on or after this date |
 
 If no token is provided, `--password` is used as the quay.io API token
 (robot account tokens work for both the quay.io API and Docker Registry
@@ -441,6 +442,9 @@ occystrap process "quay://myorg/*:latest?token=abc123" dir://./out?unique_names=
 
 # Private org using --password
 occystrap --password mytoken process quay://myorg/*:latest dir://./out?unique_names=true
+
+# Only images whose tag was updated after 2024-01-01
+occystrap info "quay://kolla/*:latest?since=2024-01-01"
 ```
 
 ### docker://

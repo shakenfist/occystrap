@@ -9,6 +9,8 @@ separate REST API at /api/v1/ that provides organization-level operations
 not available via the standard registry protocol.
 """
 
+import calendar
+import datetime
 from fnmatch import fnmatch
 
 from shakenfist_utilities import logs
@@ -128,9 +130,10 @@ class QuayClient:
             tag: The tag name to check for.
 
         Returns:
-            True if the tag exists and is active, False otherwise.
-            Also returns False if the repository does not exist
-            (404 from the API).
+            A dict with tag metadata (name, start_ts,
+            manifest_digest, last_modified, etc.) if the tag
+            exists and is active, or None if it does not exist
+            or the repository is not found (404).
         """
         url = (
             '%s/repository/%s/%s/tag/'
@@ -147,25 +150,25 @@ class QuayClient:
             if len(e.args) >= 4 and e.args[3] == 404:
                 LOG.debug('Repository %s/%s not found'
                           % (namespace, repo))
-                return False
+                return None
             raise
 
         data = r.json()
         tags = data.get('tags', [])
-        exists = len(tags) > 0
 
-        if exists:
+        if tags:
+            tag_info = tags[0]
             LOG.debug('Tag %s:%s/%s exists (digest: %s)'
                       % (tag, namespace, repo,
-                         tags[0].get('manifest_digest', 'unknown')))
-        else:
-            LOG.debug('Tag %s:%s/%s does not exist'
-                      % (tag, namespace, repo))
+                         tag_info.get('manifest_digest', 'unknown')))
+            return tag_info
 
-        return exists
+        LOG.debug('Tag %s:%s/%s does not exist'
+                  % (tag, namespace, repo))
+        return None
 
 
-def resolve_quay_uri(namespace, repo_glob, tag, token=None):
+def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
     """Resolve a quay:// URI into matching image references.
 
     Lists all repositories in the namespace, filters by the
@@ -179,6 +182,9 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None):
             (e.g., '*', 'nova-*').
         tag: Exact tag name to match.
         token: Optional quay.io API token for private orgs.
+        since: Optional datetime.date. If set, only include
+            images whose tag was created/updated on or after
+            this date.
 
     Returns:
         List of ('quay.io', 'namespace/repo', tag) tuples
@@ -186,6 +192,11 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None):
     """
     client = QuayClient(token=token)
     all_repos = client.list_repositories(namespace)
+
+    # Convert since date to unix timestamp for comparison
+    since_ts = None
+    if since is not None:
+        since_ts = calendar.timegm(since.timetuple())
 
     # Filter by glob pattern
     matching_repos = [r for r in all_repos if fnmatch(r, repo_glob)]
@@ -198,8 +209,22 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None):
         LOG.info('Checking tag %r for repo %d of %d: %s/%s'
                  % (tag, i + 1, len(matching_repos),
                     namespace, repo))
-        if client.has_tag(namespace, repo, tag):
-            results.append(('quay.io', '%s/%s' % (namespace, repo), tag))
+        tag_info = client.has_tag(namespace, repo, tag)
+        if not tag_info:
+            continue
+
+        # Filter by tag age if since is set
+        if since_ts is not None:
+            tag_ts = tag_info.get('start_ts', 0)
+            if tag_ts < since_ts:
+                tag_date = datetime.date.fromtimestamp(tag_ts)
+                LOG.debug(
+                    'Skipping %s/%s: tag %r is from %s, '
+                    'before since=%s'
+                    % (namespace, repo, tag, tag_date, since))
+                continue
+
+        results.append(('quay.io', '%s/%s' % (namespace, repo), tag))
 
     LOG.info('Found %d images matching %s/%s:%s'
              % (len(results), namespace, repo_glob, tag))

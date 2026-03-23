@@ -92,6 +92,17 @@ class QuayInfoRealAPITestCase(testtools.TestCase):
         self.assertEqual(0, result.exit_code)
         self.assertIn('No images found', result.output)
 
+    def test_info_quay_since_filters_old(self):
+        """info with since far in the future returns no results."""
+        runner = CliRunner()
+        result = runner.invoke(cli, [
+            'info',
+            'quay://projectquay/quay:latest?since=2099-01-01',
+        ])
+
+        self.assertEqual(0, result.exit_code)
+        self.assertIn('No images found', result.output)
+
 
 class QuayProcessMockedTestCase(testtools.TestCase):
     """Test process with quay:// URIs using mocked resolution.

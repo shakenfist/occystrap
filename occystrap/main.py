@@ -1,3 +1,4 @@
+import datetime
 import json
 
 import click
@@ -133,7 +134,18 @@ def _resolve_quay_images(source, ctx):
         ctx_obj = ctx.obj if ctx and ctx.obj else {}
         token = ctx_obj.get('PASSWORD')
 
-    return quay_module.resolve_quay_uri(namespace, repo_glob, tag, token=token)
+    # Parse since date if provided
+    since = None
+    since_str = options.get('since')
+    if since_str:
+        try:
+            since = datetime.date.fromisoformat(since_str)
+        except ValueError:
+            raise uri.URIParseError(
+                'Invalid since date %r, expected YYYY-MM-DD format' % since_str)
+
+    return quay_module.resolve_quay_uri(
+        namespace, repo_glob, tag, token=token, since=since)
 
 
 # =============================================================================

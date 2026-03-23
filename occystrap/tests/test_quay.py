@@ -1,5 +1,6 @@
 """Tests for the quay.io API client, URI parsing, and command integration."""
 
+import datetime
 import json
 import unittest
 from unittest import mock
@@ -130,7 +131,7 @@ class TestHasTag(unittest.TestCase):
 
     @mock.patch('occystrap.quay.util.request_url')
     def test_tag_exists(self, mock_request):
-        """Tag that exists returns True."""
+        """Tag that exists returns tag metadata dict."""
         mock_request.return_value = _mock_response({
             'tags': [
                 {
@@ -146,7 +147,10 @@ class TestHasTag(unittest.TestCase):
         client = QuayClient()
         result = client.has_tag('kolla', 'nova-api', 'latest')
 
-        self.assertTrue(result)
+        self.assertIsNotNone(result)
+        self.assertEqual(result['name'], 'latest')
+        self.assertEqual(result['start_ts'], 1774047466)
+        self.assertEqual(result['manifest_digest'], 'sha256:abc123')
         call_url = mock_request.call_args[0][1]
         self.assertIn('/kolla/nova-api/tag/', call_url)
         self.assertIn('specificTag=latest', call_url)
@@ -155,7 +159,7 @@ class TestHasTag(unittest.TestCase):
 
     @mock.patch('occystrap.quay.util.request_url')
     def test_tag_missing(self, mock_request):
-        """Tag that does not exist returns False."""
+        """Tag that does not exist returns None."""
         mock_request.return_value = _mock_response({
             'tags': [],
             'page': 1,
@@ -165,11 +169,11 @@ class TestHasTag(unittest.TestCase):
         client = QuayClient()
         result = client.has_tag('kolla', 'nova-api', 'nonexistent')
 
-        self.assertFalse(result)
+        self.assertIsNone(result)
 
     @mock.patch('occystrap.quay.util.request_url')
     def test_repo_not_found(self, mock_request):
-        """404 for nonexistent repository returns False."""
+        """404 for nonexistent repository returns None."""
         mock_request.side_effect = util.APIException(
             'API request failed', 'GET',
             '%s/repository/kolla/bogus/tag/' % QUAY_API_BASE,
@@ -178,7 +182,7 @@ class TestHasTag(unittest.TestCase):
         client = QuayClient()
         result = client.has_tag('kolla', 'bogus', 'latest')
 
-        self.assertFalse(result)
+        self.assertIsNone(result)
 
     @mock.patch('occystrap.quay.util.request_url')
     def test_unauthorized_raises_quay_error(self, mock_request):
@@ -280,6 +284,13 @@ class TestParseQuayUri(unittest.TestCase):
         self.assertEqual(repo_glob, '*')
         self.assertEqual(tag, '2025.1-debian')
 
+    def test_with_since(self):
+        """quay://kolla/*:latest?since=2024-01-01 includes since in options."""
+        spec = uri.parse_uri('quay://kolla/*:latest?since=2024-01-01')
+        namespace, repo_glob, tag, options = uri.parse_quay_uri(spec)
+        self.assertEqual(namespace, 'kolla')
+        self.assertEqual(options, {'since': '2024-01-01'})
+
 
 class TestResolveQuayUri(unittest.TestCase):
     """Tests for resolve_quay_uri()."""
@@ -291,7 +302,8 @@ class TestResolveQuayUri(unittest.TestCase):
         client.list_repositories.return_value = [
             'nova-api', 'keystone', 'glance-api'
         ]
-        client.has_tag.side_effect = [True, False, True]
+        tag_info = {'name': 'latest', 'start_ts': 1774047466}
+        client.has_tag.side_effect = [tag_info, None, tag_info]
 
         results = resolve_quay_uri('kolla', '*', 'latest')
 
@@ -309,7 +321,7 @@ class TestResolveQuayUri(unittest.TestCase):
             'nova-api', 'keystone', 'nova-scheduler'
         ]
         # Only nova-* repos should be checked
-        client.has_tag.return_value = True
+        client.has_tag.return_value = {'name': 'latest', 'start_ts': 1774047466}
 
         results = resolve_quay_uri('kolla', 'nova-*', 'latest')
 
@@ -325,7 +337,7 @@ class TestResolveQuayUri(unittest.TestCase):
         """All repos lack the tag, returns empty list."""
         client = mock_client_cls.return_value
         client.list_repositories.return_value = ['nova-api', 'keystone']
-        client.has_tag.return_value = False
+        client.has_tag.return_value = None
 
         results = resolve_quay_uri('kolla', '*', 'nonexistent')
 
@@ -351,6 +363,57 @@ class TestResolveQuayUri(unittest.TestCase):
         resolve_quay_uri('myorg', '*', 'latest', token='secret')
 
         mock_client_cls.assert_called_once_with(token='secret')
+
+    @mock.patch('occystrap.quay.QuayClient')
+    def test_since_filters_old_tags(self, mock_client_cls):
+        """Tags older than since date are excluded."""
+        client = mock_client_cls.return_value
+        client.list_repositories.return_value = ['nova-api']
+        # start_ts = 2021-06-15 (well before since=2024-01-01)
+        client.has_tag.return_value = {
+            'name': 'latest', 'start_ts': 1623772800,
+        }
+
+        results = resolve_quay_uri(
+            'kolla', '*', 'latest',
+            since=datetime.date(2024, 1, 1))
+
+        self.assertEqual(results, [])
+
+    @mock.patch('occystrap.quay.QuayClient')
+    def test_since_includes_new_tags(self, mock_client_cls):
+        """Tags newer than since date are included."""
+        client = mock_client_cls.return_value
+        client.list_repositories.return_value = ['nova-api']
+        # start_ts = 2025-03-15 (after since=2024-01-01)
+        client.has_tag.return_value = {
+            'name': 'latest', 'start_ts': 1742025600,
+        }
+
+        results = resolve_quay_uri(
+            'kolla', '*', 'latest',
+            since=datetime.date(2024, 1, 1))
+
+        self.assertEqual(results, [
+            ('quay.io', 'kolla/nova-api', 'latest'),
+        ])
+
+    @mock.patch('occystrap.quay.QuayClient')
+    def test_since_none_skips_filter(self, mock_client_cls):
+        """since=None does not filter anything."""
+        client = mock_client_cls.return_value
+        client.list_repositories.return_value = ['nova-api']
+        # Very old tag, but since is None
+        client.has_tag.return_value = {
+            'name': 'latest', 'start_ts': 1000000000,
+        }
+
+        results = resolve_quay_uri(
+            'kolla', '*', 'latest', since=None)
+
+        self.assertEqual(results, [
+            ('quay.io', 'kolla/nova-api', 'latest'),
+        ])
 
 
 def _make_cli_runner():
