@@ -245,10 +245,10 @@ as sub-documents.
 
 | Phase | Plan | Status |
 |-------|------|--------|
-| 1. Quay.io API client | PLAN-quay-label-search-phase-01-api-client.md | Not started |
-| 2. quay:// URI parsing and multi-image resolution | PLAN-quay-label-search-phase-02-uri-and-input.md | Not started |
-| 3. info and process multi-image support | PLAN-quay-label-search-phase-03-commands.md | Not started |
-| 4. Tests and documentation | PLAN-quay-label-search-phase-04-tests-docs.md | Not started |
+| 1. Quay.io API client | PLAN-quay-label-search-phase-01-api-client.md | Complete |
+| 2. quay:// URI parsing and multi-image resolution | PLAN-quay-label-search-phase-02-uri-and-input.md | Complete |
+| 3. info and process multi-image support | PLAN-quay-label-search-phase-03-commands.md | Complete |
+| 4. Functional tests and documentation | PLAN-quay-label-search-phase-04-tests-docs.md | Not started |
 
 ### Phase 1: Quay.io API client
 
@@ -292,14 +292,19 @@ actual image fetching uses the existing `registry.Image` class.
   - `tar://` could generate per-image filenames or error
 - Progress reporting: "Processing image N of M: org/repo:tag"
 
-### Phase 4: Tests and documentation
+### Phase 4: Functional tests and documentation
 
-- Unit tests for the quay.io API client (mocked HTTP responses)
-- Unit tests for quay:// URI parsing
-- Unit tests for repo glob matching and tag existence filtering
+- Functional tests in `deploy/occystrap_ci/tests/` following the
+  existing testtools+stestr pattern, exercising the full quay://
+  pipeline against a real or mocked quay.io API
 - Update `docs/command-reference.md` with quay:// examples
-- Update `ARCHITECTURE.md` with the new input source
+- Update `ARCHITECTURE.md` with the new quay.io client and
+  multi-image resolution flow
 - Update `README.md` with feature description
+- Update `AGENTS.md`
+
+Note: unit tests for the API client, URI parsing, resolver, and
+command integration were delivered in phases 1-3 (32 tests total).
 
 ## Administration and logistics
 
