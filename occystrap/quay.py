@@ -9,6 +9,8 @@ separate REST API at /api/v1/ that provides organization-level operations
 not available via the standard registry protocol.
 """
 
+from fnmatch import fnmatch
+
 from shakenfist_utilities import logs
 
 from occystrap import util
@@ -161,3 +163,44 @@ class QuayClient:
                       % (tag, namespace, repo))
 
         return exists
+
+
+def resolve_quay_uri(namespace, repo_glob, tag, token=None):
+    """Resolve a quay:// URI into matching image references.
+
+    Lists all repositories in the namespace, filters by the
+    glob pattern, checks tag existence for each match, and
+    returns a list of (registry, image, tag) tuples suitable
+    for constructing registry.Image inputs.
+
+    Args:
+        namespace: Quay.io organization name.
+        repo_glob: Glob pattern for repository names
+            (e.g., '*', 'nova-*').
+        tag: Exact tag name to match.
+        token: Optional quay.io API token for private orgs.
+
+    Returns:
+        List of ('quay.io', 'namespace/repo', tag) tuples
+        for each repo that matches the glob and has the tag.
+    """
+    client = QuayClient(token=token)
+    all_repos = client.list_repositories(namespace)
+
+    # Filter by glob pattern
+    matching_repos = [r for r in all_repos if fnmatch(r, repo_glob)]
+    LOG.info('Glob %r matched %d of %d repositories'
+             % (repo_glob, len(matching_repos), len(all_repos)))
+
+    # Check tag existence for each matching repo
+    results = []
+    for i, repo in enumerate(matching_repos):
+        LOG.info('Checking tag %r for repo %d of %d: %s/%s'
+                 % (tag, i + 1, len(matching_repos),
+                    namespace, repo))
+        if client.has_tag(namespace, repo, tag):
+            results.append(('quay.io', '%s/%s' % (namespace, repo), tag))
+
+    LOG.info('Found %d images matching %s/%s:%s'
+             % (len(results), namespace, repo_glob, tag))
+    return results
