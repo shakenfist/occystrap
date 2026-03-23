@@ -65,11 +65,15 @@ class QuayInfoRealAPITestCase(testtools.TestCase):
             0, result.exit_code,
             'info failed: %s' % result.output)
 
-        # Extract JSON array from output (progress lines may
-        # be mixed in when Click doesn't support mix_stderr)
-        output = result.output
-        json_start = output.index('[')
-        data = json.loads(output[json_start:])
+        # Extract JSON array from output. Try stdout first
+        # (clean JSON when Click supports mix_stderr), then
+        # fall back to finding the JSON array in mixed output
+        # where progress lines and ANSI codes may be present.
+        output = getattr(result, 'stdout', None) or result.output
+        if not output.lstrip().startswith('['):
+            json_start = output.index('\n[') + 1
+            output = output[json_start:]
+        data = json.loads(output)
 
         self.assertIsInstance(data, list)
         self.assertGreater(len(data), 0)
@@ -141,14 +145,11 @@ class QuayProcessMockedTestCase(testtools.TestCase):
             # With unique_names, we expect a catalog.json
             self.assertIn('catalog.json', files)
 
-            # Catalog should reference both images
+            # Catalog format is {image_name: {tag: manifest_file}}
             with open(os.path.join(tmpdir, 'catalog.json')) as f:
                 catalog = json.load(f)
-            image_names = [
-                entry.get('image', '')
-                for entry in catalog.get('images', [])]
-            self.assertIn('library/busybox', image_names)
-            self.assertIn('library/hello-world', image_names)
+            self.assertIn('library/busybox', catalog)
+            self.assertIn('library/hello-world', catalog)
 
     @mock.patch('occystrap.main._resolve_quay_images')
     def test_process_quay_tar_rejected(self, mock_resolve):

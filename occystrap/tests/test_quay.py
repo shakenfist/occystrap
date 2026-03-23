@@ -527,11 +527,16 @@ class TestInfoQuayCommand(unittest.TestCase):
             cli, ['-O', 'json', 'info', 'quay://kolla/*:latest'])
 
         self.assertEqual(result.exit_code, 0, result.output)
-        # Extract JSON from output — progress lines may be
-        # mixed in when Click doesn't support mix_stderr=False
-        output = result.output
-        json_start = output.index('[')
-        data = json.loads(output[json_start:])
+        # Extract JSON from output — progress lines and ANSI
+        # codes may be mixed in when Click doesn't support
+        # mix_stderr=False. Try stdout first (clean JSON),
+        # then fall back to finding the JSON array in mixed
+        # output.
+        output = getattr(result, 'stdout', None) or result.output
+        if not output.lstrip().startswith('['):
+            json_start = output.index('\n[') + 1
+            output = output[json_start:]
+        data = json.loads(output)
         self.assertIsInstance(data, list)
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]['image'], 'kolla/nova-api')
