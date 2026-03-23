@@ -20,28 +20,26 @@ functional tests and updates all documentation.
 
 The existing functional tests in `deploy/occystrap_ci/tests/`
 hit a local Docker registry at `localhost:5000`. For quay://
-tests, we have two options:
+tests, we will hit the real quay.io API.
 
-**Option A: Hit the real quay.io API.** This is a true
-integration test but makes CI dependent on an external service.
-The quay.io API is public for public orgs and does not require
-auth, so it should be reliable, but it could be flaky due to
-network issues or rate limiting.
+The quay.io API is public for public organizations and does not
+require authentication. We will use a well-known public org
+(e.g., `projectquay`) and query for a tag that is expected to
+exist on at least one repository. This gives us a true
+end-to-end integration test that exercises the full pipeline:
+quay.io API discovery, glob filtering, tag existence checks,
+and image metadata fetching.
 
-**Option B: Mock the quay.io API at the HTTP level.** Use
-`unittest.mock.patch` on `util.request_url` to simulate the
-quay.io API responses, then let the resolver produce
-`registry://localhost:5000/...` references that hit the local
-registry. This tests the full pipeline (resolver + registry
-pull) without depending on quay.io.
+The `info` command is the natural fit for these tests — it
+fetches manifests and configs but does not download layer blobs,
+keeping the tests fast and light on network traffic. The
+`process` command tests will still use the local registry via
+mocked resolution, since downloading real images from quay.io
+in CI would be slow and bandwidth-heavy.
 
-**Recommendation: Use Option B** (mocked quay.io API, real local
-registry). The unit tests in phases 1-3 already verify the API
-client and resolver logic in isolation. The functional test
-should verify that the full command flow works end-to-end:
-resolution produces the right references, and those references
-are successfully fetched from a real registry. Mocking only the
-quay.io API (not the registry pull) achieves this.
+If quay.io is unreachable in CI, these tests will fail. This is
+acceptable — we want to know if the integration is broken. If
+flakiness becomes a problem in practice, we can revisit.
 
 ### Test file
 
@@ -50,44 +48,47 @@ New file: `deploy/occystrap_ci/tests/test_quay_bulk.py`
 Following the existing functional test pattern:
 - Uses `testtools.TestCase`
 - Uses `CliRunner` from Click
-- Runs against `localhost:5000` with `--insecure`
 
 ### Test cases
 
-1. **`test_info_quay_text`** — Mock `resolve_quay_uri` to return
-   2 images from `localhost:5000` (e.g., `library/busybox` and
-   `library/hello-world`). Run `info` with a `quay://` URI.
-   Verify output contains both image names and the `---`
-   separator.
+**Real quay.io tests (info command):**
+
+These tests hit the real quay.io API and fetch image metadata
+(manifests and configs, no layer blobs) from quay.io. They use
+a well-known public org like `projectquay` with a repo glob
+that matches at least one repository with a known tag.
+
+1. **`test_info_quay_text`** — Run `info` with a real `quay://`
+   URI (e.g., `quay://projectquay/quay*:latest`). Verify output
+   contains at least one image and includes expected fields
+   (image name, layer count).
 
 2. **`test_info_quay_json`** — Same as above but with `-O json`.
-   Verify output is a valid JSON array with 2 entries, each
-   having `image`, `tag`, `layer_count` fields.
+   Verify output is a valid JSON array with at least 1 entry,
+   each having `image`, `tag`, `layer_count` fields.
 
-3. **`test_process_quay_to_dir`** — Mock `resolve_quay_uri` to
-   return 2 images. Run `process` with `quay://` source and
-   `dir://...?unique_names=true` destination. Verify the
+3. **`test_info_quay_no_matches`** — Run `info` with a real
+   quay:// URI that will not match anything (e.g., a nonsense
+   glob or a tag that does not exist). Verify the command
+   exits 0 and prints "No images found".
+
+**Mocked resolution tests (process command):**
+
+These tests mock `_resolve_quay_images` to return tuples
+pointing at the local CI registry (`localhost:5000`). This
+avoids downloading real layer blobs from quay.io while still
+testing the multi-image pipeline end-to-end.
+
+4. **`test_process_quay_to_dir`** — Mock resolution to return
+   2 images from `localhost:5000` (e.g., `library/busybox` and
+   `library/hello-world`). Run `process` with `quay://` source
+   and `dir://...?unique_names=true` destination. Verify the
    output directory contains manifest files for both images.
 
-4. **`test_info_quay_empty`** — Mock `resolve_quay_uri` to
-   return an empty list. Verify the command exits 0 and
-   prints "No images found".
-
-5. **`test_process_quay_tar_rejected`** — Mock `resolve_quay_uri`
-   to return 1 image. Run `process` with `tar://` destination.
+5. **`test_process_quay_tar_rejected`** — Mock resolution to
+   return 1 image. Run `process` with `tar://` destination.
    Verify exit code is non-zero with an error message about
    tar:// not supporting multi-image sources.
-
-### Mocking approach
-
-The functional tests mock at the `_resolve_quay_images` level
-in `main.py`, making them return tuples pointing at the local
-registry (`localhost:5000`). This means:
-
-- The quay.io API is not called (no external dependency)
-- The actual image pull happens against the real local registry
-  (tests the full pipeline from `registry.Image` onward)
-- The tests are fast and reliable
 
 ## Documentation updates
 
