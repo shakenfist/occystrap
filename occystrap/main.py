@@ -603,7 +603,6 @@ def _info_multi(ctx, images, source):
 
     output_format = ctx.obj.get(
         'OUTPUT_FORMAT', 'text')
-    ctx_obj = ctx.obj if ctx and ctx.obj else {}
 
     all_infos = []
     for i, (registry, image, tag) in enumerate(images):
@@ -611,14 +610,10 @@ def _info_multi(ctx, images, source):
             '(%d/%d) %s/%s:%s'
             % (i + 1, len(images), registry, image, tag),
             err=True)
-        input_source = input_registry.Image(
-            registry, image, tag,
-            os=ctx_obj.get('OS', 'linux'),
-            architecture=ctx_obj.get('ARCHITECTURE', 'amd64'),
-            variant=ctx_obj.get('VARIANT', ''),
-            secure=(not ctx_obj.get('INSECURE', False)),
-            username=ctx_obj.get('USERNAME'),
-            password=ctx_obj.get('PASSWORD'))
+        source_uri = 'registry://%s/%s:%s' % (registry, image, tag)
+        builder = PipelineBuilder(ctx)
+        source_spec = uri.parse_uri(source_uri)
+        input_source = builder.build_input(source_spec)
         try:
             all_infos.append(_build_info(input_source))
         except Exception as e:

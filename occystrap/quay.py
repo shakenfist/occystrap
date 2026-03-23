@@ -12,6 +12,7 @@ not available via the standard registry protocol.
 import calendar
 import datetime
 from fnmatch import fnmatch
+from urllib.parse import quote
 
 from shakenfist_utilities import logs
 
@@ -97,7 +98,7 @@ class QuayClient:
         """
         repos = []
         skipped = 0
-        base_params = 'namespace=%s&public=true' % namespace
+        base_params = 'namespace=%s&public=true' % quote(namespace, safe='')
         if since_ts is not None:
             base_params += '&last_modified=true'
         url = '%s/repository?%s' % (QUAY_API_BASE, base_params)
@@ -124,7 +125,8 @@ class QuayClient:
             if next_page:
                 url = (
                     '%s/repository?%s&next_page=%s'
-                    % (QUAY_API_BASE, base_params, next_page)
+                    % (QUAY_API_BASE, base_params,
+                       quote(next_page, safe=''))
                 )
             else:
                 url = None
@@ -158,13 +160,12 @@ class QuayClient:
         url = (
             '%s/repository/%s/%s/tag/'
             '?specificTag=%s&onlyActiveTags=true&limit=1'
-            % (QUAY_API_BASE, namespace, repo, tag)
+            % (QUAY_API_BASE, quote(namespace, safe=''),
+               quote(repo, safe=''), quote(tag, safe=''))
         )
 
         try:
             r = self._request(url)
-        except QuayAPIError:
-            raise
         except util.APIException as e:
             # APIException args: (message, method, url, status_code, text, headers)
             if len(e.args) >= 4 and e.args[3] == 404:

@@ -358,9 +358,29 @@ because the following statements will be true:
 * Cache discovery results to avoid re-querying the quay.io API
   on repeated invocations.
 
+### Pre-existing issues noted during security review
+
+These are not introduced by this plan but were noted during the
+push review:
+
+* `outputs/mounts.py` line 204: `util.execute()` uses
+  `shell=True` with string interpolation. Layer paths are
+  validated via `safe_path_join()` but shell metacharacters in
+  digest strings are not escaped. Should use `subprocess.run()`
+  with a list of arguments or `shlex.quote()`.
+* `inputs/registry.py` line 95: The `realm` URL from the
+  `WWW-Authenticate` header is used as a request target without
+  validation. A malicious registry could point it to an internal
+  service (SSRF). Credentials (if set) would be sent via Basic
+  Auth to the attacker-controlled URL.
+* `util.py` line 60: Bearer tokens are logged in cleartext at
+  DEBUG level. Should redact `Authorization` headers.
+
 ### Bugs fixed during this work
 
-(None yet.)
+* `quay.py`: `TypeError` crash when quay.io API returns
+  `last_modified: null` for a repository (fixed by using
+  `or 0` instead of dict default).
 
 ### Back brief
 
