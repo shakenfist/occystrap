@@ -114,7 +114,7 @@ class QuayClient:
             page_repos = data.get('repositories', [])
             for repo in page_repos:
                 if since_ts is not None:
-                    repo_ts = repo.get('last_modified', 0)
+                    repo_ts = repo.get('last_modified') or 0
                     if repo_ts < since_ts:
                         skipped += 1
                         continue

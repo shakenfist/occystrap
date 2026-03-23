@@ -165,6 +165,22 @@ class TestListRepositories(unittest.TestCase):
         call_url = mock_request.call_args[0][1]
         self.assertNotIn('last_modified', call_url)
 
+    @mock.patch('occystrap.quay.util.request_url')
+    def test_since_ts_handles_null_last_modified(self, mock_request):
+        """Repos with null last_modified are treated as old."""
+        mock_request.return_value = _mock_response({
+            'repositories': [
+                {'name': 'null-repo', 'namespace': 'kolla',
+                 'last_modified': None},
+                {'name': 'missing-repo', 'namespace': 'kolla'},
+            ]
+        })
+
+        client = QuayClient()
+        repos = client.list_repositories('kolla', since_ts=1704067200)
+
+        self.assertEqual(repos, [])
+
 
 class TestHasTag(unittest.TestCase):
     """Tests for QuayClient.has_tag()."""
