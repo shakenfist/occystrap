@@ -1,10 +1,14 @@
-"""Tests for the quay.io API client and URI parsing."""
+"""Tests for the quay.io API client, URI parsing, and command integration."""
 
+import json
 import unittest
 from unittest import mock
 
+from click.testing import CliRunner
+
 from occystrap import uri
 from occystrap import util
+from occystrap.main import cli
 from occystrap.quay import QuayClient, QuayAPIError, QUAY_API_BASE, resolve_quay_uri
 
 
@@ -347,3 +351,138 @@ class TestResolveQuayUri(unittest.TestCase):
         resolve_quay_uri('myorg', '*', 'latest', token='secret')
 
         mock_client_cls.assert_called_once_with(token='secret')
+
+
+def _make_cli_runner():
+    """Create a CliRunner with stderr separated from stdout."""
+    try:
+        return CliRunner(mix_stderr=False)
+    except TypeError:
+        return CliRunner()
+
+
+class TestInfoQuayCommand(unittest.TestCase):
+    """Tests for the info command with quay:// URIs."""
+
+    @mock.patch('occystrap.main._resolve_quay_images')
+    @mock.patch('occystrap.main._build_info')
+    @mock.patch('occystrap.main.input_registry.Image')
+    def test_info_quay_text(self, mock_image_cls, mock_build_info,
+                            mock_resolve):
+        """info with quay:// shows multiple images separated by ---."""
+        mock_resolve.return_value = [
+            ('quay.io', 'kolla/nova-api', 'latest'),
+            ('quay.io', 'kolla/keystone', 'latest'),
+        ]
+        mock_build_info.side_effect = [
+            {'image': 'kolla/nova-api', 'tag': 'latest',
+             'layer_count': 3},
+            {'image': 'kolla/keystone', 'tag': 'latest',
+             'layer_count': 2},
+        ]
+
+        runner = _make_cli_runner()
+        result = runner.invoke(cli, ['info', 'quay://kolla/*:latest'])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn('kolla/nova-api', result.output)
+        self.assertIn('kolla/keystone', result.output)
+        self.assertIn('---', result.output)
+
+    @mock.patch('occystrap.main._resolve_quay_images')
+    @mock.patch('occystrap.main._build_info')
+    @mock.patch('occystrap.main.input_registry.Image')
+    def test_info_quay_json(self, mock_image_cls, mock_build_info,
+                            mock_resolve):
+        """info -O json with quay:// outputs a JSON array."""
+        mock_resolve.return_value = [
+            ('quay.io', 'kolla/nova-api', 'latest'),
+        ]
+        mock_build_info.return_value = {
+            'image': 'kolla/nova-api', 'tag': 'latest',
+            'layer_count': 3,
+        }
+
+        runner = _make_cli_runner()
+        result = runner.invoke(
+            cli, ['-O', 'json', 'info', 'quay://kolla/*:latest'])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        # Extract JSON from output — progress lines may be
+        # mixed in when Click doesn't support mix_stderr=False
+        output = result.output
+        json_start = output.index('[')
+        data = json.loads(output[json_start:])
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]['image'], 'kolla/nova-api')
+
+    @mock.patch('occystrap.main._resolve_quay_images')
+    def test_info_quay_no_matches(self, mock_resolve):
+        """info with quay:// and no matches prints a message."""
+        mock_resolve.return_value = []
+
+        runner = _make_cli_runner()
+        result = runner.invoke(cli, ['info', 'quay://kolla/*:latest'])
+
+        self.assertEqual(result.exit_code, 0)
+        # "No images found" goes to stderr
+        stderr = getattr(result, 'stderr', '') or ''
+        combined = result.output + stderr
+        self.assertIn('No images found', combined)
+
+
+class TestProcessQuayCommand(unittest.TestCase):
+    """Tests for the process command with quay:// URIs."""
+
+    @mock.patch('occystrap.main._resolve_quay_images')
+    @mock.patch('occystrap.main._process_single')
+    def test_process_quay_basic(self, mock_process_single, mock_resolve):
+        """process with quay:// calls _process_single for each image."""
+        mock_resolve.return_value = [
+            ('quay.io', 'kolla/nova-api', 'latest'),
+            ('quay.io', 'kolla/keystone', 'latest'),
+        ]
+
+        runner = _make_cli_runner()
+        result = runner.invoke(
+            cli, ['process', 'quay://kolla/*:latest',
+                  'dir:///tmp/out?unique_names=true'])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(mock_process_single.call_count, 2)
+        # Verify registry:// URIs were constructed
+        first_call_source = mock_process_single.call_args_list[0][0][1]
+        self.assertEqual(first_call_source,
+                         'registry://quay.io/kolla/nova-api:latest')
+
+    @mock.patch('occystrap.main._resolve_quay_images')
+    def test_process_quay_tar_error(self, mock_resolve):
+        """process with quay:// and tar:// output produces an error."""
+        mock_resolve.return_value = [
+            ('quay.io', 'kolla/nova-api', 'latest'),
+        ]
+
+        runner = _make_cli_runner()
+        result = runner.invoke(
+            cli, ['process', 'quay://kolla/*:latest',
+                  'tar:///tmp/out.tar'])
+
+        self.assertNotEqual(result.exit_code, 0)
+        stderr = getattr(result, 'stderr', '') or ''
+        combined = result.output + stderr
+        self.assertIn('tar://', combined)
+
+    @mock.patch('occystrap.main._resolve_quay_images')
+    @mock.patch('occystrap.main._process_single')
+    def test_process_quay_no_matches(self, mock_process_single, mock_resolve):
+        """process with quay:// and no matches does not call _process_single."""
+        mock_resolve.return_value = []
+
+        runner = _make_cli_runner()
+        result = runner.invoke(
+            cli, ['process', 'quay://kolla/*:latest',
+                  'dir:///tmp/out?unique_names=true'])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_process_single.assert_not_called()

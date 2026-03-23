@@ -21,6 +21,7 @@ from occystrap.outputs import tarfile as output_tarfile
 from occystrap.filters import SearchFilter, TimestampNormalizer
 from occystrap.pipeline import PipelineBuilder, PipelineError
 from occystrap import proxy as proxy_module
+from occystrap import quay as quay_module
 from occystrap import uri
 from occystrap.util import format_size
 
@@ -106,9 +107,110 @@ def _fetch(img, output):
         output.finalize()
 
 
+def _resolve_quay_images(source, ctx):
+    """Resolve a quay:// URI to a list of image references.
+
+    If the source is not a quay:// URI, returns None so the
+    caller can fall through to the single-image path.
+
+    Args:
+        source: The source URI string.
+        ctx: Click context with global options.
+
+    Returns:
+        List of (registry, image, tag) tuples, or None if
+        the source is not a quay:// URI.
+    """
+    source_spec = uri.parse_uri(source)
+    if source_spec.scheme != 'quay':
+        return None
+
+    namespace, repo_glob, tag, options = uri.parse_quay_uri(source_spec)
+
+    # Token: prefer ?token= in URI, fall back to --password
+    token = options.get('token')
+    if not token:
+        ctx_obj = ctx.obj if ctx and ctx.obj else {}
+        token = ctx_obj.get('PASSWORD')
+
+    return quay_module.resolve_quay_uri(namespace, repo_glob, tag, token=token)
+
+
 # =============================================================================
 # New URI-style commands
 # =============================================================================
+
+
+def _process_single(ctx, source, destination, filters):
+    """Process a single image through the pipeline."""
+    builder = PipelineBuilder(ctx)
+    input_source, output = builder.build_pipeline(
+        source, destination, list(filters))
+    _fetch(input_source, output)
+
+    # Handle post-processing for certain outputs
+    if hasattr(output, 'write_bundle'):
+        dest_spec = uri.parse_uri(destination)
+        if dest_spec.scheme in ('oci', 'mounts'):
+            output.write_bundle()
+        elif dest_spec.scheme == 'dir' and dest_spec.options.get('expand'):
+            output.write_bundle()
+
+
+def _process_multi(ctx, images, source, destination, filters):
+    """Process multiple images from a quay:// URI."""
+    if not images:
+        click.echo('No images found matching %s' % source, err=True)
+        return
+
+    # Validate output destination for multi-image use
+    dest_spec = uri.parse_uri(destination)
+    if dest_spec.scheme == 'tar':
+        click.echo(
+            'Error: tar:// output is not supported for multi-image '
+            'sources (each image would overwrite the previous). '
+            'Use dir://?unique_names=true instead.',
+            err=True)
+        sys.exit(1)
+    if dest_spec.scheme in ('oci', 'mounts'):
+        click.echo(
+            'Error: %s:// output is not supported for multi-image '
+            'sources. Use dir://?unique_names=true instead.'
+            % dest_spec.scheme,
+            err=True)
+        sys.exit(1)
+    if dest_spec.scheme == 'dir' and not dest_spec.options.get('unique_names'):
+        click.echo(
+            'Warning: dir:// output without unique_names=true will '
+            'overwrite files from previous images. Consider using '
+            'dir://%s?unique_names=true'
+            % dest_spec.path,
+            err=True)
+
+    failed = []
+    for i, (registry, image, tag) in enumerate(images):
+        click.echo(
+            '(%d/%d) Processing %s/%s:%s'
+            % (i + 1, len(images), registry, image, tag),
+            err=True)
+        source_uri = 'registry://%s/%s:%s' % (registry, image, tag)
+        try:
+            _process_single(ctx, source_uri, destination, filters)
+        except Exception as e:
+            LOG.error('Failed to process %s/%s:%s: %s'
+                      % (registry, image, tag, e))
+            failed.append('%s/%s:%s' % (registry, image, tag))
+
+    click.echo(
+        'Processed %d of %d images'
+        % (len(images) - len(failed), len(images)),
+        err=True)
+    if failed:
+        click.echo('Failed images:', err=True)
+        for name in failed:
+            click.echo('  %s' % name, err=True)
+        sys.exit(1)
+
 
 @click.command('process')
 @click.argument('source')
@@ -125,6 +227,7 @@ def process_cmd(ctx, source, destination, filters):
     \b
     Input URI schemes:
       registry://HOST/IMAGE:TAG    - Docker/OCI registry
+      quay://ORG/GLOB:TAG          - All matching images in a quay.io org
       docker://IMAGE:TAG           - Local Docker daemon
       dockerpush://IMAGE:TAG       - Local Docker via push (fast)
       tar://PATH                   - Docker-save tarball
@@ -148,26 +251,20 @@ def process_cmd(ctx, source, destination, filters):
     \b
     Examples:
       occystrap process registry://docker.io/library/busybox:latest tar://busybox.tar
+      occystrap process quay://kolla/*:latest dir://./kolla?unique_names=true
       occystrap process docker://myimage:v1 dir://./extracted -f normalize-timestamps
       occystrap process tar://image.tar dir://out -f "search:pattern=*.conf"
       occystrap process docker://img:v1 registry://host/img:v1 -f "inspect:file=layers.jsonl"
     """
     try:
-        builder = PipelineBuilder(ctx)
-        input_source, output = builder.build_pipeline(
-            source, destination, list(filters))
-        _fetch(input_source, output)
+        images = _resolve_quay_images(source, ctx)
+        if images is not None:
+            _process_multi(ctx, images, source, destination, filters)
+        else:
+            _process_single(ctx, source, destination, filters)
 
-        # Handle post-processing for certain outputs
-        if hasattr(output, 'write_bundle'):
-            # Check if this is an OCI or mounts output that needs write_bundle
-            dest_spec = uri.parse_uri(destination)
-            if dest_spec.scheme in ('oci', 'mounts'):
-                output.write_bundle()
-            elif dest_spec.scheme == 'dir' and dest_spec.options.get('expand'):
-                output.write_bundle()
-
-    except (PipelineError, uri.URIParseError) as e:
+    except (PipelineError, uri.URIParseError,
+            quay_module.QuayAPIError) as e:
         click.echo('Error: %s' % e, err=True)
         sys.exit(1)
 
@@ -470,6 +567,73 @@ def _print_info_text(info):
                 click.echo('    %s=%s' % (k, v))
 
 
+def _info_single(ctx, source):
+    """Display info for a single image."""
+    builder = PipelineBuilder(ctx)
+    source_spec = uri.parse_uri(source)
+    input_source = builder.build_input(source_spec)
+
+    info = _build_info(input_source)
+
+    output_format = ctx.obj.get(
+        'OUTPUT_FORMAT', 'text')
+    if output_format == 'json':
+        click.echo(json.dumps(info, indent=2))
+    else:
+        _print_info_text(info)
+
+
+def _info_multi(ctx, images, source):
+    """Display info for multiple images from a quay:// URI."""
+    if not images:
+        click.echo('No images found matching %s' % source, err=True)
+        return
+
+    output_format = ctx.obj.get(
+        'OUTPUT_FORMAT', 'text')
+    ctx_obj = ctx.obj if ctx and ctx.obj else {}
+
+    all_infos = []
+    for i, (registry, image, tag) in enumerate(images):
+        click.echo(
+            '(%d/%d) %s/%s:%s'
+            % (i + 1, len(images), registry, image, tag),
+            err=True)
+        input_source = input_registry.Image(
+            registry, image, tag,
+            os=ctx_obj.get('OS', 'linux'),
+            architecture=ctx_obj.get('ARCHITECTURE', 'amd64'),
+            variant=ctx_obj.get('VARIANT', ''),
+            secure=(not ctx_obj.get('INSECURE', False)),
+            username=ctx_obj.get('USERNAME'),
+            password=ctx_obj.get('PASSWORD'))
+        try:
+            all_infos.append(_build_info(input_source))
+        except Exception as e:
+            LOG.error('Failed to fetch info for %s/%s:%s: %s'
+                      % (registry, image, tag, e))
+            all_infos.append({
+                'image': image,
+                'tag': tag,
+                'error': str(e),
+            })
+
+    if output_format == 'json':
+        click.echo(json.dumps(all_infos, indent=2))
+    else:
+        for i, info in enumerate(all_infos):
+            if i > 0:
+                click.echo('')
+                click.echo('---')
+                click.echo('')
+            if 'error' in info:
+                click.echo('Image:         %s:%s'
+                           % (info['image'], info['tag']))
+                click.echo('Error:         %s' % info['error'])
+            else:
+                _print_info_text(info)
+
+
 @click.command('info')
 @click.argument('source')
 @click.pass_context
@@ -481,33 +645,28 @@ def info_cmd(ctx, source):
 
     \b
       registry://HOST/IMAGE:TAG  - Docker/OCI registry
+      quay://ORG/GLOB:TAG        - All matching images in a quay.io org
       docker://IMAGE:TAG         - Local Docker daemon
       tar://PATH                 - Docker-save tarball
 
     \b
     Examples:
       occystrap info registry://docker.io/library/busybox:latest
+      occystrap info quay://kolla/*:latest
       occystrap info docker://myimage:v1
       occystrap info tar://image.tar
       occystrap -O json info registry://ghcr.io/org/app:v2
     """
     try:
-        builder = PipelineBuilder(ctx)
-        source_spec = uri.parse_uri(source)
-        input_source = builder.build_input(source_spec)
-
-        info = _build_info(input_source)
-
-        output_format = ctx.obj.get(
-            'OUTPUT_FORMAT', 'text')
-        if output_format == 'json':
-            click.echo(json.dumps(
-                info, indent=2))
+        images = _resolve_quay_images(source, ctx)
+        if images is not None:
+            _info_multi(ctx, images, source)
         else:
-            _print_info_text(info)
+            _info_single(ctx, source)
 
     except (PipelineError, uri.URIParseError,
-            ImageInputError) as e:
+            ImageInputError,
+            quay_module.QuayAPIError) as e:
         click.echo('Error: %s' % e, err=True)
         sys.exit(1)
 
