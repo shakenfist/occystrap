@@ -249,6 +249,7 @@ as sub-documents.
 | 2. quay:// URI parsing and multi-image resolution | PLAN-quay-label-search-phase-02-uri-and-input.md | Complete |
 | 3. info and process multi-image support | PLAN-quay-label-search-phase-03-commands.md | Complete |
 | 4. Functional tests and documentation | PLAN-quay-label-search-phase-04-tests-docs.md | Complete |
+| 5. Filter by tag age (`since` parameter) | PLAN-quay-label-search-phase-05-since-filter.md | Not started |
 
 ### Phase 1: Quay.io API client
 
@@ -305,6 +306,15 @@ actual image fetching uses the existing `registry.Image` class.
 
 Note: unit tests for the API client, URI parsing, resolver, and
 command integration were delivered in phases 1-3 (32 tests total).
+
+### Phase 5: Filter by tag age (`since` parameter)
+
+- Add `?since=YYYY-MM-DD` query parameter to the `quay://` URI
+  to filter out images whose tag is older than the given date
+- Change `has_tag()` to return tag metadata (including `start_ts`)
+  instead of a boolean, so the caller can filter by age
+- Add `since` parameter to `resolve_quay_uri()`
+- Update unit tests, functional tests, and documentation
 
 ## Administration and logistics
 
