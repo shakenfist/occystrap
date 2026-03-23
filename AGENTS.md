@@ -70,6 +70,25 @@ mapping. Register the `diff_id_map` kwarg in `PipelineBuilder.build_filter`.
 3. Implement `image`, `tag` properties and `fetch()` method
 4. Register in `PipelineBuilder.build_input()` in `occystrap/pipeline.py`
 
+### Multi-Image Input (quay:// pattern)
+
+The `quay://` scheme is a **multi-image resolver**, not an `ImageInput`
+subclass. It resolves a single URI into a list of `(registry, image, tag)`
+tuples, then the command (`info` or `process`) loops over them, creating a
+standard `registry.Image` input for each. The `PipelineBuilder` has no
+knowledge of `quay://` — resolution happens before the pipeline is built.
+
+Key files:
+- `occystrap/quay.py` - `QuayClient` (API v1 wrapper) and `resolve_quay_uri()`
+- `occystrap/uri.py` - `parse_quay_uri()` and `quay` in `INPUT_SCHEMES`
+- `occystrap/main.py` - `_resolve_quay_images()`, `_info_multi()`,
+  `_process_multi()`
+
+To add a similar multi-image scheme for another registry (e.g., Docker Hub,
+ghcr.io), follow the same pattern: add a client module, a URI parser, a
+resolver function, and detect the scheme in `_resolve_quay_images()` (or
+rename it to a more generic helper).
+
 ### Adding a New Output Writer
 
 1. Create a new file in `occystrap/outputs/`

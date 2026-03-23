@@ -6,6 +6,7 @@ and filter specifications.
 URI formats:
     Input:
         registry://[user:pass@]host/image:tag[?arch=X&os=Y&variant=Z]
+        quay://org/glob:tag[?token=TOKEN]  (multi-image, quay.io only)
         docker://image:tag[?socket=/path/to/socket]
         tar:///path/to/file.tar
         file:///path/to/file.tar  (alias for tar)
@@ -36,7 +37,7 @@ FilterSpec = namedtuple('FilterSpec', ['name', 'options'])
 
 # Scheme classifications
 INPUT_SCHEMES = {
-    'registry', 'docker', 'dockerpush', 'tar', 'file'
+    'registry', 'quay', 'docker', 'dockerpush', 'tar', 'file'
 }
 OUTPUT_SCHEMES = {'tar', 'dir', 'directory', 'oci', 'mounts', 'docker', 'registry'}
 
@@ -264,3 +265,47 @@ def parse_dockerpush_uri(uri_spec):
     """
     return _parse_docker_style_uri(
         uri_spec, 'dockerpush')
+
+
+def parse_quay_uri(uri_spec):
+    """Parse quay URI into (namespace, repo_glob, tag, options).
+
+    Handles formats like:
+        quay://kolla/*:latest
+        quay://kolla/centos-*:2025.1-debian
+        quay://myorg/*:latest?token=abc
+        quay://kolla             (defaults to glob=*, tag=latest)
+
+    Returns:
+        Tuple of (namespace, repo_glob, tag, options_dict)
+    """
+    if uri_spec.scheme != 'quay':
+        raise URIParseError(
+            'Expected quay:// URI, got %s' % uri_spec.scheme)
+
+    namespace = uri_spec.host
+    if not namespace:
+        raise URIParseError(
+            'quay:// URI requires a namespace/organization')
+
+    path = uri_spec.path.lstrip('/')
+
+    if not path:
+        # quay://kolla — default to all repos, latest tag
+        return (namespace, '*', 'latest', uri_spec.options)
+
+    # Split off tag at last colon
+    if ':' in path:
+        last_colon = path.rfind(':')
+        repo_glob = path[:last_colon]
+        tag = path[last_colon + 1:]
+    else:
+        repo_glob = path
+        tag = 'latest'
+
+    if not repo_glob:
+        repo_glob = '*'
+    if not tag:
+        tag = 'latest'
+
+    return (namespace, repo_glob, tag, uri_spec.options)

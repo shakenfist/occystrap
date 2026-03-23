@@ -16,6 +16,7 @@ occystrap/
     util.py              # Additional utilities
     uri.py               # URI parsing for pipeline specification
     pipeline.py          # Pipeline builder from URIs
+    quay.py              # Quay.io API v1 client and multi-image resolver
     proxy.py             # Persistent filtering registry proxy server
     layer_cache.py       # Cross-invocation layer cache for registry push
     progress.py          # tqdm progress bars with non-TTY fallback
@@ -53,6 +54,7 @@ occystrap/
         test_layer_cache.py
         test_dockerpush.py
         test_proxy.py
+        test_quay.py
         test_tarformat.py
 
 deploy/
@@ -68,6 +70,7 @@ deploy/
             test_inspect_filter.py
             test_normalize_timestamps.py
             test_oci_hello_world.py
+            test_quay_bulk.py
             test_registry_push.py
             test_search_layers.py
             test_whiteout.py
@@ -301,6 +304,7 @@ occystrap process SOURCE DESTINATION [-f FILTER]...
 
 ```
 registry://[user:pass@]host/image:tag[?arch=X&os=Y&variant=Z]
+quay://org/glob:tag[?token=TOKEN]
 docker://image:tag[?socket=/path/to/socket]
 dockerpush://image:tag[?socket=/path/to/socket]
 tar:///path/to/file.tar
@@ -332,6 +336,56 @@ Available filters:
 - `normalize-timestamps` - Normalize layer timestamps (option: `ts=TIMESTAMP`)
 - `search` - Search for files (options: `pattern=GLOB`, `regex=true`,
   `script_friendly=true`)
+
+## Quay.io Bulk Image Discovery
+
+The `quay://` URI scheme enables discovering and fetching multiple images
+from a quay.io organization by tag. Unlike all other input sources (which
+produce exactly one image), `quay://` is a **multi-image** input that
+resolves to zero or many images.
+
+### Architecture
+
+The `quay://` scheme is not implemented as an `ImageInput` subclass.
+Instead, it is a **resolver** that expands a single URI into a list of
+standard `(registry, image, tag)` tuples:
+
+```
+quay://kolla/*:latest
+    │
+    ▼
+resolve_quay_uri('kolla', '*', 'latest')
+    │
+    ├── QuayClient.list_repositories('kolla')     ← quay.io API v1
+    ├── fnmatch filter by glob pattern
+    ├── QuayClient.has_tag('kolla', repo, 'latest') for each match
+    │
+    ▼
+[('quay.io', 'kolla/nova-api', 'latest'),
+ ('quay.io', 'kolla/keystone', 'latest'),
+ ...]
+    │
+    ▼
+For each tuple: build a standard registry.Image input
+and run through the existing pipeline
+```
+
+### Module: `occystrap/quay.py`
+
+- `QuayClient` - Wraps the quay.io proprietary REST API v1
+  (`/api/v1/`), providing `list_repositories()` (paginated, opaque
+  cursor tokens) and `has_tag()` (uses `specificTag` filter). Accepts
+  an optional bearer token for private organizations.
+- `resolve_quay_uri()` - Orchestrates the discovery flow: lists repos,
+  filters by glob, checks tags, returns tuples.
+
+### Command Integration
+
+The `info` and `process` commands in `main.py` detect the `quay` scheme
+before calling `PipelineBuilder`. A helper `_resolve_quay_images()`
+parses the URI and runs the resolver. The commands then loop over the
+results, creating a fresh `registry.Image` input and pipeline for each
+image. The `PipelineBuilder` itself has no knowledge of `quay://`.
 
 ## Key Concepts
 

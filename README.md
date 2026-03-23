@@ -36,6 +36,7 @@ occystrap process SOURCE DESTINATION [-f FILTER]...
 ### Input URI Schemes
 
 - `registry://HOST/IMAGE:TAG` - Docker/OCI registry
+- `quay://ORG/GLOB:TAG` - All matching images in a quay.io org (multi-image)
 - `docker://IMAGE:TAG` - Local Docker daemon
 - `dockerpush://IMAGE:TAG` - Local Docker via push (fast, see below)
 - `tar:///path/to/file.tar` - Docker-save format tarball
@@ -61,6 +62,22 @@ occystrap process registry://docker.io/library/busybox:latest \
 # Use custom Docker socket
 occystrap process "docker://myimage:v1?socket=/run/podman/podman.sock" \
     tar://output.tar
+```
+
+### Bulk Fetch from Quay.io
+
+The `quay://` scheme discovers and fetches multiple images from a quay.io
+organization:
+
+```
+# List all images tagged "latest" in the kolla org
+occystrap info quay://kolla/*:latest
+
+# Download all matching images
+occystrap process quay://kolla/*:latest dir://./kolla?unique_names=true
+
+# Only repos matching a glob pattern
+occystrap process quay://kolla/centos-*:2025.1-debian dir://./out?unique_names=true
 ```
 
 ### Filters
