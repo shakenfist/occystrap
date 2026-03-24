@@ -426,6 +426,56 @@ occystrap process registry://registry.gitlab.com/mygroup/myimage:latest tar://ou
 For GitLab Container Registry, the username is typically your GitLab username
 and the password is a personal access token with `read_registry` scope.
 
+## HTTP/2 and Connection Pooling
+
+Registry HTTP requests use httpx with automatic HTTP/2 negotiation. When the
+registry supports HTTP/2, occystrap uses it for improved multiplexing and
+reduced latency. If the server does not support HTTP/2, occystrap falls back
+to HTTP/1.1 transparently.
+
+Each `Image`, `RegistryWriter`, and `QuayClient` instance shares a persistent
+httpx connection pool, reducing TCP/TLS handshake overhead across multiple
+requests to the same registry.
+
+Note: Docker daemon communication (docker:// and dockerpush:// inputs,
+docker:// output) still uses requests-unixsocket for Unix domain socket
+access. The httpx migration applies only to registry HTTP traffic.
+
+## Retries and Rate Limiting
+
+HTTP requests to registries are retried on transient failures with exponential
+backoff. You can control the retry count and add rate limiting:
+
+```
+# Set max retries (default: 3)
+occystrap --retries 5 process registry://docker.io/library/busybox:latest tar://busybox.tar
+
+# Limit HTTP requests to 10 per second
+occystrap --rate-limit 10 process registry://docker.io/library/busybox:latest tar://busybox.tar
+
+# Both together
+occystrap --retries 5 --rate-limit 10 \
+    process registry://docker.io/library/busybox:latest tar://busybox.tar
+```
+
+You can also set these via environment variables:
+
+```
+export OCCYSTRAP_RETRIES=5
+export OCCYSTRAP_RATE_LIMIT=10
+occystrap process registry://docker.io/library/busybox:latest tar://busybox.tar
+```
+
+Retry behavior:
+- **429 (Too Many Requests)**: Retried, respects the `Retry-After` header
+  when present, otherwise uses exponential backoff
+- **5xx (Server Errors)**: Retried with exponential backoff
+- **Connection errors**: Retried with exponential backoff
+- **Other errors**: Not retried
+
+The rate limiter uses a token-bucket algorithm and is thread-safe, so it
+correctly throttles requests across parallel download/upload threads.
+
 ## Parallel Downloads and Uploads
 
 When working with registries, occystrap downloads and uploads layers in parallel

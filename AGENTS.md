@@ -135,6 +135,15 @@ and `tox -epy3` (unit tests). Install with `pre-commit install`.
   (record new entries). Cache is filter-aware via `filters_hash`.
 - **Handle layer compression**: Use `compression.py` module for detecting and
   handling gzip/zstd compressed layers. Media type constants are in `constants.py`.
+- **Make HTTP requests to registries**: Use `util.request_url()` with the
+  shared `httpx.Client` and `RateLimiter` from the calling class (e.g.,
+  `self._client`, `self._rate_limiter`). Pass `client=` and
+  `rate_limiter=` to reuse connection pooling and respect rate limits.
+  For streaming responses, the caller must call `r.close()` when done and
+  use `r.iter_bytes()` (not `r.iter_content()` as in the old requests API).
+  Docker daemon code (`inputs/docker.py`, `inputs/dockerpush.py`,
+  `outputs/docker.py`) still uses `requests-unixsocket` for Unix socket
+  access -- do not convert those to httpx.
 - **Add HTTP server endpoints**: Any `BaseHTTPRequestHandler` subclass must
   inherit from `SafeHeaderMixin` (in `util.py`) as the first base class.
   This strips `\r`/`\n` from header values to prevent HTTP response splitting.
