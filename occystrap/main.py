@@ -153,8 +153,12 @@ def _resolve_quay_images(source, ctx):
             raise uri.URIParseError(
                 'Invalid since date %r, expected YYYY-MM-DD format' % since_str)
 
+    ctx_obj = ctx.obj if ctx and ctx.obj else {}
+    max_workers = ctx_obj.get('MAX_WORKERS', 4)
+
     return quay_module.resolve_quay_uri(
-        namespace, repo_glob, tag, token=token, since=since)
+        namespace, repo_glob, tag, token=token,
+        since=since, max_workers=max_workers)
 
 
 # =============================================================================

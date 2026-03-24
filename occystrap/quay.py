@@ -10,6 +10,7 @@ not available via the standard registry protocol.
 """
 
 import calendar
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 from fnmatch import fnmatch
 from urllib.parse import quote
@@ -209,13 +210,40 @@ class QuayClient:
         return None
 
 
-def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
+def _check_one_repo(client, namespace, repo, tag, since_ts):
+    """Check a single repo for a tag.
+
+    Designed to run in a ThreadPoolExecutor. Returns
+    (repo, tag_info) if the tag exists and passes the
+    since filter, or (repo, None) otherwise.
+    """
+    tag_info = client.has_tag(namespace, repo, tag)
+    if not tag_info:
+        return (repo, None)
+
+    if since_ts is not None:
+        tag_ts = tag_info.get('start_ts', 0)
+        if tag_ts < since_ts:
+            tag_date = datetime.date.fromtimestamp(tag_ts)
+            LOG.debug(
+                'Skipping %s/%s: tag %r is from %s, '
+                'before since=%s'
+                % (namespace, repo, tag, tag_date,
+                   datetime.date.fromtimestamp(since_ts)))
+            return (repo, None)
+
+    return (repo, tag_info)
+
+
+def resolve_quay_uri(namespace, repo_glob, tag,
+                     token=None, since=None,
+                     max_workers=4):
     """Resolve a quay:// URI into matching image references.
 
     Lists all repositories in the namespace, filters by the
-    glob pattern, checks tag existence for each match, and
-    returns a list of (registry, image, tag) tuples suitable
-    for constructing registry.Image inputs.
+    glob pattern, checks tag existence for each match in
+    parallel, and returns a list of (registry, image, tag)
+    tuples suitable for constructing registry.Image inputs.
 
     Args:
         namespace: Quay.io organization name.
@@ -226,6 +254,8 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
         since: Optional datetime.date. If set, only include
             images whose tag was created/updated on or after
             this date.
+        max_workers: Number of parallel threads for tag
+            resolution (default: 4).
 
     Returns:
         List of ('quay.io', 'namespace/repo', tag) tuples
@@ -249,31 +279,31 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
     LOG.info('Glob %r matched %d of %d repositories'
              % (repo_glob, len(matching_repos), len(all_repos)))
 
-    # Check tag existence for each matching repo
+    # Check tag existence in parallel
+    if matching_repos:
+        LOG.info(
+            'Checking tag %r for %d repositories '
+            '(%d workers)...'
+            % (tag, len(matching_repos), max_workers))
+
     results = []
-    for i, repo in enumerate(matching_repos):
-        LOG.info('Checking tag %r for repo %d of %d: %s/%s'
-                 % (tag, i + 1, len(matching_repos),
-                    namespace, repo))
-        tag_info = client.has_tag(namespace, repo, tag)
-        if not tag_info:
-            continue
-
-        # Filter by tag age if since is set
-        if since_ts is not None:
-            tag_ts = tag_info.get('start_ts', 0)
-            if tag_ts < since_ts:
-                tag_date = datetime.date.fromtimestamp(tag_ts)
-                LOG.debug(
-                    'Skipping %s/%s: tag %r is from %s, '
-                    'before since=%s'
-                    % (namespace, repo, tag, tag_date, since))
-                continue
-
-        results.append(('quay.io', '%s/%s' % (namespace, repo), tag))
+    with ThreadPoolExecutor(
+            max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _check_one_repo, client, namespace,
+                repo, tag, since_ts): repo
+            for repo in matching_repos
+        }
+        for future in as_completed(futures):
+            repo, tag_info = future.result()
+            if tag_info is not None:
+                results.append((
+                    'quay.io',
+                    '%s/%s' % (namespace, repo), tag))
 
     client.close()
 
-    LOG.info('Found %d images matching %s/%s:%s'
-             % (len(results), namespace, repo_glob, tag))
+    LOG.info('Found %d of %d repositories with tag %s'
+             % (len(results), len(matching_repos), tag))
     return results

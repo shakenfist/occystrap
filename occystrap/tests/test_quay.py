@@ -359,11 +359,17 @@ class TestResolveQuayUri(unittest.TestCase):
             'nova-api', 'keystone', 'glance-api'
         ]
         tag_info = {'name': 'latest', 'start_ts': 1774047466}
-        client.has_tag.side_effect = [tag_info, None, tag_info]
+
+        def has_tag_side_effect(ns, repo, tag):
+            if repo in ('nova-api', 'glance-api'):
+                return tag_info
+            return None
+
+        client.has_tag.side_effect = has_tag_side_effect
 
         results = resolve_quay_uri('kolla', '*', 'latest')
 
-        self.assertEqual(results, [
+        self.assertCountEqual(results, [
             ('quay.io', 'kolla/nova-api', 'latest'),
             ('quay.io', 'kolla/glance-api', 'latest'),
         ])
@@ -381,7 +387,7 @@ class TestResolveQuayUri(unittest.TestCase):
 
         results = resolve_quay_uri('kolla', 'nova-*', 'latest')
 
-        self.assertEqual(results, [
+        self.assertCountEqual(results, [
             ('quay.io', 'kolla/nova-api', 'latest'),
             ('quay.io', 'kolla/nova-scheduler', 'latest'),
         ])

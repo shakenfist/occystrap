@@ -358,7 +358,7 @@ resolve_quay_uri('kolla', '*', 'latest')
     │
     ├── QuayClient.list_repositories('kolla')     ← quay.io API v1
     ├── fnmatch filter by glob pattern
-    ├── QuayClient.has_tag('kolla', repo, 'latest') for each match
+    ├── QuayClient.has_tag('kolla', repo, 'latest') for each match (parallel)
     │
     ▼
 [('quay.io', 'kolla/nova-api', 'latest'),
@@ -377,7 +377,10 @@ and run through the existing pipeline
   cursor tokens) and `has_tag()` (uses `specificTag` filter). Accepts
   an optional bearer token for private organizations.
 - `resolve_quay_uri()` - Orchestrates the discovery flow: lists repos,
-  filters by glob, checks tags, returns tuples.
+  filters by glob, checks tags in parallel via `ThreadPoolExecutor`
+  (concurrency controlled by `-j` flag), returns tuples.
+- `_check_one_repo()` - Per-repo tag check helper, designed to run in
+  the thread pool. Handles tag existence and since-date filtering.
 
 ### Command Integration
 
