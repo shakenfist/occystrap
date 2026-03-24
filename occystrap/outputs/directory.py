@@ -1,6 +1,7 @@
 import json
 import os
 import tarfile
+import threading
 
 from occystrap import constants
 from occystrap.outputs.base import ImageOutput
@@ -9,6 +10,12 @@ from shakenfist_utilities import logs
 
 
 LOG = logs.setup_console(__name__)
+
+# Lock for catalog.json updates in finalize(). Multiple
+# DirWriter instances (from concurrent image processing)
+# may write to the same catalog.json file, so we serialize
+# the read-modify-write to prevent data loss.
+_catalog_lock = threading.Lock()
 
 
 # Python supports the following tarfile object types: REGTYPE, AREGTYPE,
@@ -302,16 +309,19 @@ class DirWriter(ImageOutput):
             f.write(json.dumps(self.tar_manifest, indent=4,
                                sort_keys=True).encode('ascii'))
 
-        c = {}
-        catalog_path = os.path.join(self.image_path, 'catalog.json')
-        if os.path.exists(catalog_path):
-            with open(catalog_path, 'r') as f:
-                c = json.loads(f.read())
+        catalog_path = os.path.join(
+            self.image_path, 'catalog.json')
+        with _catalog_lock:
+            c = {}
+            if os.path.exists(catalog_path):
+                with open(catalog_path, 'r') as f:
+                    c = json.loads(f.read())
 
-        c.setdefault(self.image, {})
-        c[self.image][self.tag] = manifest_filename
-        with open(catalog_path, 'w') as f:
-            f.write(json.dumps(c, indent=4, sort_keys=True))
+            c.setdefault(self.image, {})
+            c[self.image][self.tag] = manifest_filename
+            with open(catalog_path, 'w') as f:
+                f.write(json.dumps(
+                    c, indent=4, sort_keys=True))
 
         self._log_summary()
 
