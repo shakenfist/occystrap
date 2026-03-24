@@ -582,9 +582,15 @@ class TestProcessQuayCommand(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(mock_process_single.call_count, 2)
         # Verify registry:// URIs were constructed
-        first_call_source = mock_process_single.call_args_list[0][0][1]
-        self.assertEqual(first_call_source,
-                         'registry://quay.io/kolla/nova-api:latest')
+        # (order is non-deterministic with concurrent execution)
+        source_uris = {
+            call[0][1]
+            for call in mock_process_single.call_args_list
+        }
+        self.assertEqual(source_uris, {
+            'registry://quay.io/kolla/nova-api:latest',
+            'registry://quay.io/kolla/keystone:latest',
+        })
 
     @mock.patch('occystrap.main._resolve_quay_images')
     def test_process_quay_tar_error(self, mock_resolve):

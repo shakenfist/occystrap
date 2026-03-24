@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 import json
 
@@ -64,13 +65,18 @@ LOG = logs.setup_console(__name__)
 @click.option('--rate-limit', default=None, type=float,
               envvar='OCCYSTRAP_RATE_LIMIT',
               help='Max HTTP requests per second (default: unlimited)')
+@click.option('--image-parallel', '-J', default=3, type=int,
+              envvar='OCCYSTRAP_IMAGE_PARALLEL',
+              help='Number of images to process in parallel '
+              'for bulk operations (default: 3)')
 @click.pass_context
 def cli(ctx, verbose=None, debug=None, os=None,
         architecture=None, variant=None,
         username=None, password=None, insecure=None,
         compression=None, parallel=None, temp_dir=None,
         layer_cache=None, output_format=None,
-        retries=None, rate_limit=None):
+        retries=None, rate_limit=None,
+        image_parallel=None):
     if debug:
         # Enable debug for all loggers (occystrap +
         # libraries like requests, urllib3, etc.)
@@ -105,6 +111,7 @@ def cli(ctx, verbose=None, debug=None, os=None,
     ctx.obj['OUTPUT_FORMAT'] = output_format
     ctx.obj['RETRIES'] = retries
     ctx.obj['RATE_LIMIT'] = rate_limit
+    ctx.obj['IMAGE_PARALLEL'] = image_parallel
 
 
 def _fetch(img, output):
@@ -212,19 +219,44 @@ def _process_multi(ctx, images, source, destination, filters):
             % dest_spec.path,
             err=True)
 
+    image_parallel = ctx.obj.get('IMAGE_PARALLEL', 3)
+    click.echo(
+        'Processing %d images (%d parallel)...'
+        % (len(images), image_parallel),
+        err=True)
+
+    def _process_one(registry, image, tag):
+        source_uri = 'registry://%s/%s:%s' % (
+            registry, image, tag)
+        _process_single(
+            ctx, source_uri, destination, filters)
+
     failed = []
-    for i, (registry, image, tag) in enumerate(images):
-        click.echo(
-            '(%d/%d) Processing %s/%s:%s'
-            % (i + 1, len(images), registry, image, tag),
-            err=True)
-        source_uri = 'registry://%s/%s:%s' % (registry, image, tag)
-        try:
-            _process_single(ctx, source_uri, destination, filters)
-        except Exception as e:
-            LOG.error('Failed to process %s/%s:%s: %s'
-                      % (registry, image, tag, e))
-            failed.append('%s/%s:%s' % (registry, image, tag))
+    done = 0
+    with ThreadPoolExecutor(
+            max_workers=image_parallel) as executor:
+        futures = {}
+        for registry, image, tag in images:
+            name = '%s/%s:%s' % (registry, image, tag)
+            future = executor.submit(
+                _process_one, registry, image, tag)
+            futures[future] = name
+
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                future.result()
+                done += 1
+                click.echo(
+                    '[%d/%d] %s'
+                    % (done + len(failed),
+                       len(images), name),
+                    err=True)
+            except Exception as e:
+                LOG.error(
+                    'Failed to process %s: %s'
+                    % (name, e))
+                failed.append(name)
 
     click.echo(
         'Processed %d of %d images'
@@ -616,27 +648,40 @@ def _info_multi(ctx, images, source):
 
     output_format = ctx.obj.get(
         'OUTPUT_FORMAT', 'text')
+    image_parallel = ctx.obj.get('IMAGE_PARALLEL', 3)
 
-    all_infos = []
-    for i, (registry, image, tag) in enumerate(images):
-        click.echo(
-            '(%d/%d) %s/%s:%s'
-            % (i + 1, len(images), registry, image, tag),
-            err=True)
-        source_uri = 'registry://%s/%s:%s' % (registry, image, tag)
+    def _info_one(registry, image, tag):
+        source_uri = 'registry://%s/%s:%s' % (
+            registry, image, tag)
         builder = PipelineBuilder(ctx)
         source_spec = uri.parse_uri(source_uri)
         input_source = builder.build_input(source_spec)
         try:
-            all_infos.append(_build_info(input_source))
+            return _build_info(input_source)
         except Exception as e:
-            LOG.error('Failed to fetch info for %s/%s:%s: %s'
-                      % (registry, image, tag, e))
-            all_infos.append({
+            LOG.error(
+                'Failed to fetch info for '
+                '%s/%s:%s: %s'
+                % (registry, image, tag, e))
+            return {
                 'image': image,
                 'tag': tag,
                 'error': str(e),
-            })
+            }
+
+    all_infos = [None] * len(images)
+    with ThreadPoolExecutor(
+            max_workers=image_parallel) as executor:
+        futures = {}
+        for i, (registry, image, tag) in enumerate(
+                images):
+            future = executor.submit(
+                _info_one, registry, image, tag)
+            futures[future] = i
+
+        for future in as_completed(futures):
+            idx = futures[future]
+            all_infos[idx] = future.result()
 
     if output_format == 'json':
         click.echo(json.dumps(all_infos, indent=2))

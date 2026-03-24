@@ -366,8 +366,9 @@ resolve_quay_uri('kolla', '*', 'latest')
  ...]
     │
     ▼
-For each tuple: build a standard registry.Image input
-and run through the existing pipeline
+For each tuple (concurrently, up to -J workers):
+build a standard registry.Image input and run
+through the existing pipeline
 ```
 
 ### Module: `occystrap/quay.py`
@@ -386,9 +387,20 @@ and run through the existing pipeline
 
 The `info` and `process` commands in `main.py` detect the `quay` scheme
 before calling `PipelineBuilder`. A helper `_resolve_quay_images()`
-parses the URI and runs the resolver. The commands then loop over the
-results, creating a fresh `registry.Image` input and pipeline for each
-image. The `PipelineBuilder` itself has no knowledge of `quay://`.
+parses the URI and runs the resolver. The commands then process images
+concurrently using `ThreadPoolExecutor` (controlled by the `-J` /
+`--image-parallel` flag, default 3), creating a fresh `registry.Image`
+input and pipeline for each image. Each image gets its own independent
+output writer instance.  The `PipelineBuilder` itself has no knowledge
+of `quay://`.
+
+Thread safety for concurrent multi-image processing:
+- `DirWriter` with `unique_names=true`: each image writes to its own
+  manifest file. `catalog.json` updates are serialized via a module-level
+  `threading.Lock`.
+- `RegistryWriter`: each image has its own instance with independent
+  `httpx.Client` and thread pool.
+- `LayerCache`: already thread-safe via `threading.Lock`.
 
 ## Key Concepts
 

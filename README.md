@@ -505,6 +505,29 @@ Or via URI query parameter:
 occystrap process docker://myimage:v1 "registry://myregistry/myimage:v1?max_workers=8"
 ```
 
+## Parallel Image Processing
+
+When processing multiple images from a `quay://` source, occystrap processes them
+concurrently. By default, 3 images are processed in parallel (each using `-j` threads
+for layer downloads, so total threads = `-J` * `-j`):
+
+```
+# Default: 3 images in parallel, each with 4 layer threads
+occystrap process quay://kolla/*:latest dir:///tmp/out?unique_names=true
+
+# Process 5 images at a time
+occystrap -J 5 process quay://kolla/*:latest dir:///tmp/out?unique_names=true
+
+# Sequential image processing (1 at a time)
+occystrap --image-parallel 1 process quay://kolla/*:latest dir:///tmp/out?unique_names=true
+```
+
+You can also set this via environment variable:
+
+```
+export OCCYSTRAP_IMAGE_PARALLEL=5
+```
+
 ## Layer Compression
 
 When pushing images to registries, occystrap supports both gzip (default) and
