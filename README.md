@@ -528,6 +528,10 @@ You can also set this via environment variable:
 export OCCYSTRAP_IMAGE_PARALLEL=5
 ```
 
+For detailed guidance on tuning these settings for your workload, see
+[Performance Tuning](docs/performance.md). A benchmark script is provided at
+`tools/benchmark.sh` to measure performance with different settings.
+
 ## Layer Compression
 
 When pushing images to registries, occystrap supports both gzip (default) and
@@ -786,5 +790,7 @@ For more detailed documentation, see the [docs/](docs/) directory:
 - [Command Reference](docs/command-reference.md) - Complete CLI reference
 - [Pipeline Architecture](docs/pipeline.md) - How the pipeline works
 - [Use Cases](docs/use-cases.md) - Common scenarios and examples
+- [Performance Tuning](docs/performance.md) - Parallelism flags, recommended
+  settings, and benchmarking
 - [Docker Tarball Formats](docs/docker-tarball-formats.md) - Docker save
   tarball format reference, entry ordering, and the Docker Engine inspect API

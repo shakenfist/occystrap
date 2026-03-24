@@ -78,6 +78,10 @@ deploy/
 pyproject.toml               # Build config (setuptools + setuptools_scm)
 tox.ini                      # Test runner configuration
 
+tools/
+    benchmark.sh             # Performance benchmark script
+    check-log-levels.sh      # Pre-commit log verbosity checker
+
 .github/
     workflows/
         codeql-analysis.yml    # CodeQL security scanning
