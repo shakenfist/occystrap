@@ -16,6 +16,28 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2  # Exponential backoff: 2^attempt seconds
 
 
+class RequestStats:
+    """Thread-safe counters for HTTP request statistics.
+
+    Tracks retries and rate-limit events across all
+    threads sharing this instance. Pass to request_url()
+    via the stats parameter.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.retries = 0
+        self.rate_limits = 0
+
+    def record_retry(self):
+        with self._lock:
+            self.retries += 1
+
+    def record_rate_limit(self):
+        with self._lock:
+            self.rate_limits += 1
+
+
 class RateLimiter:
     """Simple token-bucket rate limiter for HTTP requests.
 
@@ -95,7 +117,7 @@ def get_user_agent():
 def request_url(method, url, headers=None, data=None,
                 stream=False, auth=None,
                 retries=MAX_RETRIES, client=None,
-                rate_limiter=None):
+                rate_limiter=None, stats=None):
     """Make an HTTP request with retry logic.
 
     Uses httpx for connection pooling and HTTP/2 support.
@@ -115,6 +137,8 @@ def request_url(method, url, headers=None, data=None,
             pooling. If None, a temporary client is
             created per request.
         rate_limiter: Optional RateLimiter instance.
+        stats: Optional RequestStats instance for
+            accumulating retry/rate-limit counts.
     """
     if not headers:
         headers = {}
@@ -180,6 +204,9 @@ def request_url(method, url, headers=None, data=None,
                         wait_time = (
                             RETRY_BACKOFF_BASE ** attempt)
                     if attempt < retries:
+                        if stats:
+                            stats.record_rate_limit()
+                            stats.record_retry()
                         LOG.warning(
                             'Rate limited (429) on %s %s'
                             ' (attempt %d/%d). Retrying'
@@ -196,6 +223,8 @@ def request_url(method, url, headers=None, data=None,
 
                 if (r.status_code >= 500
                         and attempt < retries):
+                    if stats:
+                        stats.record_retry()
                     wait_time = (
                         RETRY_BACKOFF_BASE ** attempt)
                     LOG.warning(
@@ -227,6 +256,8 @@ def request_url(method, url, headers=None, data=None,
                     httpx.RemoteProtocolError,
                     httpx.ReadError) as e:
                 last_exception = e
+                if stats and attempt < retries:
+                    stats.record_retry()
                 if attempt < retries:
                     wait_time = (
                         RETRY_BACKOFF_BASE ** attempt)

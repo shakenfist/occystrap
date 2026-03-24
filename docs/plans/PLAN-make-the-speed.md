@@ -230,6 +230,7 @@ control parallelism (though its scope will expand).
 | 3. Concurrent multi-image processing | PLAN-make-the-speed-phase-03-multi-image-concurrency.md | Complete |
 | 4. Parallel and async output I/O | PLAN-make-the-speed-phase-04-parallel-output-io.md | Complete |
 | 5. Benchmarking and tuning | PLAN-make-the-speed-phase-05-benchmarking.md | Complete |
+| 6. Processing summary | (inline) | Complete |
 
 ### Phase 1: Replace requests with httpx
 

@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 import json
+import time
 
 import click
 import logging
@@ -25,6 +26,7 @@ from occystrap.pipeline import PipelineBuilder, PipelineError
 from occystrap import proxy as proxy_module
 from occystrap import quay as quay_module
 from occystrap import uri
+from occystrap import util
 from occystrap.util import format_size
 
 
@@ -115,6 +117,15 @@ def cli(ctx, verbose=None, debug=None, os=None,
 
 
 def _fetch(img, output):
+    """Fetch image elements and write to output.
+
+    Returns a dict of processing statistics.
+    """
+    # Attach request stats if the input supports it
+    stats = util.RequestStats()
+    if hasattr(img, 'stats'):
+        img.stats = stats
+
     ordered = output.requires_ordered_layers
     with redirect_logging():
         for element in img.fetch(
@@ -122,6 +133,13 @@ def _fetch(img, output):
                 ordered=ordered):
             output.process_image_element(element)
         output.finalize()
+
+    return {
+        'bytes': output._total_bytes,
+        'layers': output._layer_count,
+        'retries': stats.retries,
+        'rate_limits': stats.rate_limits,
+    }
 
 
 def _resolve_quay_images(source, ctx):
@@ -173,12 +191,36 @@ def _resolve_quay_images(source, ctx):
 # =============================================================================
 
 
+def _print_summary(total_images, succeeded, failed_count,
+                   total_layers, total_bytes, elapsed,
+                   retries, rate_limits):
+    """Print a processing summary to stderr."""
+    parts = []
+    if total_images > 1:
+        parts.append(
+            '%d/%d images' % (succeeded, total_images))
+    parts.append('%d layers' % total_layers)
+    parts.append(format_size(total_bytes))
+    parts.append('%.1fs' % elapsed)
+    if retries:
+        parts.append('%d retries' % retries)
+    if rate_limits:
+        parts.append('%d rate limits' % rate_limits)
+    if failed_count:
+        parts.append('%d failed' % failed_count)
+
+    click.echo('Summary: %s' % ', '.join(parts), err=True)
+
+
 def _process_single(ctx, source, destination, filters):
-    """Process a single image through the pipeline."""
+    """Process a single image through the pipeline.
+
+    Returns a dict of processing statistics.
+    """
     builder = PipelineBuilder(ctx)
     input_source, output = builder.build_pipeline(
         source, destination, list(filters))
-    _fetch(input_source, output)
+    stats = _fetch(input_source, output)
 
     # Handle post-processing for certain outputs
     if hasattr(output, 'write_bundle'):
@@ -187,6 +229,8 @@ def _process_single(ctx, source, destination, filters):
             output.write_bundle()
         elif dest_spec.scheme == 'dir' and dest_spec.options.get('expand'):
             output.write_bundle()
+
+    return stats
 
 
 def _process_multi(ctx, images, source, destination, filters):
@@ -228,11 +272,17 @@ def _process_multi(ctx, images, source, destination, filters):
     def _process_one(registry, image, tag):
         source_uri = 'registry://%s/%s:%s' % (
             registry, image, tag)
-        _process_single(
+        return _process_single(
             ctx, source_uri, destination, filters)
 
     failed = []
     done = 0
+    total_bytes = 0
+    total_layers = 0
+    total_retries = 0
+    total_rate_limits = 0
+    start_time = time.time()
+
     with ThreadPoolExecutor(
             max_workers=image_parallel) as executor:
         futures = {}
@@ -245,8 +295,17 @@ def _process_multi(ctx, images, source, destination, filters):
         for future in as_completed(futures):
             name = futures[future]
             try:
-                future.result()
+                image_stats = future.result()
                 done += 1
+                if isinstance(image_stats, dict):
+                    total_bytes += image_stats.get(
+                        'bytes', 0)
+                    total_layers += image_stats.get(
+                        'layers', 0)
+                    total_retries += image_stats.get(
+                        'retries', 0)
+                    total_rate_limits += image_stats.get(
+                        'rate_limits', 0)
                 click.echo(
                     '[%d/%d] %s'
                     % (done + len(failed),
@@ -258,10 +317,11 @@ def _process_multi(ctx, images, source, destination, filters):
                     % (name, e))
                 failed.append(name)
 
-    click.echo(
-        'Processed %d of %d images'
-        % (len(images) - len(failed), len(images)),
-        err=True)
+    elapsed = time.time() - start_time
+    _print_summary(
+        len(images), done, len(failed),
+        total_layers, total_bytes, elapsed,
+        total_retries, total_rate_limits)
     if failed:
         click.echo('Failed images:', err=True)
         for name in failed:
@@ -318,7 +378,18 @@ def process_cmd(ctx, source, destination, filters):
         if images is not None:
             _process_multi(ctx, images, source, destination, filters)
         else:
-            _process_single(ctx, source, destination, filters)
+            start_time = time.time()
+            stats = _process_single(
+                ctx, source, destination, filters)
+            elapsed = time.time() - start_time
+            if isinstance(stats, dict):
+                _print_summary(
+                    1, 1, 0,
+                    stats.get('layers', 0),
+                    stats.get('bytes', 0),
+                    elapsed,
+                    stats.get('retries', 0),
+                    stats.get('rate_limits', 0))
 
     except (PipelineError, uri.URIParseError,
             quay_module.QuayAPIError) as e:

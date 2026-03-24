@@ -39,7 +39,8 @@ class Image(ImageInput):
                  username=None, password=None,
                  max_workers=4, temp_dir=None,
                  client=None, rate_limiter=None,
-                 retries=util.MAX_RETRIES):
+                 retries=util.MAX_RETRIES,
+                 stats=None):
         self.registry = registry
         self._image = image
         self._tag = tag
@@ -52,6 +53,7 @@ class Image(ImageInput):
         self.max_workers = max_workers
         self.temp_dir = temp_dir
         self._retries = retries
+        self.stats = stats
 
         self._cached_auth = None
         self._auth_lock = threading.Lock()
@@ -156,7 +158,8 @@ class Image(ImageInput):
                 data=data, stream=stream,
                 client=client,
                 rate_limiter=limiter,
-                retries=self._retries)
+                retries=self._retries,
+                stats=self.stats)
         except util.UnauthorizedException as e:
             auth_re = re.compile(
                 'Bearer realm="([^"]*)",'
@@ -193,7 +196,8 @@ class Image(ImageInput):
                 data=data, stream=stream,
                 client=client,
                 rate_limiter=limiter,
-                retries=self._retries)
+                retries=self._retries,
+                stats=self.stats)
 
     def _url_scheme(self):
         """Return 'https' or 'http' based on self.secure."""
@@ -427,6 +431,8 @@ class Image(ImageInput):
                     os.unlink(tf.name)
 
                 if attempt < retries:
+                    if self.stats:
+                        self.stats.record_retry()
                     wait_time = (
                         util.RETRY_BACKOFF_BASE
                         ** attempt)
