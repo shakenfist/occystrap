@@ -478,10 +478,13 @@ class Image(ImageInput):
                                 constants.ImageElement(
                                     constants.IMAGE_LAYER,
                                     result_filename, f,
-                                    layer_index=layer_idx
+                                    layer_index=layer_idx,
+                                    temp_path=temp_file_path
                                 )
                     finally:
-                        os.unlink(temp_file_path)
+                        if os.path.exists(
+                                temp_file_path):
+                            os.unlink(temp_file_path)
                 except Exception:
                     for ft in future_map:
                         ft.cancel()
@@ -508,9 +511,12 @@ class Image(ImageInput):
                                     constants.ImageElement(
                                         constants.IMAGE_LAYER,
                                         result_filename,
-                                        f)
+                                        f,
+                                        temp_path=temp_file_path)
                         finally:
-                            os.unlink(temp_file_path)
+                            if os.path.exists(
+                                    temp_file_path):
+                                os.unlink(temp_file_path)
                     except Exception:
                         for _, _, remaining_future \
                                 in layer_futures:

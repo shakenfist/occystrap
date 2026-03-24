@@ -221,7 +221,9 @@ Output writer implementations:
   with parallel layer uploads using ThreadPoolExecutor
 - `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
 - `outputs/directory.py` - Extracts to directory with optional layer deduplication;
-  uses `safe_path_join()` to prevent path traversal (CWE-22)
+  uses `safe_path_join()` to prevent path traversal (CWE-22); uses `os.rename()`
+  to move temp files to their final location when `temp_path` is available,
+  avoiding the read/write copy loop
 - `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from
   DirWriter); uses `safe_path_join()` for user-controlled paths
 - `outputs/mounts.py` - Creates overlay mount-based extraction; uses
@@ -239,6 +241,7 @@ class ImageElement:
     name: str           # Filename or digest hash
     data: object        # File-like object or None (skipped)
     layer_index: int | None = None  # Manifest position
+    temp_path: str | None = None    # Backing temp file path
 ```
 
 Element types:
@@ -249,6 +252,14 @@ The `layer_index` field is set when layers are delivered out of order
 (i.e., when the output's `requires_ordered_layers` is `False`). Outputs
 use this index to reconstruct the correct manifest layer order at
 `finalize()` time.
+
+The `temp_path` field carries the path to the backing temp file when the
+element's data is backed by a temp file on disk. Outputs that write to a
+directory (e.g., `DirWriter`) can use `os.rename()` to move the temp file
+to its final location instead of copying data through a read/write loop.
+This is O(1) on the same filesystem. When an output moves the temp file,
+the input's `finally` block skips the `os.unlink()` (the file no longer
+exists at the original path).
 
 ### The `info` Command
 

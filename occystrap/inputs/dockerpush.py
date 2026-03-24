@@ -1113,10 +1113,12 @@ class Image(ImageInput):
                             yield constants.ImageElement(
                                 constants.IMAGE_LAYER,
                                 diff_id, fh,
-                                layer_index=idx)
+                                layer_index=idx,
+                                temp_path=tf.name)
                     finally:
                         try:
-                            os.unlink(tf.name)
+                            if os.path.exists(tf.name):
+                                os.unlink(tf.name)
                         except OSError:
                             pass
                     layers_fetched += 1

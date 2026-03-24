@@ -475,12 +475,15 @@ class Image(ImageInput):
                     constants.IMAGE_LAYER,
                     layer_digest, fh,
                     layer_index=_layer_index_for(
-                        layer_path))
+                        layer_path),
+                    temp_path=(
+                        path if last_ref else None))
             finally:
                 fh.close()
                 if last_ref:
                     try:
-                        os.unlink(path)
+                        if os.path.exists(path):
+                            os.unlink(path)
                     except OSError:
                         pass
 
@@ -741,13 +744,19 @@ class Image(ImageInput):
                                 constants.ImageElement(
                                     constants.IMAGE_LAYER,
                                     layer_digest, fh,
-                                    layer_index=idx)
+                                    layer_index=idx,
+                                    temp_path=(
+                                        temp_path
+                                        if last_ref
+                                        else None))
                         finally:
                             fh.close()
                             if last_ref:
                                 try:
-                                    os.unlink(
-                                        temp_path)
+                                    if os.path.exists(
+                                            temp_path):
+                                        os.unlink(
+                                            temp_path)
                                 except OSError:
                                     pass
                             else:

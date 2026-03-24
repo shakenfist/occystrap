@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tarfile
 import threading
 
@@ -195,6 +196,29 @@ class DirWriter(ImageOutput):
                 LOG.debug(
                     'Skipping layer already in'
                     ' output directory')
+                layer_size = os.path.getsize(
+                    layer_file_in_dir)
+            elif element.temp_path:
+                # Move the temp file directly instead
+                # of copying data through a read loop.
+                # This is O(1) on the same filesystem.
+                try:
+                    os.rename(
+                        element.temp_path,
+                        layer_file_in_dir)
+                    LOG.debug(
+                        'Renamed temp file to %s'
+                        % layer_file_in_dir)
+                except OSError:
+                    # Cross-filesystem: fall back to
+                    # shutil.move (copies then deletes)
+                    shutil.move(
+                        element.temp_path,
+                        layer_file_in_dir)
+                    LOG.debug(
+                        'Moved temp file to %s'
+                        ' (cross-filesystem)'
+                        % layer_file_in_dir)
                 layer_size = os.path.getsize(
                     layer_file_in_dir)
             else:
