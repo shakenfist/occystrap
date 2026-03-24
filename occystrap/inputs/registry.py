@@ -58,7 +58,11 @@ class Image(ImageInput):
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers)
 
-        # httpx client for connection pooling and HTTP/2
+        # httpx client for connection pooling and HTTP/2.
+        # httpx.Client is not thread-safe, so we use
+        # per-thread clients for parallel downloads while
+        # sharing the auth token via _auth_lock.
+        self._rate_limit_cfg = rate_limiter
         if client is not None:
             self._client = client
             self._rate_limiter = rate_limiter
@@ -67,6 +71,16 @@ class Image(ImageInput):
             self._client, self._rate_limiter = (
                 util.create_client())
             self._own_client = True
+
+        # Per-thread httpx clients for parallel downloads.
+        # Seed the main thread with the primary client so
+        # main-thread calls (manifest, config) use the
+        # same client passed at construction.
+        self._thread_local = threading.local()
+        self._thread_local.client = self._client
+        self._thread_local.limiter = self._rate_limiter
+        self._thread_clients = []
+        self._thread_clients_lock = threading.Lock()
 
         # Cached manifest and config
         self._manifest = None
@@ -78,6 +92,33 @@ class Image(ImageInput):
         """Clear cached manifest so the next get_manifest() re-fetches."""
         self._manifest = None
         self._manifest_media_type = None
+
+    def _get_thread_client(self):
+        """Return an httpx client for the current thread.
+
+        httpx.Client is not thread-safe, so each worker
+        thread in the download pool gets its own client.
+        When the client was externally provided (e.g. in
+        tests), all threads share it since mocks and
+        test doubles are typically thread-safe.
+        """
+        if not self._own_client:
+            return self._client, self._rate_limiter
+        if not hasattr(self._thread_local, 'client'):
+            client, limiter = util.create_client()
+            self._thread_local.client = client
+            self._thread_local.limiter = limiter
+            with self._thread_clients_lock:
+                self._thread_clients.append(client)
+        return (self._thread_local.client,
+                self._thread_local.limiter)
+
+    def _close_thread_clients(self):
+        """Close all per-thread httpx clients."""
+        with self._thread_clients_lock:
+            for client in self._thread_clients:
+                client.close()
+            self._thread_clients.clear()
 
     @property
     def image(self):
@@ -94,8 +135,8 @@ class Image(ImageInput):
         """Make an authenticated request to the registry.
 
         Thread-safe: uses _auth_lock to protect
-        _cached_auth updates. Uses the shared httpx
-        client for connection pooling and HTTP/2.
+        _cached_auth updates. Uses per-thread httpx
+        clients for true concurrent downloads.
         """
         if not headers:
             headers = {}
@@ -106,12 +147,15 @@ class Image(ImageInput):
                     'Authorization':
                     'Bearer %s' % self._cached_auth})
 
+        # Use per-thread client for thread safety
+        client, limiter = self._get_thread_client()
+
         try:
             return util.request_url(
                 method, url, headers=headers,
                 data=data, stream=stream,
-                client=self._client,
-                rate_limiter=self._rate_limiter,
+                client=client,
+                rate_limiter=limiter,
                 retries=self._retries)
         except util.UnauthorizedException as e:
             auth_re = re.compile(
@@ -130,13 +174,13 @@ class Image(ImageInput):
                         'GET', auth_url,
                         auth=(self.username,
                               self.password),
-                        client=self._client,
-                        rate_limiter=self._rate_limiter)
+                        client=client,
+                        rate_limiter=limiter)
                 else:
                     r = util.request_url(
                         'GET', auth_url,
-                        client=self._client,
-                        rate_limiter=self._rate_limiter)
+                        client=client,
+                        rate_limiter=limiter)
                 token = r.json().get('token')
                 headers.update({
                     'Authorization':
@@ -147,8 +191,8 @@ class Image(ImageInput):
             return util.request_url(
                 method, url, headers=headers,
                 data=data, stream=stream,
-                client=self._client,
-                rate_limiter=self._rate_limiter,
+                client=client,
+                rate_limiter=limiter,
                 retries=self._retries)
 
     def _url_scheme(self):
@@ -525,6 +569,7 @@ class Image(ImageInput):
                                 remaining_future.cancel()
                         raise
 
+        self._close_thread_clients()
         if self._own_client:
             self._client.close()
         LOG.info('Done')

@@ -84,7 +84,10 @@ class RegistryWriter(ImageOutput):
         self._moniker = 'https' if secure else 'http'
         self._auth_lock = threading.Lock()
 
-        # httpx client for connection pooling and HTTP/2
+        # httpx client for connection pooling and HTTP/2.
+        # httpx.Client is not thread-safe, so we use
+        # per-thread clients for parallel uploads while
+        # sharing the auth token via _auth_lock.
         if client is not None:
             self._client = client
             self._rate_limiter = rate_limiter
@@ -93,6 +96,16 @@ class RegistryWriter(ImageOutput):
             self._client, self._rate_limiter = (
                 util.create_client())
             self._own_client = True
+
+        # Per-thread httpx clients for parallel uploads.
+        # Seed the main thread with the primary client so
+        # main-thread calls (e.g. finalize's manifest PUT)
+        # use the same client passed at construction.
+        self._thread_local = threading.local()
+        self._thread_local.client = self._client
+        self._thread_local.limiter = self._rate_limiter
+        self._thread_clients = []
+        self._thread_clients_lock = threading.Lock()
 
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers)
@@ -121,13 +134,40 @@ class RegistryWriter(ImageOutput):
     def requires_ordered_layers(self):
         return False
 
+    def _get_thread_client(self):
+        """Return an httpx client for the current thread.
+
+        httpx.Client is not thread-safe, so each worker
+        thread in the upload pool gets its own client.
+        When the client was externally provided (e.g. in
+        tests), all threads share it since mocks and
+        test doubles are typically thread-safe.
+        """
+        if not self._own_client:
+            return self._client, self._rate_limiter
+        if not hasattr(self._thread_local, 'client'):
+            client, limiter = util.create_client()
+            self._thread_local.client = client
+            self._thread_local.limiter = limiter
+            with self._thread_clients_lock:
+                self._thread_clients.append(client)
+        return (self._thread_local.client,
+                self._thread_local.limiter)
+
+    def _close_thread_clients(self):
+        """Close all per-thread httpx clients."""
+        with self._thread_clients_lock:
+            for client in self._thread_clients:
+                client.close()
+            self._thread_clients.clear()
+
     def _request(self, method, url, headers=None,
                  data=None, stream=False):
         """Make an authenticated request to the registry.
 
         Thread-safe: uses _auth_lock to protect
-        _cached_auth updates. Uses httpx client for
-        connection pooling and HTTP/2.
+        _cached_auth updates. Uses per-thread httpx
+        clients for true concurrent uploads.
         """
         if not headers:
             headers = {}
@@ -139,10 +179,11 @@ class RegistryWriter(ImageOutput):
                 headers['Authorization'] = (
                     f'Bearer {self._cached_auth}')
 
-        if self._rate_limiter:
-            self._rate_limiter.acquire()
+        client, limiter = self._get_thread_client()
+        if limiter:
+            limiter.acquire()
 
-        r = self._client.request(
+        r = client.request(
             method, url, headers=headers,
             content=data)
 
@@ -160,13 +201,13 @@ class RegistryWriter(ImageOutput):
                     f'{m.group(1)}?service={m.group(2)}'
                     f'&scope={scope}')
                 if self.username and self.password:
-                    auth_r = self._client.get(
+                    auth_r = client.get(
                         auth_url,
                         auth=httpx.BasicAuth(
                             self.username,
                             self.password))
                 else:
-                    auth_r = self._client.get(auth_url)
+                    auth_r = client.get(auth_url)
 
                 if auth_r.status_code == 200:
                     token = auth_r.json().get('token')
@@ -175,7 +216,7 @@ class RegistryWriter(ImageOutput):
                     headers['Authorization'] = (
                         f'Bearer {token}')
 
-                    r = self._client.request(
+                    r = client.request(
                         method, url, headers=headers,
                         content=data)
 
@@ -557,5 +598,6 @@ class RegistryWriter(ImageOutput):
             'ratio_pct': round(ratio),
         }).info('Push complete')
 
+        self._close_thread_clients()
         if self._own_client:
             self._client.close()
