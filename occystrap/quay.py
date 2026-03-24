@@ -13,6 +13,7 @@ import calendar
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 from fnmatch import fnmatch
+import threading
 from urllib.parse import quote
 
 from shakenfist_utilities import logs
@@ -210,13 +211,27 @@ class QuayClient:
         return None
 
 
-def _check_one_repo(client, namespace, repo, tag, since_ts):
+def _check_one_repo(thread_local, thread_clients,
+                    thread_clients_lock, token,
+                    namespace, repo, tag, since_ts):
     """Check a single repo for a tag.
 
-    Designed to run in a ThreadPoolExecutor. Returns
-    (repo, tag_info) if the tag exists and passes the
-    since filter, or (repo, None) otherwise.
+    Designed to run in a ThreadPoolExecutor. Each thread
+    gets its own QuayClient (and thus its own httpx.Client)
+    via thread-local storage, because httpx.Client is not
+    thread-safe. New clients are registered in
+    thread_clients for cleanup by the caller.
+
+    Returns:
+        (repo, tag_info) if the tag exists and passes the
+        since filter, or (repo, None) otherwise.
     """
+    if not hasattr(thread_local, 'client'):
+        thread_local.client = QuayClient(token=token)
+        with thread_clients_lock:
+            thread_clients.append(thread_local.client)
+
+    client = thread_local.client
     tag_info = client.has_tag(namespace, repo, tag)
     if not tag_info:
         return (repo, None)
@@ -245,6 +260,12 @@ def resolve_quay_uri(namespace, repo_glob, tag,
     parallel, and returns a list of (registry, image, tag)
     tuples suitable for constructing registry.Image inputs.
 
+    Each worker thread gets its own httpx.Client via
+    thread-local storage, because httpx.Client is not
+    thread-safe and sharing one client across threads
+    serializes requests through its internal connection
+    pool lock.
+
     Args:
         namespace: Quay.io organization name.
         repo_glob: Glob pattern for repository names
@@ -261,7 +282,9 @@ def resolve_quay_uri(namespace, repo_glob, tag,
         List of ('quay.io', 'namespace/repo', tag) tuples
         for each repo that matches the glob and has the tag.
     """
-    client = QuayClient(token=token)
+    # Use a dedicated client for the sequential listing
+    # phase (single-threaded, safe).
+    listing_client = QuayClient(token=token)
 
     # Convert since date to unix timestamp for comparison
     since_ts = None
@@ -271,38 +294,50 @@ def resolve_quay_uri(namespace, repo_glob, tag,
     # Pass since_ts to list_repositories so stale repos are
     # filtered during listing, avoiding expensive per-repo
     # tag checks.
-    all_repos = client.list_repositories(
+    all_repos = listing_client.list_repositories(
         namespace, since_ts=since_ts)
+    listing_client.close()
 
     # Filter by glob pattern
     matching_repos = [r for r in all_repos if fnmatch(r, repo_glob)]
     LOG.info('Glob %r matched %d of %d repositories'
              % (repo_glob, len(matching_repos), len(all_repos)))
 
-    # Check tag existence in parallel
+    # Check tag existence in parallel. Each thread gets
+    # its own QuayClient (and httpx.Client) via
+    # thread-local storage so requests are truly
+    # concurrent.
     if matching_repos:
         LOG.info(
             'Checking tag %r for %d repositories '
             '(%d workers)...'
             % (tag, len(matching_repos), max_workers))
 
+    thread_local = threading.local()
+    thread_clients = []
+    thread_clients_lock = threading.Lock()
     results = []
-    with ThreadPoolExecutor(
-            max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                _check_one_repo, client, namespace,
-                repo, tag, since_ts): repo
-            for repo in matching_repos
-        }
-        for future in as_completed(futures):
-            repo, tag_info = future.result()
-            if tag_info is not None:
-                results.append((
-                    'quay.io',
-                    '%s/%s' % (namespace, repo), tag))
-
-    client.close()
+    try:
+        with ThreadPoolExecutor(
+                max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _check_one_repo, thread_local,
+                    thread_clients, thread_clients_lock,
+                    token, namespace, repo, tag,
+                    since_ts): repo
+                for repo in matching_repos
+            }
+            for future in as_completed(futures):
+                repo, tag_info = future.result()
+                if tag_info is not None:
+                    results.append((
+                        'quay.io',
+                        '%s/%s' % (namespace, repo),
+                        tag))
+    finally:
+        for client in thread_clients:
+            client.close()
 
     LOG.info('Found %d of %d repositories with tag %s'
              % (len(results), len(matching_repos), tag))
