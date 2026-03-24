@@ -227,7 +227,7 @@ control parallelism (though its scope will expand).
 |-------|------|--------|
 | 1. Replace requests with httpx | PLAN-make-the-speed-phase-01-httpx.md | Complete |
 | 2. Parallel Quay API resolution | PLAN-make-the-speed-phase-02-parallel-resolution.md | Complete |
-| 3. Concurrent multi-image processing | PLAN-make-the-speed-phase-03-multi-image-concurrency.md | Not started |
+| 3. Concurrent multi-image processing | PLAN-make-the-speed-phase-03-multi-image-concurrency.md | Complete |
 | 4. Parallel and async output I/O | PLAN-make-the-speed-phase-04-parallel-output-io.md | Not started |
 | 5. Benchmarking and tuning | PLAN-make-the-speed-phase-05-benchmarking.md | Not started |
 
