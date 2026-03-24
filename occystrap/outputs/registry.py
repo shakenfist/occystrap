@@ -23,7 +23,7 @@ import re
 import threading
 import time
 
-import requests
+import httpx
 
 from occystrap import compression
 from occystrap import constants
@@ -44,25 +44,28 @@ class RegistryWriter(ImageOutput):
     make the image available.
     """
 
-    def __init__(self, registry, image, tag, secure=True,
-                 username=None, password=None, compression_type=None,
-                 max_workers=4, layer_cache=None, filters_hash='none'):
+    def __init__(self, registry, image, tag,
+                 secure=True, username=None,
+                 password=None, compression_type=None,
+                 max_workers=4, layer_cache=None,
+                 filters_hash='none', client=None,
+                 rate_limiter=None):
         """Initialize the registry writer.
 
         Args:
-            registry: Registry hostname (e.g., 'docker.io', 'ghcr.io').
-            image: Image name/path (e.g., 'library/busybox', 'myuser/myimage').
-            tag: Image tag (e.g., 'latest', 'v1.0').
-            secure: If True, use HTTPS (default). If False, use HTTP.
-            username: Username for authentication (optional).
-            password: Password/token for authentication (optional).
-            compression_type: Compression for layers ('gzip' or 'zstd').
-                Defaults to 'gzip' for maximum compatibility.
-            max_workers: Number of parallel upload threads (default: 4).
-            layer_cache: LayerCache instance for cross-invocation
-                caching (optional).
-            filters_hash: Hash of the filter chain configuration,
-                used to key cache entries (default: 'none').
+            registry: Registry hostname.
+            image: Image name/path.
+            tag: Image tag.
+            secure: Use HTTPS (default True).
+            username: Auth username (optional).
+            password: Auth password/token (optional).
+            compression_type: Layer compression type.
+            max_workers: Parallel upload threads.
+            layer_cache: LayerCache instance (optional).
+            filters_hash: Filter chain hash for cache.
+            client: httpx.Client for connection pooling
+                (optional, created if not provided).
+            rate_limiter: RateLimiter instance (optional).
         """
         super().__init__()
 
@@ -72,17 +75,28 @@ class RegistryWriter(ImageOutput):
         self.secure = secure
         self.username = username
         self.password = password
-        self.compression_type = compression_type or constants.COMPRESSION_GZIP
+        self.compression_type = (
+            compression_type
+            or constants.COMPRESSION_GZIP)
         self.max_workers = max_workers
 
         self._cached_auth = None
         self._moniker = 'https' if secure else 'http'
         self._auth_lock = threading.Lock()
 
+        # httpx client for connection pooling and HTTP/2
+        if client is not None:
+            self._client = client
+            self._rate_limiter = rate_limiter
+            self._own_client = False
+        else:
+            self._client, self._rate_limiter = (
+                util.create_client())
+            self._own_client = True
+
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers)
         self._config_future = None
-        # List of (layer_index, future) tuples
         self._layer_futures = []
 
         self._config_digest = None
@@ -98,24 +112,22 @@ class RegistryWriter(ImageOutput):
         # Cross-invocation layer cache
         self._layer_cache = layer_cache
         self._filters_hash = filters_hash
-        self._cached_layers = {}  # digest -> cached metadata
+        self._cached_layers = {}
         self._cache_hits = 0
 
-        # Original DiffIDs from fetch_callback, consumed
-        # in process_image_element order.  Needed because
-        # filters may transform layer names (recalculating
-        # SHA256 after modifying content), but the cache
-        # must be keyed by the original input DiffID.
         self._original_digests = deque()
 
     @property
     def requires_ordered_layers(self):
         return False
 
-    def _request(self, method, url, headers=None, data=None, stream=False):
+    def _request(self, method, url, headers=None,
+                 data=None, stream=False):
         """Make an authenticated request to the registry.
 
-        Thread-safe: uses _auth_lock to protect _cached_auth updates.
+        Thread-safe: uses _auth_lock to protect
+        _cached_auth updates. Uses httpx client for
+        connection pooling and HTTP/2.
         """
         if not headers:
             headers = {}
@@ -124,32 +136,48 @@ class RegistryWriter(ImageOutput):
 
         with self._auth_lock:
             if self._cached_auth:
-                headers['Authorization'] = f'Bearer {self._cached_auth}'
+                headers['Authorization'] = (
+                    f'Bearer {self._cached_auth}')
 
-        r = requests.request(method, url, headers=headers, data=data,
-                             stream=stream)
+        if self._rate_limiter:
+            self._rate_limiter.acquire()
+
+        r = self._client.request(
+            method, url, headers=headers,
+            content=data)
 
         if r.status_code == 401:
-            auth_header = r.headers.get('Www-Authenticate', '')
-            auth_re = re.compile(r'Bearer realm="([^"]*)",service="([^"]*)"')
+            auth_header = r.headers.get(
+                'Www-Authenticate', '')
+            auth_re = re.compile(
+                r'Bearer realm="([^"]*)",'
+                r'service="([^"]*)"')
             m = auth_re.match(auth_header)
             if m:
-                scope = f'repository:{self.image}:pull,push'
-                auth_url = f'{m.group(1)}?service={m.group(2)}&scope={scope}'
+                scope = (
+                    f'repository:{self.image}:pull,push')
+                auth_url = (
+                    f'{m.group(1)}?service={m.group(2)}'
+                    f'&scope={scope}')
                 if self.username and self.password:
-                    auth_r = requests.get(auth_url,
-                                          auth=(self.username, self.password))
+                    auth_r = self._client.get(
+                        auth_url,
+                        auth=httpx.BasicAuth(
+                            self.username,
+                            self.password))
                 else:
-                    auth_r = requests.get(auth_url)
+                    auth_r = self._client.get(auth_url)
 
                 if auth_r.status_code == 200:
                     token = auth_r.json().get('token')
                     with self._auth_lock:
                         self._cached_auth = token
-                    headers['Authorization'] = f'Bearer {token}'
+                    headers['Authorization'] = (
+                        f'Bearer {token}')
 
-                    r = requests.request(method, url, headers=headers,
-                                         data=data, stream=stream)
+                    r = self._client.request(
+                        method, url, headers=headers,
+                        content=data)
 
         return r
 
@@ -528,3 +556,6 @@ class RegistryWriter(ImageOutput):
             'output_mb': round(compressed_mb, 1),
             'ratio_pct': round(ratio),
         }).info('Push complete')
+
+        if self._own_client:
+            self._client.close()

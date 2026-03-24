@@ -58,12 +58,19 @@ LOG = logs.setup_console(__name__)
 @click.option('--output-format', '-O', default='text',
               type=click.Choice(['text', 'json']),
               help='Output format for info/check commands (default: text)')
+@click.option('--retries', default=3, type=int,
+              envvar='OCCYSTRAP_RETRIES',
+              help='Max retries for failed HTTP requests (default: 3)')
+@click.option('--rate-limit', default=None, type=float,
+              envvar='OCCYSTRAP_RATE_LIMIT',
+              help='Max HTTP requests per second (default: unlimited)')
 @click.pass_context
 def cli(ctx, verbose=None, debug=None, os=None,
         architecture=None, variant=None,
         username=None, password=None, insecure=None,
         compression=None, parallel=None, temp_dir=None,
-        layer_cache=None, output_format=None):
+        layer_cache=None, output_format=None,
+        retries=None, rate_limit=None):
     if debug:
         # Enable debug for all loggers (occystrap +
         # libraries like requests, urllib3, etc.)
@@ -96,6 +103,8 @@ def cli(ctx, verbose=None, debug=None, os=None,
     ctx.obj['TEMP_DIR'] = temp_dir
     ctx.obj['LAYER_CACHE'] = layer_cache
     ctx.obj['OUTPUT_FORMAT'] = output_format
+    ctx.obj['RETRIES'] = retries
+    ctx.obj['RATE_LIMIT'] = rate_limit
 
 
 def _fetch(img, output):

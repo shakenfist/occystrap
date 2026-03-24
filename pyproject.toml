@@ -28,7 +28,8 @@ classifiers = [
 ]
 dependencies = [
     "click>=7.1.1",          # bsd
-    "requests",              # apache2
+    "httpx[http2]>=0.27",    # bsd — HTTP/2 + connection pooling
+    "requests",              # apache2 — retained for Docker daemon unix socket
     "requests-unixsocket",   # apache2
     "prettytable",           # bsd
     "oslo.concurrency",      # apache2

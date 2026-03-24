@@ -40,36 +40,56 @@ class QuayClient:
             private organizations. Not required for public repos.
     """
 
-    def __init__(self, token=None):
+    def __init__(self, token=None, client=None,
+                 rate_limiter=None):
         self.token = token
+        if client is not None:
+            self._client = client
+            self._rate_limiter = rate_limiter
+            self._own_client = False
+        else:
+            self._client, self._rate_limiter = (
+                util.create_client())
+            self._own_client = True
+
+    def close(self):
+        """Close the httpx client if we own it."""
+        if self._own_client:
+            self._client.close()
 
     def _headers(self):
-        """Build request headers, including auth if a token is set."""
+        """Build request headers, including auth."""
         headers = {}
         if self.token:
-            headers['Authorization'] = 'Bearer %s' % self.token
+            headers['Authorization'] = (
+                'Bearer %s' % self.token)
         return headers
 
     def _request(self, url):
-        """Make an authenticated GET request to the quay.io API.
+        """Make an authenticated GET request to the
+        quay.io API.
 
-        Wraps util.request_url with quay.io auth headers. Translates
-        401 errors into a more helpful message mentioning quay.io
-        API tokens.
+        Uses the httpx client for connection pooling
+        and HTTP/2.
 
         Returns:
-            The requests.Response object.
+            The httpx.Response object.
 
         Raises:
-            QuayAPIError: On authentication failure or unexpected errors.
+            QuayAPIError: On authentication failure.
         """
         try:
-            return util.request_url('GET', url, headers=self._headers())
+            return util.request_url(
+                'GET', url,
+                headers=self._headers(),
+                client=self._client,
+                rate_limiter=self._rate_limiter)
         except util.UnauthorizedException:
             raise QuayAPIError(
-                'Authentication failed for quay.io API. '
-                'Provide a valid quay.io API token for '
-                'accessing private organizations.'
+                'Authentication failed for quay.io'
+                ' API. Provide a valid quay.io API'
+                ' token for accessing private'
+                ' organizations.'
             )
 
     def list_repositories(self, namespace, since_ts=None):
@@ -251,6 +271,8 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
                 continue
 
         results.append(('quay.io', '%s/%s' % (namespace, repo), tag))
+
+    client.close()
 
     LOG.info('Found %d images matching %s/%s:%s'
              % (len(results), namespace, repo_glob, tag))
