@@ -32,7 +32,7 @@ LOG = logs.setup_console(__name__)
 DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
 
 
-class Image(ImageInput):
+class Image(ImageInput, util.ThreadSafeClientMixin):
     def __init__(self, registry, image, tag,
                  os='linux', architecture='amd64',
                  variant='', secure=True,
@@ -74,15 +74,7 @@ class Image(ImageInput):
                 util.create_client())
             self._own_client = True
 
-        # Per-thread httpx clients for parallel downloads.
-        # Seed the main thread with the primary client so
-        # main-thread calls (manifest, config) use the
-        # same client passed at construction.
-        self._thread_local = threading.local()
-        self._thread_local.client = self._client
-        self._thread_local.limiter = self._rate_limiter
-        self._thread_clients = []
-        self._thread_clients_lock = threading.Lock()
+        self._init_thread_clients()
 
         # Cached manifest and config
         self._manifest = None
@@ -94,33 +86,6 @@ class Image(ImageInput):
         """Clear cached manifest so the next get_manifest() re-fetches."""
         self._manifest = None
         self._manifest_media_type = None
-
-    def _get_thread_client(self):
-        """Return an httpx client for the current thread.
-
-        httpx.Client is not thread-safe, so each worker
-        thread in the download pool gets its own client.
-        When the client was externally provided (e.g. in
-        tests), all threads share it since mocks and
-        test doubles are typically thread-safe.
-        """
-        if not self._own_client:
-            return self._client, self._rate_limiter
-        if not hasattr(self._thread_local, 'client'):
-            client, limiter = util.create_client()
-            self._thread_local.client = client
-            self._thread_local.limiter = limiter
-            with self._thread_clients_lock:
-                self._thread_clients.append(client)
-        return (self._thread_local.client,
-                self._thread_local.limiter)
-
-    def _close_thread_clients(self):
-        """Close all per-thread httpx clients."""
-        with self._thread_clients_lock:
-            for client in self._thread_clients:
-                client.close()
-            self._thread_clients.clear()
 
     @property
     def image(self):

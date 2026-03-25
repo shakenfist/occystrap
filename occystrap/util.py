@@ -65,6 +65,59 @@ class RateLimiter:
             self._last = time.monotonic()
 
 
+class ThreadSafeClientMixin:
+    """Mixin for classes that need per-thread httpx clients.
+
+    httpx.Client is not thread-safe, so classes using
+    ThreadPoolExecutor need per-thread clients. This mixin
+    provides lazy creation of per-thread clients via
+    threading.local() and cleanup via _close_thread_clients().
+
+    Users must call _init_thread_clients() in __init__()
+    after setting self._client, self._rate_limiter, and
+    self._own_client.
+    """
+
+    def _init_thread_clients(self):
+        """Initialize per-thread client storage.
+
+        Call this in __init__() after setting _client,
+        _rate_limiter, and _own_client. Seeds the main
+        thread with the primary client.
+        """
+        self._thread_local = threading.local()
+        self._thread_local.client = self._client
+        self._thread_local.limiter = self._rate_limiter
+        self._thread_clients = []
+        self._thread_clients_lock = threading.Lock()
+
+    def _get_thread_client(self):
+        """Return an httpx client for the current thread.
+
+        Each worker thread gets its own client. When the
+        client was externally provided (e.g. in tests),
+        all threads share it since mocks and test doubles
+        are typically thread-safe.
+        """
+        if not self._own_client:
+            return self._client, self._rate_limiter
+        if not hasattr(self._thread_local, 'client'):
+            client, limiter = create_client()
+            self._thread_local.client = client
+            self._thread_local.limiter = limiter
+            with self._thread_clients_lock:
+                self._thread_clients.append(client)
+        return (self._thread_local.client,
+                self._thread_local.limiter)
+
+    def _close_thread_clients(self):
+        """Close all per-thread httpx clients."""
+        with self._thread_clients_lock:
+            for client in self._thread_clients:
+                client.close()
+            self._thread_clients.clear()
+
+
 def create_client(http2=True, rate_limit=None):
     """Create an httpx.Client with connection pooling and
     optional HTTP/2.

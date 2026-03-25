@@ -837,9 +837,21 @@ HTTP/2 support, and structured retry/rate-limiting.
 ### httpx and Connection Pooling
 
 All registry-facing HTTP requests go through `util.request_url()`, which uses
-httpx instead of requests. Each `Image` (registry input), `RegistryWriter`
-(registry output), and `QuayClient` instance holds a shared `httpx.Client`
-with connection pooling:
+httpx instead of requests. Since `httpx.Client` is not thread-safe, each
+worker thread in a `ThreadPoolExecutor` gets its own client via the
+`ThreadSafeClientMixin` in `util.py`. The main thread is seeded with the
+primary client, and worker threads lazily create their own:
+
+```python
+# util.py — shared mixin used by Image and RegistryWriter
+class ThreadSafeClientMixin:
+    def _init_thread_clients(self): ...
+    def _get_thread_client(self): ...
+    def _close_thread_clients(self): ...
+```
+
+The `create_client()` factory in `util.py` creates each client with connection
+pooling and optional HTTP/2:
 
 ```python
 limits = httpx.Limits(
@@ -852,12 +864,8 @@ client = httpx.Client(
     timeout=httpx.Timeout(30.0, connect=10.0))
 ```
 
-The `create_client()` factory in `util.py` creates the client and an optional
-`RateLimiter`. Callers pass the client and limiter into `request_url()` so that
-all requests within a pipeline stage share the same connection pool.
-
 When no client is provided to `request_url()`, a temporary client is created
-and closed after the request -- this is the fallback for one-off calls.
+and closed after the request — this is the fallback for one-off calls.
 
 **Docker daemon communication** (`inputs/docker.py`, `inputs/dockerpush.py`,
 `outputs/docker.py`) still uses `requests-unixsocket` for Unix domain socket

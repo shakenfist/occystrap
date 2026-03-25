@@ -36,7 +36,7 @@ from shakenfist_utilities import logs
 LOG = logs.setup_console(__name__)
 
 
-class RegistryWriter(ImageOutput):
+class RegistryWriter(ImageOutput, util.ThreadSafeClientMixin):
     """Pushes images to a Docker/OCI registry.
 
     This output writer uploads image layers and config to a registry
@@ -97,15 +97,7 @@ class RegistryWriter(ImageOutput):
                 util.create_client())
             self._own_client = True
 
-        # Per-thread httpx clients for parallel uploads.
-        # Seed the main thread with the primary client so
-        # main-thread calls (e.g. finalize's manifest PUT)
-        # use the same client passed at construction.
-        self._thread_local = threading.local()
-        self._thread_local.client = self._client
-        self._thread_local.limiter = self._rate_limiter
-        self._thread_clients = []
-        self._thread_clients_lock = threading.Lock()
+        self._init_thread_clients()
 
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers)
@@ -133,33 +125,6 @@ class RegistryWriter(ImageOutput):
     @property
     def requires_ordered_layers(self):
         return False
-
-    def _get_thread_client(self):
-        """Return an httpx client for the current thread.
-
-        httpx.Client is not thread-safe, so each worker
-        thread in the upload pool gets its own client.
-        When the client was externally provided (e.g. in
-        tests), all threads share it since mocks and
-        test doubles are typically thread-safe.
-        """
-        if not self._own_client:
-            return self._client, self._rate_limiter
-        if not hasattr(self._thread_local, 'client'):
-            client, limiter = util.create_client()
-            self._thread_local.client = client
-            self._thread_local.limiter = limiter
-            with self._thread_clients_lock:
-                self._thread_clients.append(client)
-        return (self._thread_local.client,
-                self._thread_local.limiter)
-
-    def _close_thread_clients(self):
-        """Close all per-thread httpx clients."""
-        with self._thread_clients_lock:
-            for client in self._thread_clients:
-                client.close()
-            self._thread_clients.clear()
 
     def _request(self, method, url, headers=None,
                  data=None, stream=False):
@@ -200,6 +165,8 @@ class RegistryWriter(ImageOutput):
                 auth_url = (
                     f'{m.group(1)}?service={m.group(2)}'
                     f'&scope={scope}')
+                if limiter:
+                    limiter.acquire()
                 if self.username and self.password:
                     auth_r = client.get(
                         auth_url,
@@ -216,6 +183,8 @@ class RegistryWriter(ImageOutput):
                     headers['Authorization'] = (
                         f'Bearer {token}')
 
+                    if limiter:
+                        limiter.acquire()
                     r = client.request(
                         method, url, headers=headers,
                         content=data)
