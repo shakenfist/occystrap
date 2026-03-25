@@ -134,9 +134,16 @@ def _fetch(img, output):
             output.process_image_element(element)
         output.finalize()
 
+    # Walk filter chain to find the actual output writer
+    # with tracking stats (filters don't call
+    # _track_element).
+    writer = output
+    while hasattr(writer, '_wrapped') and writer._wrapped:
+        writer = writer._wrapped
+
     return {
-        'bytes': output._total_bytes,
-        'layers': output._layer_count,
+        'bytes': getattr(writer, '_total_bytes', 0),
+        'layers': getattr(writer, '_layer_count', 0),
         'retries': stats.retries,
         'rate_limits': stats.rate_limits,
     }
