@@ -33,7 +33,7 @@ class TestListRepositories(unittest.TestCase):
             ]
         })
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         repos = client.list_repositories('kolla')
 
         self.assertEqual(repos, ['nova-api', 'keystone'])
@@ -59,7 +59,7 @@ class TestListRepositories(unittest.TestCase):
             }),
         ]
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         repos = client.list_repositories('kolla')
 
         self.assertEqual(repos, ['nova-api', 'keystone'])
@@ -75,7 +75,7 @@ class TestListRepositories(unittest.TestCase):
             'repositories': []
         })
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         repos = client.list_repositories('emptyorg')
 
         self.assertEqual(repos, [])
@@ -87,7 +87,7 @@ class TestListRepositories(unittest.TestCase):
             'repositories': []
         })
 
-        client = QuayClient(token='my_secret_token')
+        client = QuayClient(token='my_secret_token', client=mock.MagicMock())
         client.list_repositories('myorg')
 
         call_headers = mock_request.call_args[1].get(
@@ -104,7 +104,7 @@ class TestListRepositories(unittest.TestCase):
             'repositories': []
         })
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         client.list_repositories('publicorg')
 
         call_headers = mock_request.call_args[1].get(
@@ -120,7 +120,7 @@ class TestListRepositories(unittest.TestCase):
             '%s/repository' % QUAY_API_BASE,
             401, 'Unauthorized', {})
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         with self.assertRaises(QuayAPIError) as cm:
             client.list_repositories('privateorg')
         self.assertIn('quay.io API token', str(cm.exception))
@@ -140,7 +140,7 @@ class TestListRepositories(unittest.TestCase):
             ]
         })
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         # since_ts = 2024-01-01
         repos = client.list_repositories('kolla', since_ts=1704067200)
 
@@ -158,7 +158,7 @@ class TestListRepositories(unittest.TestCase):
             ]
         })
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         repos = client.list_repositories('kolla', since_ts=None)
 
         self.assertEqual(repos, ['new-repo', 'old-repo'])
@@ -176,7 +176,7 @@ class TestListRepositories(unittest.TestCase):
             ]
         })
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         repos = client.list_repositories('kolla', since_ts=1704067200)
 
         self.assertEqual(repos, [])
@@ -200,7 +200,7 @@ class TestHasTag(unittest.TestCase):
             'has_additional': False,
         })
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         result = client.has_tag('kolla', 'nova-api', 'latest')
 
         self.assertIsNotNone(result)
@@ -222,7 +222,7 @@ class TestHasTag(unittest.TestCase):
             'has_additional': False,
         })
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         result = client.has_tag('kolla', 'nova-api', 'nonexistent')
 
         self.assertIsNone(result)
@@ -235,7 +235,7 @@ class TestHasTag(unittest.TestCase):
             '%s/repository/kolla/bogus/tag/' % QUAY_API_BASE,
             404, 'Not Found', {})
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         result = client.has_tag('kolla', 'bogus', 'latest')
 
         self.assertIsNone(result)
@@ -248,7 +248,7 @@ class TestHasTag(unittest.TestCase):
             '%s/repository/private/repo/tag/' % QUAY_API_BASE,
             401, 'Unauthorized', {})
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         with self.assertRaises(QuayAPIError):
             client.has_tag('private', 'repo', 'latest')
 
@@ -260,7 +260,7 @@ class TestHasTag(unittest.TestCase):
             '%s/repository/kolla/nova-api/tag/' % QUAY_API_BASE,
             500, 'Internal Server Error', {})
 
-        client = QuayClient()
+        client = QuayClient(client=mock.MagicMock())
         with self.assertRaises(util.APIException):
             client.has_tag('kolla', 'nova-api', 'latest')
 
@@ -359,11 +359,17 @@ class TestResolveQuayUri(unittest.TestCase):
             'nova-api', 'keystone', 'glance-api'
         ]
         tag_info = {'name': 'latest', 'start_ts': 1774047466}
-        client.has_tag.side_effect = [tag_info, None, tag_info]
+
+        def has_tag_side_effect(ns, repo, tag):
+            if repo in ('nova-api', 'glance-api'):
+                return tag_info
+            return None
+
+        client.has_tag.side_effect = has_tag_side_effect
 
         results = resolve_quay_uri('kolla', '*', 'latest')
 
-        self.assertEqual(results, [
+        self.assertCountEqual(results, [
             ('quay.io', 'kolla/nova-api', 'latest'),
             ('quay.io', 'kolla/glance-api', 'latest'),
         ])
@@ -381,7 +387,7 @@ class TestResolveQuayUri(unittest.TestCase):
 
         results = resolve_quay_uri('kolla', 'nova-*', 'latest')
 
-        self.assertEqual(results, [
+        self.assertCountEqual(results, [
             ('quay.io', 'kolla/nova-api', 'latest'),
             ('quay.io', 'kolla/nova-scheduler', 'latest'),
         ])
@@ -576,9 +582,15 @@ class TestProcessQuayCommand(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(mock_process_single.call_count, 2)
         # Verify registry:// URIs were constructed
-        first_call_source = mock_process_single.call_args_list[0][0][1]
-        self.assertEqual(first_call_source,
-                         'registry://quay.io/kolla/nova-api:latest')
+        # (order is non-deterministic with concurrent execution)
+        source_uris = {
+            call[0][1]
+            for call in mock_process_single.call_args_list
+        }
+        self.assertEqual(source_uris, {
+            'registry://quay.io/kolla/nova-api:latest',
+            'registry://quay.io/kolla/keystone:latest',
+        })
 
     @mock.patch('occystrap.main._resolve_quay_images')
     def test_process_quay_tar_error(self, mock_resolve):

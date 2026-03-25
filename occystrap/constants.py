@@ -19,12 +19,19 @@ class ImageElement:
             (0-based). Set by inputs when the output does
             not require ordered delivery. None for config
             elements or when ordering is preserved.
+        temp_path: Path to the backing temp file, if any.
+            Outputs may move (rename) this file instead of
+            copying data from the file handle, which avoids
+            the copy entirely on the same filesystem. When
+            an output moves the file, the input must skip
+            its own cleanup of that path.
     """
 
     element_type: str
     name: str
     data: object
     layer_index: int | None = None
+    temp_path: str | None = None
 
 
 # Compression type constants

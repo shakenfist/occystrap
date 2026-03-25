@@ -10,8 +10,10 @@ not available via the standard registry protocol.
 """
 
 import calendar
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 from fnmatch import fnmatch
+import threading
 from urllib.parse import quote
 
 from shakenfist_utilities import logs
@@ -40,36 +42,56 @@ class QuayClient:
             private organizations. Not required for public repos.
     """
 
-    def __init__(self, token=None):
+    def __init__(self, token=None, client=None,
+                 rate_limiter=None):
         self.token = token
+        if client is not None:
+            self._client = client
+            self._rate_limiter = rate_limiter
+            self._own_client = False
+        else:
+            self._client, self._rate_limiter = (
+                util.create_client())
+            self._own_client = True
+
+    def close(self):
+        """Close the httpx client if we own it."""
+        if self._own_client:
+            self._client.close()
 
     def _headers(self):
-        """Build request headers, including auth if a token is set."""
+        """Build request headers, including auth."""
         headers = {}
         if self.token:
-            headers['Authorization'] = 'Bearer %s' % self.token
+            headers['Authorization'] = (
+                'Bearer %s' % self.token)
         return headers
 
     def _request(self, url):
-        """Make an authenticated GET request to the quay.io API.
+        """Make an authenticated GET request to the
+        quay.io API.
 
-        Wraps util.request_url with quay.io auth headers. Translates
-        401 errors into a more helpful message mentioning quay.io
-        API tokens.
+        Uses the httpx client for connection pooling
+        and HTTP/2.
 
         Returns:
-            The requests.Response object.
+            The httpx.Response object.
 
         Raises:
-            QuayAPIError: On authentication failure or unexpected errors.
+            QuayAPIError: On authentication failure.
         """
         try:
-            return util.request_url('GET', url, headers=self._headers())
+            return util.request_url(
+                'GET', url,
+                headers=self._headers(),
+                client=self._client,
+                rate_limiter=self._rate_limiter)
         except util.UnauthorizedException:
             raise QuayAPIError(
-                'Authentication failed for quay.io API. '
-                'Provide a valid quay.io API token for '
-                'accessing private organizations.'
+                'Authentication failed for quay.io'
+                ' API. Provide a valid quay.io API'
+                ' token for accessing private'
+                ' organizations.'
             )
 
     def list_repositories(self, namespace, since_ts=None):
@@ -189,13 +211,60 @@ class QuayClient:
         return None
 
 
-def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
+def _check_one_repo(thread_local, thread_clients,
+                    thread_clients_lock, token,
+                    namespace, repo, tag, since_ts):
+    """Check a single repo for a tag.
+
+    Designed to run in a ThreadPoolExecutor. Each thread
+    gets its own QuayClient (and thus its own httpx.Client)
+    via thread-local storage, because httpx.Client is not
+    thread-safe. New clients are registered in
+    thread_clients for cleanup by the caller.
+
+    Returns:
+        (repo, tag_info) if the tag exists and passes the
+        since filter, or (repo, None) otherwise.
+    """
+    if not hasattr(thread_local, 'client'):
+        thread_local.client = QuayClient(token=token)
+        with thread_clients_lock:
+            thread_clients.append(thread_local.client)
+
+    client = thread_local.client
+    tag_info = client.has_tag(namespace, repo, tag)
+    if not tag_info:
+        return (repo, None)
+
+    if since_ts is not None:
+        tag_ts = tag_info.get('start_ts', 0)
+        if tag_ts < since_ts:
+            tag_date = datetime.date.fromtimestamp(tag_ts)
+            LOG.debug(
+                'Skipping %s/%s: tag %r is from %s, '
+                'before since=%s'
+                % (namespace, repo, tag, tag_date,
+                   datetime.date.fromtimestamp(since_ts)))
+            return (repo, None)
+
+    return (repo, tag_info)
+
+
+def resolve_quay_uri(namespace, repo_glob, tag,
+                     token=None, since=None,
+                     max_workers=4):
     """Resolve a quay:// URI into matching image references.
 
     Lists all repositories in the namespace, filters by the
-    glob pattern, checks tag existence for each match, and
-    returns a list of (registry, image, tag) tuples suitable
-    for constructing registry.Image inputs.
+    glob pattern, checks tag existence for each match in
+    parallel, and returns a list of (registry, image, tag)
+    tuples suitable for constructing registry.Image inputs.
+
+    Each worker thread gets its own httpx.Client via
+    thread-local storage, because httpx.Client is not
+    thread-safe and sharing one client across threads
+    serializes requests through its internal connection
+    pool lock.
 
     Args:
         namespace: Quay.io organization name.
@@ -206,12 +275,16 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
         since: Optional datetime.date. If set, only include
             images whose tag was created/updated on or after
             this date.
+        max_workers: Number of parallel threads for tag
+            resolution (default: 4).
 
     Returns:
         List of ('quay.io', 'namespace/repo', tag) tuples
         for each repo that matches the glob and has the tag.
     """
-    client = QuayClient(token=token)
+    # Use a dedicated client for the sequential listing
+    # phase (single-threaded, safe).
+    listing_client = QuayClient(token=token)
 
     # Convert since date to unix timestamp for comparison
     since_ts = None
@@ -221,37 +294,51 @@ def resolve_quay_uri(namespace, repo_glob, tag, token=None, since=None):
     # Pass since_ts to list_repositories so stale repos are
     # filtered during listing, avoiding expensive per-repo
     # tag checks.
-    all_repos = client.list_repositories(
+    all_repos = listing_client.list_repositories(
         namespace, since_ts=since_ts)
+    listing_client.close()
 
     # Filter by glob pattern
     matching_repos = [r for r in all_repos if fnmatch(r, repo_glob)]
     LOG.info('Glob %r matched %d of %d repositories'
              % (repo_glob, len(matching_repos), len(all_repos)))
 
-    # Check tag existence for each matching repo
+    # Check tag existence in parallel. Each thread gets
+    # its own QuayClient (and httpx.Client) via
+    # thread-local storage so requests are truly
+    # concurrent.
+    if matching_repos:
+        LOG.info(
+            'Checking tag %r for %d repositories '
+            '(%d workers)...'
+            % (tag, len(matching_repos), max_workers))
+
+    thread_local = threading.local()
+    thread_clients = []
+    thread_clients_lock = threading.Lock()
     results = []
-    for i, repo in enumerate(matching_repos):
-        LOG.info('Checking tag %r for repo %d of %d: %s/%s'
-                 % (tag, i + 1, len(matching_repos),
-                    namespace, repo))
-        tag_info = client.has_tag(namespace, repo, tag)
-        if not tag_info:
-            continue
+    try:
+        with ThreadPoolExecutor(
+                max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _check_one_repo, thread_local,
+                    thread_clients, thread_clients_lock,
+                    token, namespace, repo, tag,
+                    since_ts): repo
+                for repo in matching_repos
+            }
+            for future in as_completed(futures):
+                repo, tag_info = future.result()
+                if tag_info is not None:
+                    results.append((
+                        'quay.io',
+                        '%s/%s' % (namespace, repo),
+                        tag))
+    finally:
+        for client in thread_clients:
+            client.close()
 
-        # Filter by tag age if since is set
-        if since_ts is not None:
-            tag_ts = tag_info.get('start_ts', 0)
-            if tag_ts < since_ts:
-                tag_date = datetime.date.fromtimestamp(tag_ts)
-                LOG.debug(
-                    'Skipping %s/%s: tag %r is from %s, '
-                    'before since=%s'
-                    % (namespace, repo, tag, tag_date, since))
-                continue
-
-        results.append(('quay.io', '%s/%s' % (namespace, repo), tag))
-
-    LOG.info('Found %d images matching %s/%s:%s'
-             % (len(results), namespace, repo_glob, tag))
+    LOG.info('Found %d of %d repositories with tag %s'
+             % (len(results), len(matching_repos), tag))
     return results

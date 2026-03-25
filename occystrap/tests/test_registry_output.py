@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import httpx
+
 from occystrap import constants
 from occystrap.layer_cache import LayerCache
 from occystrap.outputs import registry as output_registry
@@ -20,8 +22,9 @@ class RegistryWriterTestCase(unittest.TestCase):
 
     def test_initialization(self):
         """Test RegistryWriter initializes with correct attributes."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
         self.assertEqual('ghcr.io', writer.registry)
         self.assertEqual('myuser/myimage', writer.image)
         self.assertEqual('v1.0', writer.tag)
@@ -32,88 +35,92 @@ class RegistryWriterTestCase(unittest.TestCase):
 
     def test_initialization_with_max_workers(self):
         """Test RegistryWriter accepts max_workers parameter."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=8)
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=8, client=mock_client)
         self.assertEqual(8, writer.max_workers)
 
     def test_initialization_with_auth(self):
         """Test RegistryWriter accepts authentication credentials."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0',
-            username='user', password='token')
+            username='user', password='token', client=mock_client)
         self.assertEqual('user', writer.username)
         self.assertEqual('token', writer.password)
 
     def test_initialization_insecure(self):
         """Test RegistryWriter can use HTTP (insecure mode)."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'localhost:5000', 'myimage', 'latest', secure=False)
+            'localhost:5000', 'myimage', 'latest', secure=False, client=mock_client)
         self.assertFalse(writer.secure)
         self.assertEqual('http', writer._moniker)
 
     def test_fetch_callback_always_true(self):
         """Test that fetch_callback always returns True."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
         self.assertTrue(writer.fetch_callback('abc123'))
         self.assertTrue(writer.fetch_callback('def456'))
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_blob_exists_check(self, mock_request):
+    def test_blob_exists_check(self):
         """Test that _blob_exists correctly checks blob existence."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
 
         mock_response = mock.MagicMock()
         mock_response.status_code = 200
-        mock_request.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
         exists = writer._blob_exists('sha256:abc123')
 
         self.assertTrue(exists)
-        mock_request.assert_called_once()
-        call_args = mock_request.call_args
+        mock_client.request.assert_called_once()
+        call_args = mock_client.request.call_args
         self.assertEqual('HEAD', call_args[0][0])
         self.assertIn('sha256:abc123', call_args[0][1])
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_blob_not_exists(self, mock_request):
+    def test_blob_not_exists(self):
         """Test that _blob_exists returns False for missing blobs."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
 
         mock_response = mock.MagicMock()
         mock_response.status_code = 404
-        mock_request.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
         exists = writer._blob_exists('sha256:abc123')
 
         self.assertFalse(exists)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_upload_blob_skips_existing(self, mock_request):
+    def test_upload_blob_skips_existing(self):
         """Test that _upload_blob skips blobs that already exist."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
 
         mock_response = mock.MagicMock()
         mock_response.status_code = 200
-        mock_request.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
         data = io.BytesIO(b'test data')
         writer._upload_blob('sha256:abc123', data, 9)
 
         # Should only make HEAD request, not POST/PUT
-        self.assertEqual(1, mock_request.call_count)
-        call_args = mock_request.call_args
+        self.assertEqual(1, mock_client.request.call_count)
+        call_args = mock_client.request.call_args
         self.assertEqual('HEAD', call_args[0][0])
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_upload_blob_new(self, mock_request):
+    def test_upload_blob_new(self):
         """Test uploading a new blob."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0',
-            max_workers=1)
+            max_workers=1, client=mock_client)
 
         def handler(method, url, **kwargs):
             resp = mock.MagicMock()
@@ -130,26 +137,26 @@ class RegistryWriterTestCase(unittest.TestCase):
                 resp.status_code = 201
             return resp
 
-        mock_request.side_effect = handler
+        mock_client.request.side_effect = handler
 
         data = io.BytesIO(b'test data')
         writer._upload_blob('sha256:abc123', data, 9)
 
-        self.assertEqual(3, mock_request.call_count)
-        calls = mock_request.call_args_list
+        self.assertEqual(3, mock_client.request.call_count)
+        calls = mock_client.request.call_args_list
         self.assertEqual('HEAD', calls[0][0][0])
         self.assertEqual('POST', calls[1][0][0])
         self.assertEqual('PUT', calls[2][0][0])
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_process_config_file(self, mock_request):
+    def test_process_config_file(self):
         """Test processing a config file element."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
 
         head_response = mock.MagicMock()
         head_response.status_code = 200
-        mock_request.return_value = head_response
+        mock_client.request.return_value = head_response
 
         config_data = json.dumps({
             'architecture': 'amd64',
@@ -172,11 +179,11 @@ class RegistryWriterTestCase(unittest.TestCase):
         self.assertTrue(writer._config_digest.startswith('sha256:'))
         self.assertEqual(len(config_data), writer._config_size)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_process_image_layer(self, mock_request):
+    def test_process_image_layer(self):
         """Test processing an image layer element."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1, client=mock_client)
 
         # Use side_effect to handle different request types
         def mock_request_handler(method, url, **kwargs):
@@ -189,7 +196,7 @@ class RegistryWriterTestCase(unittest.TestCase):
                 response.status_code = 200
             return response
 
-        mock_request.side_effect = mock_request_handler
+        mock_client.request.side_effect = mock_request_handler
 
         # Add config (required for finalize)
         config_data = json.dumps(
@@ -211,8 +218,8 @@ class RegistryWriterTestCase(unittest.TestCase):
         writer.finalize()
 
         # Check manifest was pushed with correct layer info
-        last_call = mock_request.call_args
-        manifest_data = last_call[1]['data']
+        last_call = mock_client.request.call_args
+        manifest_data = last_call[1]['content']
         manifest = json.loads(manifest_data.decode('utf-8'))
 
         self.assertEqual(1, len(manifest['layers']))
@@ -223,11 +230,11 @@ class RegistryWriterTestCase(unittest.TestCase):
         self.assertTrue(layer['digest'].startswith('sha256:'))
         self.assertGreater(layer['size'], 0)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_layer_is_gzip_compressed(self, mock_request):
+    def test_layer_is_gzip_compressed(self):
         """Test that layers are gzip compressed before upload."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1, client=mock_client)
 
         # Use side_effect to handle different request types
         def mock_request_handler(method, url, **kwargs):
@@ -248,7 +255,7 @@ class RegistryWriterTestCase(unittest.TestCase):
                 response.status_code = 200
             return response
 
-        mock_request.side_effect = mock_request_handler
+        mock_client.request.side_effect = mock_request_handler
 
         # Add config (required for finalize)
         config_data = json.dumps(
@@ -280,20 +287,20 @@ class RegistryWriterTestCase(unittest.TestCase):
             compressed.read()).hexdigest()
 
         # Check manifest was pushed with correct layer digest
-        last_call = mock_request.call_args
-        manifest_data = last_call[1]['data']
+        last_call = mock_client.request.call_args
+        manifest_data = last_call[1]['content']
         manifest = json.loads(manifest_data.decode('utf-8'))
 
         self.assertEqual(
             expected_digest, manifest['layers'][0]['digest'])
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_finalize_pushes_manifest(self, mock_request):
+    def test_finalize_pushes_manifest(self):
         """Test that finalize pushes the manifest."""
         # Use max_workers=1 for predictable call ordering
         # with mocks
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1, client=mock_client)
 
         # Use side_effect to handle different request types
         def mock_request_handler(method, url, **kwargs):
@@ -308,7 +315,7 @@ class RegistryWriterTestCase(unittest.TestCase):
                 response.status_code = 200
             return response
 
-        mock_request.side_effect = mock_request_handler
+        mock_client.request.side_effect = mock_request_handler
 
         # Add config
         config_data = json.dumps(
@@ -330,7 +337,7 @@ class RegistryWriterTestCase(unittest.TestCase):
         writer.finalize()
 
         # Verify PUT to manifests endpoint
-        last_call = mock_request.call_args
+        last_call = mock_client.request.call_args
         self.assertEqual('PUT', last_call[0][0])
         self.assertIn('/manifests/v1.0', last_call[0][1])
         self.assertEqual(
@@ -338,25 +345,23 @@ class RegistryWriterTestCase(unittest.TestCase):
             'manifest.v2+json',
             last_call[1]['headers']['Content-Type'])
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_finalize_without_config_raises_error(
-            self, mock_request):
+    def test_finalize_without_config_raises_error(self):
         """Test that finalize raises error if no config was processed."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
 
         with self.assertRaises(Exception) as ctx:
             writer.finalize()
 
         self.assertIn('No config file', str(ctx.exception))
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    @mock.patch('occystrap.outputs.registry.requests.get')
-    def test_authentication_flow(self, mock_get, mock_request):
+    def test_authentication_flow(self):
         """Test Bearer authentication flow."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0',
-            username='user', password='token')
+            username='user', password='token', client=mock_client)
 
         # First request returns 401 with auth challenge
         auth_response = mock.MagicMock()
@@ -373,31 +378,31 @@ class RegistryWriterTestCase(unittest.TestCase):
         token_response.json.return_value = {
             'token': 'test_token'
         }
-        mock_get.return_value = token_response
+        mock_client.get.return_value = token_response
 
         # Retry after auth succeeds
         success_response = mock.MagicMock()
         success_response.status_code = 200
 
-        mock_request.side_effect = [
+        mock_client.request.side_effect = [
             auth_response, success_response
         ]
 
         writer._blob_exists('sha256:abc123')
 
         # Verify token was requested with auth
-        mock_get.assert_called_once()
-        call_kwargs = mock_get.call_args[1]
-        self.assertEqual(
-            ('user', 'token'), call_kwargs['auth'])
+        mock_client.get.assert_called_once()
+        call_kwargs = mock_client.get.call_args[1]
+        auth_obj = call_kwargs['auth']
+        self.assertIsInstance(auth_obj, httpx.BasicAuth)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_manifest_format(self, mock_request):
+    def test_manifest_format(self):
         """Test that manifest has correct format."""
         # Use max_workers=1 for predictable call ordering
         # with mocks
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1, client=mock_client)
 
         # Use side_effect to handle different request types
         def mock_request_handler(method, url, **kwargs):
@@ -412,7 +417,7 @@ class RegistryWriterTestCase(unittest.TestCase):
                 response.status_code = 200
             return response
 
-        mock_request.side_effect = mock_request_handler
+        mock_client.request.side_effect = mock_request_handler
 
         # Process config and layer
         config_data = json.dumps(
@@ -433,8 +438,8 @@ class RegistryWriterTestCase(unittest.TestCase):
         writer.finalize()
 
         # Extract manifest from PUT call
-        last_call = mock_request.call_args
-        manifest_data = last_call[1]['data']
+        last_call = mock_client.request.call_args
+        manifest_data = last_call[1]['content']
         manifest = json.loads(manifest_data.decode('utf-8'))
 
         self.assertEqual(2, manifest['schemaVersion'])
@@ -451,19 +456,19 @@ class RegistryWriterTestCase(unittest.TestCase):
 
     def test_timing_fields_initialized(self):
         """Test that timing fields are initialized to zero."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
         self.assertEqual(0.0, writer._total_compress_time)
         self.assertEqual(0.0, writer._total_upload_time)
         self.assertEqual(0, writer._total_input_bytes)
         self.assertEqual(0, writer._upload_skipped)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_timing_fields_populated_after_finalize(
-            self, mock_request):
+    def test_timing_fields_populated_after_finalize(self):
         """Test that timing fields are populated after processing."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1)
+            'ghcr.io', 'myuser/myimage', 'v1.0', max_workers=1, client=mock_client)
 
         def mock_request_handler(method, url, **kwargs):
             response = mock.MagicMock()
@@ -475,7 +480,7 @@ class RegistryWriterTestCase(unittest.TestCase):
                 response.status_code = 200
             return response
 
-        mock_request.side_effect = mock_request_handler
+        mock_client.request.side_effect = mock_request_handler
 
         config_data = json.dumps(
             {'architecture': 'amd64'}).encode()
@@ -503,27 +508,25 @@ class RegistryWriterTestCase(unittest.TestCase):
         # Blob existed, so upload was skipped
         self.assertEqual(1, writer._upload_skipped)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_upload_blob_returns_true_when_exists(
-            self, mock_request):
+    def test_upload_blob_returns_true_when_exists(self):
         """Test _upload_blob returns True when blob already exists."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
 
         mock_response = mock.MagicMock()
         mock_response.status_code = 200
-        mock_request.return_value = mock_response
+        mock_client.request.return_value = mock_response
 
         result = writer._upload_blob(
             'sha256:abc123', io.BytesIO(b'data'), 4)
         self.assertTrue(result)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_upload_blob_returns_false_when_uploaded(
-            self, mock_request):
+    def test_upload_blob_returns_false_when_uploaded(self):
         """Test _upload_blob returns False when blob is uploaded."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
 
         def handler(method, url, **kwargs):
             resp = mock.MagicMock()
@@ -540,19 +543,18 @@ class RegistryWriterTestCase(unittest.TestCase):
                 resp.status_code = 201
             return resp
 
-        mock_request.side_effect = handler
+        mock_client.request.side_effect = handler
 
         result = writer._upload_blob(
             'sha256:abc123', io.BytesIO(b'data'), 4)
         self.assertFalse(result)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_upload_skipped_count_with_multiple_layers(
-            self, mock_request):
+    def test_upload_skipped_count_with_multiple_layers(self):
         """Test upload_skipped counts correctly with multiple layers."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0',
-            max_workers=1)
+            max_workers=1, client=mock_client)
 
         call_count = [0]
 
@@ -580,7 +582,7 @@ class RegistryWriterTestCase(unittest.TestCase):
                 response.status_code = 200
             return response
 
-        mock_request.side_effect = mock_request_handler
+        mock_client.request.side_effect = mock_request_handler
 
         config_data = json.dumps(
             {'architecture': 'amd64'}).encode()
@@ -619,27 +621,25 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
         return constants.ImageElement(
             element_type, name, data)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_fetch_callback_without_cache(self, mock_request):
+    def test_fetch_callback_without_cache(self):
         """Test fetch_callback returns True without cache."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
         self.assertTrue(writer.fetch_callback('abc123'))
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_fetch_callback_cache_miss(self, mock_request):
+    def test_fetch_callback_cache_miss(self):
         """Test fetch_callback returns True on cache miss."""
         with tempfile.TemporaryDirectory() as d:
             cache = LayerCache(os.path.join(d, 'c.json'))
+            mock_client = mock.MagicMock()
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
-                layer_cache=cache)
+                layer_cache=cache, client=mock_client)
             self.assertTrue(
                 writer.fetch_callback('unknown_hex'))
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_fetch_callback_cache_hit_registry_has_blob(
-            self, mock_request):
+    def test_fetch_callback_cache_hit_registry_has_blob(self):
         """Test fetch_callback returns False on cache hit."""
         with tempfile.TemporaryDirectory() as d:
             cache = LayerCache(os.path.join(d, 'c.json'))
@@ -650,21 +650,20 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                 '.diff.tar.gzip')
 
             # Registry has the blob
+            mock_client = mock.MagicMock()
             mock_response = mock.MagicMock()
             mock_response.status_code = 200
-            mock_request.return_value = mock_response
+            mock_client.request.return_value = mock_response
 
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
-                layer_cache=cache)
+                layer_cache=cache, client=mock_client)
             result = writer.fetch_callback('input1hex')
             self.assertFalse(result)
             self.assertIn('input1hex',
                           writer._cached_layers)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_fetch_callback_cache_hit_registry_missing(
-            self, mock_request):
+    def test_fetch_callback_cache_hit_registry_missing(self):
         """Test fetch_callback returns True when registry lost blob."""
         with tempfile.TemporaryDirectory() as d:
             cache = LayerCache(os.path.join(d, 'c.json'))
@@ -675,18 +674,18 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                 '.diff.tar.gzip')
 
             # Registry does NOT have the blob
+            mock_client = mock.MagicMock()
             mock_response = mock.MagicMock()
             mock_response.status_code = 404
-            mock_request.return_value = mock_response
+            mock_client.request.return_value = mock_response
 
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
-                layer_cache=cache)
+                layer_cache=cache, client=mock_client)
             result = writer.fetch_callback('input1hex')
             self.assertTrue(result)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_cached_layer_in_manifest(self, mock_request):
+    def test_cached_layer_in_manifest(self):
         """Test that cached layers appear correctly in manifest."""
         with tempfile.TemporaryDirectory() as d:
             cache = LayerCache(os.path.join(d, 'c.json'))
@@ -697,6 +696,8 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                 '.diff.tar.gzip')
 
             # Registry has the cached blob
+            mock_client = mock.MagicMock()
+
             def mock_request_handler(
                     method, url, **kwargs):
                 response = mock.MagicMock()
@@ -709,12 +710,12 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                     response.status_code = 200
                 return response
 
-            mock_request.side_effect = (
+            mock_client.request.side_effect = (
                 mock_request_handler)
 
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
-                max_workers=1, layer_cache=cache)
+                max_workers=1, layer_cache=cache, client=mock_client)
 
             # fetch_callback should skip
             self.assertFalse(
@@ -739,9 +740,9 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             writer.finalize()
 
             # Check manifest includes the cached layer
-            last_call = mock_request.call_args
+            last_call = mock_client.request.call_args
             manifest = json.loads(
-                last_call[1]['data'].decode('utf-8'))
+                last_call[1]['content'].decode('utf-8'))
             self.assertEqual(1, len(manifest['layers']))
             self.assertEqual(
                 'sha256:compressed_layer1',
@@ -750,12 +751,13 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                 5000, manifest['layers'][0]['size'])
             self.assertEqual(1, writer._cache_hits)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_cache_saved_after_finalize(self, mock_request):
+    def test_cache_saved_after_finalize(self):
         """Test that cache file is written after finalize."""
         with tempfile.TemporaryDirectory() as d:
             cache_path = os.path.join(d, 'cache.json')
             cache = LayerCache(cache_path)
+
+            mock_client = mock.MagicMock()
 
             def mock_request_handler(
                     method, url, **kwargs):
@@ -769,12 +771,12 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                     response.status_code = 200
                 return response
 
-            mock_request.side_effect = (
+            mock_client.request.side_effect = (
                 mock_request_handler)
 
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
-                max_workers=1, layer_cache=cache)
+                max_workers=1, layer_cache=cache, client=mock_client)
 
             config_data = json.dumps(
                 {'architecture': 'amd64'}).encode()
@@ -804,13 +806,12 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                 entry['compressed_digest'].startswith(
                     'sha256:'))
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_no_cache_backward_compatibility(
-            self, mock_request):
+    def test_no_cache_backward_compatibility(self):
         """Test that registry push works without cache."""
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0',
-            max_workers=1)
+            max_workers=1, client=mock_client)
 
         def mock_request_handler(method, url, **kwargs):
             response = mock.MagicMock()
@@ -823,7 +824,7 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                 response.status_code = 200
             return response
 
-        mock_request.side_effect = mock_request_handler
+        mock_client.request.side_effect = mock_request_handler
 
         config_data = json.dumps(
             {'architecture': 'amd64'}).encode()
@@ -845,9 +846,7 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
         self.assertEqual(0, writer._cache_hits)
         self.assertIsNone(writer._layer_cache)
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_cache_records_under_original_diffid(
-            self, mock_request):
+    def test_cache_records_under_original_diffid(self):
         """Test cache records using original DiffID, not
         filter-transformed name.
 
@@ -859,6 +858,8 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             cache_path = os.path.join(d, 'cache.json')
             cache = LayerCache(cache_path)
+
+            mock_client = mock.MagicMock()
 
             def mock_request_handler(
                     method, url, **kwargs):
@@ -872,12 +873,12 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                     response.status_code = 200
                 return response
 
-            mock_request.side_effect = (
+            mock_client.request.side_effect = (
                 mock_request_handler)
 
             writer = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
-                max_workers=1, layer_cache=cache)
+                max_workers=1, layer_cache=cache, client=mock_client)
 
             # fetch_callback receives original DiffID
             writer.fetch_callback('original_hex')
@@ -921,9 +922,7 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                 'Cache should not have entry for '
                 'filter-transformed name')
 
-    @mock.patch('occystrap.outputs.registry.requests.request')
-    def test_cache_round_trip_with_filter_transform(
-            self, mock_request):
+    def test_cache_round_trip_with_filter_transform(self):
         """Test full round-trip: record under original DiffID,
         then hit on second invocation even though filter would
         transform the name.
@@ -933,6 +932,8 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as d:
             cache_path = os.path.join(d, 'cache.json')
+
+            mock_client = mock.MagicMock()
 
             def mock_request_handler(
                     method, url, **kwargs):
@@ -946,14 +947,14 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
                     response.status_code = 200
                 return response
 
-            mock_request.side_effect = (
+            mock_client.request.side_effect = (
                 mock_request_handler)
 
             # --- First push: record cache entry ---
             cache1 = LayerCache(cache_path)
             w1 = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
-                max_workers=1, layer_cache=cache1)
+                max_workers=1, layer_cache=cache1, client=mock_client)
 
             w1.fetch_callback('original_hex')
 
@@ -978,7 +979,7 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
             cache2 = LayerCache(cache_path)
             w2 = output_registry.RegistryWriter(
                 'ghcr.io', 'myuser/myimage', 'v1.0',
-                max_workers=1, layer_cache=cache2)
+                max_workers=1, layer_cache=cache2, client=mock_client)
 
             # fetch_callback with the original DiffID
             # should find the cache entry and skip
@@ -1017,18 +1018,15 @@ class RegistryWriterOrderedTestCase(unittest.TestCase):
             element_type, name, data,
             layer_index=layer_index)
 
-    @mock.patch(
-        'occystrap.outputs.registry'
-        '.requests.request')
-    def test_layers_with_index_sorted_in_manifest(
-            self, mock_request):
+    def test_layers_with_index_sorted_in_manifest(self):
         """Test layers with layer_index are sorted
         correctly in the pushed manifest, even when
         delivered out of order.
         """
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
             'ghcr.io', 'myuser/myimage', 'v1.0',
-            max_workers=1)
+            max_workers=1, client=mock_client)
 
         def mock_request_handler(
                 method, url, **kwargs):
@@ -1042,7 +1040,7 @@ class RegistryWriterOrderedTestCase(unittest.TestCase):
                 response.status_code = 200
             return response
 
-        mock_request.side_effect = (
+        mock_client.request.side_effect = (
             mock_request_handler)
 
         # Config
@@ -1077,9 +1075,9 @@ class RegistryWriterOrderedTestCase(unittest.TestCase):
         writer.finalize()
 
         # Check manifest layer order
-        last_call = mock_request.call_args
+        last_call = mock_client.request.call_args
         manifest = json.loads(
-            last_call[1]['data'].decode('utf-8'))
+            last_call[1]['content'].decode('utf-8'))
         self.assertEqual(
             3, len(manifest['layers']))
 
@@ -1091,15 +1089,12 @@ class RegistryWriterOrderedTestCase(unittest.TestCase):
         # All layers should be present
         self.assertEqual(3, len(sizes))
 
-    @mock.patch(
-        'occystrap.outputs.registry'
-        '.requests.request')
-    def test_requires_ordered_layers_is_false(
-            self, mock_request):
+    def test_requires_ordered_layers_is_false(self):
         """Test that RegistryWriter declares it does
         not need ordered layers.
         """
+        mock_client = mock.MagicMock()
         writer = output_registry.RegistryWriter(
-            'ghcr.io', 'myuser/myimage', 'v1.0')
+            'ghcr.io', 'myuser/myimage', 'v1.0', client=mock_client)
         self.assertFalse(
             writer.requires_ordered_layers)

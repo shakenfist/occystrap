@@ -426,6 +426,56 @@ occystrap process registry://registry.gitlab.com/mygroup/myimage:latest tar://ou
 For GitLab Container Registry, the username is typically your GitLab username
 and the password is a personal access token with `read_registry` scope.
 
+## HTTP/2 and Connection Pooling
+
+Registry HTTP requests use httpx with automatic HTTP/2 negotiation. When the
+registry supports HTTP/2, occystrap uses it for improved multiplexing and
+reduced latency. If the server does not support HTTP/2, occystrap falls back
+to HTTP/1.1 transparently.
+
+Each `Image`, `RegistryWriter`, and `QuayClient` instance shares a persistent
+httpx connection pool, reducing TCP/TLS handshake overhead across multiple
+requests to the same registry.
+
+Note: Docker daemon communication (docker:// and dockerpush:// inputs,
+docker:// output) still uses requests-unixsocket for Unix domain socket
+access. The httpx migration applies only to registry HTTP traffic.
+
+## Retries and Rate Limiting
+
+HTTP requests to registries are retried on transient failures with exponential
+backoff. You can control the retry count and add rate limiting:
+
+```
+# Set max retries (default: 3)
+occystrap --retries 5 process registry://docker.io/library/busybox:latest tar://busybox.tar
+
+# Limit HTTP requests to 10 per second
+occystrap --rate-limit 10 process registry://docker.io/library/busybox:latest tar://busybox.tar
+
+# Both together
+occystrap --retries 5 --rate-limit 10 \
+    process registry://docker.io/library/busybox:latest tar://busybox.tar
+```
+
+You can also set these via environment variables:
+
+```
+export OCCYSTRAP_RETRIES=5
+export OCCYSTRAP_RATE_LIMIT=10
+occystrap process registry://docker.io/library/busybox:latest tar://busybox.tar
+```
+
+Retry behavior:
+- **429 (Too Many Requests)**: Retried, respects the `Retry-After` header
+  when present, otherwise uses exponential backoff
+- **5xx (Server Errors)**: Retried with exponential backoff
+- **Connection errors**: Retried with exponential backoff
+- **Other errors**: Not retried
+
+The rate limiter uses a token-bucket algorithm and is thread-safe, so it
+correctly throttles requests across parallel download/upload threads.
+
 ## Parallel Downloads and Uploads
 
 When working with registries, occystrap downloads and uploads layers in parallel
@@ -454,6 +504,33 @@ Or via URI query parameter:
 ```
 occystrap process docker://myimage:v1 "registry://myregistry/myimage:v1?max_workers=8"
 ```
+
+## Parallel Image Processing
+
+When processing multiple images from a `quay://` source, occystrap processes them
+concurrently. By default, 3 images are processed in parallel (each using `-j` threads
+for layer downloads, so total threads = `-J` * `-j`):
+
+```
+# Default: 3 images in parallel, each with 4 layer threads
+occystrap process quay://kolla/*:latest dir:///tmp/out?unique_names=true
+
+# Process 5 images at a time
+occystrap -J 5 process quay://kolla/*:latest dir:///tmp/out?unique_names=true
+
+# Sequential image processing (1 at a time)
+occystrap --image-parallel 1 process quay://kolla/*:latest dir:///tmp/out?unique_names=true
+```
+
+You can also set this via environment variable:
+
+```
+export OCCYSTRAP_IMAGE_PARALLEL=5
+```
+
+For detailed guidance on tuning these settings for your workload, see
+[Performance Tuning](docs/performance.md). A benchmark script is provided at
+`tools/benchmark.sh` to measure performance with different settings.
 
 ## Layer Compression
 
@@ -713,5 +790,7 @@ For more detailed documentation, see the [docs/](docs/) directory:
 - [Command Reference](docs/command-reference.md) - Complete CLI reference
 - [Pipeline Architecture](docs/pipeline.md) - How the pipeline works
 - [Use Cases](docs/use-cases.md) - Common scenarios and examples
+- [Performance Tuning](docs/performance.md) - Parallelism flags, recommended
+  settings, and benchmarking
 - [Docker Tarball Formats](docs/docker-tarball-formats.md) - Docker save
   tarball format reference, entry ordering, and the Docker Engine inspect API

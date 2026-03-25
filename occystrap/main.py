@@ -1,5 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import datetime
 import json
+import time
 
 import click
 import logging
@@ -24,6 +26,7 @@ from occystrap.pipeline import PipelineBuilder, PipelineError
 from occystrap import proxy as proxy_module
 from occystrap import quay as quay_module
 from occystrap import uri
+from occystrap import util
 from occystrap.util import format_size
 
 
@@ -58,12 +61,24 @@ LOG = logs.setup_console(__name__)
 @click.option('--output-format', '-O', default='text',
               type=click.Choice(['text', 'json']),
               help='Output format for info/check commands (default: text)')
+@click.option('--retries', default=3, type=int,
+              envvar='OCCYSTRAP_RETRIES',
+              help='Max retries for failed HTTP requests (default: 3)')
+@click.option('--rate-limit', default=None, type=float,
+              envvar='OCCYSTRAP_RATE_LIMIT',
+              help='Max HTTP requests per second (default: unlimited)')
+@click.option('--image-parallel', '-J', default=3, type=int,
+              envvar='OCCYSTRAP_IMAGE_PARALLEL',
+              help='Number of images to process in parallel '
+              'for bulk operations (default: 3)')
 @click.pass_context
 def cli(ctx, verbose=None, debug=None, os=None,
         architecture=None, variant=None,
         username=None, password=None, insecure=None,
         compression=None, parallel=None, temp_dir=None,
-        layer_cache=None, output_format=None):
+        layer_cache=None, output_format=None,
+        retries=None, rate_limit=None,
+        image_parallel=None):
     if debug:
         # Enable debug for all loggers (occystrap +
         # libraries like requests, urllib3, etc.)
@@ -96,9 +111,21 @@ def cli(ctx, verbose=None, debug=None, os=None,
     ctx.obj['TEMP_DIR'] = temp_dir
     ctx.obj['LAYER_CACHE'] = layer_cache
     ctx.obj['OUTPUT_FORMAT'] = output_format
+    ctx.obj['RETRIES'] = retries
+    ctx.obj['RATE_LIMIT'] = rate_limit
+    ctx.obj['IMAGE_PARALLEL'] = image_parallel
 
 
 def _fetch(img, output):
+    """Fetch image elements and write to output.
+
+    Returns a dict of processing statistics.
+    """
+    # Attach request stats if the input supports it
+    stats = util.RequestStats()
+    if hasattr(img, 'stats'):
+        img.stats = stats
+
     ordered = output.requires_ordered_layers
     with redirect_logging():
         for element in img.fetch(
@@ -106,6 +133,20 @@ def _fetch(img, output):
                 ordered=ordered):
             output.process_image_element(element)
         output.finalize()
+
+    # Walk filter chain to find the actual output writer
+    # with tracking stats (filters don't call
+    # _track_element).
+    writer = output
+    while hasattr(writer, '_wrapped') and writer._wrapped:
+        writer = writer._wrapped
+
+    return {
+        'bytes': getattr(writer, '_total_bytes', 0),
+        'layers': getattr(writer, '_layer_count', 0),
+        'retries': stats.retries,
+        'rate_limits': stats.rate_limits,
+    }
 
 
 def _resolve_quay_images(source, ctx):
@@ -144,8 +185,12 @@ def _resolve_quay_images(source, ctx):
             raise uri.URIParseError(
                 'Invalid since date %r, expected YYYY-MM-DD format' % since_str)
 
+    ctx_obj = ctx.obj if ctx and ctx.obj else {}
+    max_workers = ctx_obj.get('MAX_WORKERS', 4)
+
     return quay_module.resolve_quay_uri(
-        namespace, repo_glob, tag, token=token, since=since)
+        namespace, repo_glob, tag, token=token,
+        since=since, max_workers=max_workers)
 
 
 # =============================================================================
@@ -153,12 +198,36 @@ def _resolve_quay_images(source, ctx):
 # =============================================================================
 
 
+def _print_summary(total_images, succeeded, failed_count,
+                   total_layers, total_bytes, elapsed,
+                   retries, rate_limits):
+    """Print a processing summary to stderr."""
+    parts = []
+    if total_images > 1:
+        parts.append(
+            '%d/%d images' % (succeeded, total_images))
+    parts.append('%d layers' % total_layers)
+    parts.append(format_size(total_bytes))
+    parts.append('%.1fs' % elapsed)
+    if retries:
+        parts.append('%d retries' % retries)
+    if rate_limits:
+        parts.append('%d rate limits' % rate_limits)
+    if failed_count:
+        parts.append('%d failed' % failed_count)
+
+    click.echo('Summary: %s' % ', '.join(parts), err=True)
+
+
 def _process_single(ctx, source, destination, filters):
-    """Process a single image through the pipeline."""
+    """Process a single image through the pipeline.
+
+    Returns a dict of processing statistics.
+    """
     builder = PipelineBuilder(ctx)
     input_source, output = builder.build_pipeline(
         source, destination, list(filters))
-    _fetch(input_source, output)
+    stats = _fetch(input_source, output)
 
     # Handle post-processing for certain outputs
     if hasattr(output, 'write_bundle'):
@@ -167,6 +236,8 @@ def _process_single(ctx, source, destination, filters):
             output.write_bundle()
         elif dest_spec.scheme == 'dir' and dest_spec.options.get('expand'):
             output.write_bundle()
+
+    return stats
 
 
 def _process_multi(ctx, images, source, destination, filters):
@@ -199,29 +270,72 @@ def _process_multi(ctx, images, source, destination, filters):
             % dest_spec.path,
             err=True)
 
-    failed = []
-    for i, (registry, image, tag) in enumerate(images):
-        click.echo(
-            '(%d/%d) Processing %s/%s:%s'
-            % (i + 1, len(images), registry, image, tag),
-            err=True)
-        source_uri = 'registry://%s/%s:%s' % (registry, image, tag)
-        try:
-            _process_single(ctx, source_uri, destination, filters)
-        except Exception as e:
-            LOG.error('Failed to process %s/%s:%s: %s'
-                      % (registry, image, tag, e))
-            failed.append('%s/%s:%s' % (registry, image, tag))
-
+    image_parallel = ctx.obj.get('IMAGE_PARALLEL', 3)
     click.echo(
-        'Processed %d of %d images'
-        % (len(images) - len(failed), len(images)),
+        'Processing %d images (%d parallel)...'
+        % (len(images), image_parallel),
         err=True)
+
+    def _process_one(registry, image, tag):
+        source_uri = 'registry://%s/%s:%s' % (
+            registry, image, tag)
+        return _process_single(
+            ctx, source_uri, destination, filters)
+
+    failed = []
+    done = 0
+    total_bytes = 0
+    total_layers = 0
+    total_retries = 0
+    total_rate_limits = 0
+    start_time = time.time()
+
+    with ThreadPoolExecutor(
+            max_workers=image_parallel) as executor:
+        futures = {}
+        for registry, image, tag in images:
+            name = '%s/%s:%s' % (registry, image, tag)
+            future = executor.submit(
+                _process_one, registry, image, tag)
+            futures[future] = name
+
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                image_stats = future.result()
+                done += 1
+                if isinstance(image_stats, dict):
+                    total_bytes += image_stats.get(
+                        'bytes', 0)
+                    total_layers += image_stats.get(
+                        'layers', 0)
+                    total_retries += image_stats.get(
+                        'retries', 0)
+                    total_rate_limits += image_stats.get(
+                        'rate_limits', 0)
+                click.echo(
+                    '[%d/%d] %s'
+                    % (done + len(failed),
+                       len(images), name),
+                    err=True)
+            except Exception as e:
+                LOG.error(
+                    'Failed to process %s: %s'
+                    % (name, e))
+                failed.append(name)
+
+    elapsed = time.time() - start_time
+    _print_summary(
+        len(images), done, len(failed),
+        total_layers, total_bytes, elapsed,
+        total_retries, total_rate_limits)
     if failed:
         click.echo('Failed images:', err=True)
         for name in failed:
             click.echo('  %s' % name, err=True)
         sys.exit(1)
+    else:
+        click.echo('No failed images.', err=True)
 
 
 @click.command('process')
@@ -273,7 +387,18 @@ def process_cmd(ctx, source, destination, filters):
         if images is not None:
             _process_multi(ctx, images, source, destination, filters)
         else:
-            _process_single(ctx, source, destination, filters)
+            start_time = time.time()
+            stats = _process_single(
+                ctx, source, destination, filters)
+            elapsed = time.time() - start_time
+            if isinstance(stats, dict):
+                _print_summary(
+                    1, 1, 0,
+                    stats.get('layers', 0),
+                    stats.get('bytes', 0),
+                    elapsed,
+                    stats.get('retries', 0),
+                    stats.get('rate_limits', 0))
 
     except (PipelineError, uri.URIParseError,
             quay_module.QuayAPIError) as e:
@@ -603,27 +728,40 @@ def _info_multi(ctx, images, source):
 
     output_format = ctx.obj.get(
         'OUTPUT_FORMAT', 'text')
+    image_parallel = ctx.obj.get('IMAGE_PARALLEL', 3)
 
-    all_infos = []
-    for i, (registry, image, tag) in enumerate(images):
-        click.echo(
-            '(%d/%d) %s/%s:%s'
-            % (i + 1, len(images), registry, image, tag),
-            err=True)
-        source_uri = 'registry://%s/%s:%s' % (registry, image, tag)
+    def _info_one(registry, image, tag):
+        source_uri = 'registry://%s/%s:%s' % (
+            registry, image, tag)
         builder = PipelineBuilder(ctx)
         source_spec = uri.parse_uri(source_uri)
         input_source = builder.build_input(source_spec)
         try:
-            all_infos.append(_build_info(input_source))
+            return _build_info(input_source)
         except Exception as e:
-            LOG.error('Failed to fetch info for %s/%s:%s: %s'
-                      % (registry, image, tag, e))
-            all_infos.append({
+            LOG.error(
+                'Failed to fetch info for '
+                '%s/%s:%s: %s'
+                % (registry, image, tag, e))
+            return {
                 'image': image,
                 'tag': tag,
                 'error': str(e),
-            })
+            }
+
+    all_infos = [None] * len(images)
+    with ThreadPoolExecutor(
+            max_workers=image_parallel) as executor:
+        futures = {}
+        for i, (registry, image, tag) in enumerate(
+                images):
+            future = executor.submit(
+                _info_one, registry, image, tag)
+            futures[future] = i
+
+        for future in as_completed(futures):
+            idx = futures[future]
+            all_infos[idx] = future.result()
 
     if output_format == 'json':
         click.echo(json.dumps(all_infos, indent=2))

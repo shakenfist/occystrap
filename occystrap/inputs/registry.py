@@ -13,7 +13,8 @@ import hashlib
 import io
 import os
 import re
-from requests.exceptions import ChunkedEncodingError, ConnectionError
+
+import httpx
 from shakenfist_utilities import logs
 import tempfile
 import threading
@@ -26,19 +27,20 @@ from occystrap.inputs.base import (
     ImageInput, ImageInputError, always_fetch)
 from occystrap.progress import LayerProgress
 
-# Retry configuration
-MAX_RETRIES = 3
-RETRY_BACKOFF_BASE = 2  # Exponential backoff: 2^attempt seconds
-
 LOG = logs.setup_console(__name__)
 
 DELETED_FILE_RE = re.compile(r'.*/\.wh\.(.*)$')
 
 
-class Image(ImageInput):
-    def __init__(self, registry, image, tag, os='linux', architecture='amd64',
-                 variant='', secure=True, username=None, password=None,
-                 max_workers=4, temp_dir=None):
+class Image(ImageInput, util.ThreadSafeClientMixin):
+    def __init__(self, registry, image, tag,
+                 os='linux', architecture='amd64',
+                 variant='', secure=True,
+                 username=None, password=None,
+                 max_workers=4, temp_dir=None,
+                 client=None, rate_limiter=None,
+                 retries=util.MAX_RETRIES,
+                 stats=None):
         self.registry = registry
         self._image = image
         self._tag = tag
@@ -50,12 +52,31 @@ class Image(ImageInput):
         self.password = password
         self.max_workers = max_workers
         self.temp_dir = temp_dir
+        self._retries = retries
+        self.stats = stats
 
         self._cached_auth = None
         self._auth_lock = threading.Lock()
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._executor = ThreadPoolExecutor(
+            max_workers=max_workers)
 
-        # Cached manifest and config for get_manifest()/get_config()
+        # httpx client for connection pooling and HTTP/2.
+        # httpx.Client is not thread-safe, so we use
+        # per-thread clients for parallel downloads while
+        # sharing the auth token via _auth_lock.
+        self._rate_limit_cfg = rate_limiter
+        if client is not None:
+            self._client = client
+            self._rate_limiter = rate_limiter
+            self._own_client = False
+        else:
+            self._client, self._rate_limiter = (
+                util.create_client())
+            self._own_client = True
+
+        self._init_thread_clients()
+
+        # Cached manifest and config
         self._manifest = None
         self._manifest_media_type = None
         self._config = None
@@ -76,41 +97,72 @@ class Image(ImageInput):
         """Return the image tag."""
         return self._tag
 
-    def request_url(self, method, url, headers=None, data=None, stream=False):
+    def request_url(self, method, url, headers=None,
+                    data=None, stream=False):
         """Make an authenticated request to the registry.
 
-        Thread-safe: uses _auth_lock to protect _cached_auth updates.
+        Thread-safe: uses _auth_lock to protect
+        _cached_auth updates. Uses per-thread httpx
+        clients for true concurrent downloads.
         """
         if not headers:
             headers = {}
 
         with self._auth_lock:
             if self._cached_auth:
-                headers.update({'Authorization': 'Bearer %s' % self._cached_auth})
+                headers.update({
+                    'Authorization':
+                    'Bearer %s' % self._cached_auth})
+
+        # Use per-thread client for thread safety
+        client, limiter = self._get_thread_client()
 
         try:
-            return util.request_url(method, url, headers=headers, data=data,
-                                    stream=stream)
+            return util.request_url(
+                method, url, headers=headers,
+                data=data, stream=stream,
+                client=client,
+                rate_limiter=limiter,
+                retries=self._retries,
+                stats=self.stats)
         except util.UnauthorizedException as e:
-            auth_re = re.compile('Bearer realm="([^"]*)",service="([^"]*)"')
-            m = auth_re.match(e.args[5].get('Www-Authenticate', ''))
+            auth_re = re.compile(
+                'Bearer realm="([^"]*)",'
+                'service="([^"]*)"')
+            m = auth_re.match(
+                e.args[5].get('Www-Authenticate', ''))
             if m:
-                auth_url = ('%s?service=%s&scope=repository:%s:pull'
-                            % (m.group(1), m.group(2), self.image))
-                # If credentials are provided, use Basic auth for token request
+                auth_url = (
+                    '%s?service=%s'
+                    '&scope=repository:%s:pull'
+                    % (m.group(1), m.group(2),
+                       self.image))
                 if self.username and self.password:
                     r = util.request_url(
                         'GET', auth_url,
-                        auth=(self.username, self.password))
+                        auth=(self.username,
+                              self.password),
+                        client=client,
+                        rate_limiter=limiter)
                 else:
-                    r = util.request_url('GET', auth_url)
+                    r = util.request_url(
+                        'GET', auth_url,
+                        client=client,
+                        rate_limiter=limiter)
                 token = r.json().get('token')
-                headers.update({'Authorization': 'Bearer %s' % token})
+                headers.update({
+                    'Authorization':
+                    'Bearer %s' % token})
                 with self._auth_lock:
                     self._cached_auth = token
 
             return util.request_url(
-                method, url, headers=headers, data=data, stream=stream)
+                method, url, headers=headers,
+                data=data, stream=stream,
+                client=client,
+                rate_limiter=limiter,
+                retries=self._retries,
+                stats=self.stats)
 
     def _url_scheme(self):
         """Return 'https' or 'http' based on self.secure."""
@@ -277,28 +329,29 @@ class Image(ImageInput):
             compression_type = constants.COMPRESSION_GZIP
         LOG.debug('Layer compression: %s' % compression_type)
 
-        # Retry logic for streaming downloads which can fail mid-transfer
+        # Retry logic for streaming downloads which
+        # can fail mid-transfer
         last_exception = None
-        for attempt in range(MAX_RETRIES + 1):
+        retries = self._retries
+        for attempt in range(retries + 1):
             tf = None
             try:
                 r = self.request_url(
                     'GET',
-                    '%(moniker)s://%(registry)s/v2/%(image)s/blobs/%(layer)s'
-                    % {
-                        'moniker': moniker,
-                        'registry': self.registry,
-                        'image': self.image,
-                        'layer': layer['digest']
-                    },
+                    '%s://%s/v2/%s/blobs/%s'
+                    % (moniker, self.registry,
+                       self.image, layer['digest']),
                     stream=True)
 
-                # Use streaming decompressor based on detected compression.
                 h = hashlib.sha256()
-                d = compression.StreamingDecompressor(compression_type)
+                d = compression.StreamingDecompressor(
+                    compression_type)
 
-                tf = tempfile.NamedTemporaryFile(delete=False, dir=self.temp_dir)
-                LOG.debug('Temporary file for layer is %s' % tf.name)
+                tf = tempfile.NamedTemporaryFile(
+                    delete=False, dir=self.temp_dir)
+                LOG.debug(
+                    'Temporary file for layer is %s'
+                    % tf.name)
                 with LayerProgress(
                         total=layer['size'],
                         desc='Layer %s'
@@ -306,49 +359,64 @@ class Image(ImageInput):
                         unit='B',
                         unit_scale=True,
                         log_level='debug') as progress:
-                    for chunk in r.iter_content(8192):
+                    for chunk in r.iter_bytes(8192):
                         tf.write(d.decompress(chunk))
                         h.update(chunk)
                         progress.update(len(chunk))
-                # Flush any remaining data
+                r.close()
+
                 remaining = d.flush()
                 if remaining:
                     tf.write(remaining)
                 tf.close()
 
                 if h.hexdigest() != layer_filename:
-                    LOG.error('Hash verification failed for layer (%s vs %s)'
-                              % (layer_filename, h.hexdigest()))
+                    LOG.error(
+                        'Hash verification failed for'
+                        ' layer (%s vs %s)'
+                        % (layer_filename,
+                           h.hexdigest()))
                     os.unlink(tf.name)
-                    raise Exception('Hash verification failed for layer %s'
-                                    % layer_filename)
+                    raise Exception(
+                        'Hash verification failed for'
+                        ' layer %s' % layer_filename)
 
                 return (layer_filename, tf.name)
 
-            except (ChunkedEncodingError, ConnectionError) as e:
+            except (httpx.ConnectError,
+                    httpx.RemoteProtocolError,
+                    httpx.ReadError) as e:
                 last_exception = e
-                # Clean up temp file if it exists
-                if tf is not None and tf.name and os.path.exists(tf.name):
+                if tf is not None and tf.name \
+                        and os.path.exists(tf.name):
                     try:
                         tf.close()
                     except Exception:
                         pass
                     os.unlink(tf.name)
 
-                if attempt < MAX_RETRIES:
-                    wait_time = RETRY_BACKOFF_BASE ** attempt
+                if attempt < retries:
+                    if self.stats:
+                        self.stats.record_retry()
+                    wait_time = (
+                        util.RETRY_BACKOFF_BASE
+                        ** attempt)
                     LOG.warning(
-                        'Layer download failed (attempt %d/%d): %s. '
+                        'Layer download failed '
+                        '(attempt %d/%d): %s. '
                         'Retrying in %d seconds...'
-                        % (attempt + 1, MAX_RETRIES + 1, str(e), wait_time))
+                        % (attempt + 1, retries + 1,
+                           str(e), wait_time))
                     time.sleep(wait_time)
                 else:
-                    LOG.error('Layer download failed after %d attempts: %s'
-                              % (MAX_RETRIES + 1, str(e)))
+                    LOG.error(
+                        'Layer download failed after'
+                        ' %d attempts: %s'
+                        % (retries + 1, str(e)))
                     raise last_exception
 
-        # Should not reach here, but just in case
-        raise Exception('Layer download failed unexpectedly')
+        raise Exception(
+            'Layer download failed unexpectedly')
 
     def fetch(self, fetch_callback=always_fetch,
               ordered=True):
@@ -425,10 +493,13 @@ class Image(ImageInput):
                                 constants.ImageElement(
                                     constants.IMAGE_LAYER,
                                     result_filename, f,
-                                    layer_index=layer_idx
+                                    layer_index=layer_idx,
+                                    temp_path=temp_file_path
                                 )
                     finally:
-                        os.unlink(temp_file_path)
+                        if os.path.exists(
+                                temp_file_path):
+                            os.unlink(temp_file_path)
                 except Exception:
                     for ft in future_map:
                         ft.cancel()
@@ -455,9 +526,12 @@ class Image(ImageInput):
                                     constants.ImageElement(
                                         constants.IMAGE_LAYER,
                                         result_filename,
-                                        f)
+                                        f,
+                                        temp_path=temp_file_path)
                         finally:
-                            os.unlink(temp_file_path)
+                            if os.path.exists(
+                                    temp_file_path):
+                                os.unlink(temp_file_path)
                     except Exception:
                         for _, _, remaining_future \
                                 in layer_futures:
@@ -466,4 +540,7 @@ class Image(ImageInput):
                                 remaining_future.cancel()
                         raise
 
+        self._close_thread_clients()
+        if self._own_client:
+            self._client.close()
         LOG.info('Done')

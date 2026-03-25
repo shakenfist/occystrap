@@ -78,6 +78,10 @@ deploy/
 pyproject.toml               # Build config (setuptools + setuptools_scm)
 tox.ini                      # Test runner configuration
 
+tools/
+    benchmark.sh             # Performance benchmark script
+    check-log-levels.sh      # Pre-commit log verbosity checker
+
 .github/
     workflows/
         codeql-analysis.yml    # CodeQL security scanning
@@ -221,7 +225,9 @@ Output writer implementations:
   with parallel layer uploads using ThreadPoolExecutor
 - `outputs/tarfile.py` - Creates docker-loadable tarballs (v1.2 format)
 - `outputs/directory.py` - Extracts to directory with optional layer deduplication;
-  uses `safe_path_join()` to prevent path traversal (CWE-22)
+  uses `safe_path_join()` to prevent path traversal (CWE-22); uses `os.rename()`
+  to move temp files to their final location when `temp_path` is available,
+  avoiding the read/write copy loop
 - `outputs/ocibundle.py` - Creates OCI runtime bundles for runc (inherits from
   DirWriter); uses `safe_path_join()` for user-controlled paths
 - `outputs/mounts.py` - Creates overlay mount-based extraction; uses
@@ -239,6 +245,7 @@ class ImageElement:
     name: str           # Filename or digest hash
     data: object        # File-like object or None (skipped)
     layer_index: int | None = None  # Manifest position
+    temp_path: str | None = None    # Backing temp file path
 ```
 
 Element types:
@@ -249,6 +256,14 @@ The `layer_index` field is set when layers are delivered out of order
 (i.e., when the output's `requires_ordered_layers` is `False`). Outputs
 use this index to reconstruct the correct manifest layer order at
 `finalize()` time.
+
+The `temp_path` field carries the path to the backing temp file when the
+element's data is backed by a temp file on disk. Outputs that write to a
+directory (e.g., `DirWriter`) can use `os.rename()` to move the temp file
+to its final location instead of copying data through a read/write loop.
+This is O(1) on the same filesystem. When an output moves the temp file,
+the input's `finally` block skips the `os.unlink()` (the file no longer
+exists at the original path).
 
 ### The `info` Command
 
@@ -358,7 +373,7 @@ resolve_quay_uri('kolla', '*', 'latest')
     │
     ├── QuayClient.list_repositories('kolla')     ← quay.io API v1
     ├── fnmatch filter by glob pattern
-    ├── QuayClient.has_tag('kolla', repo, 'latest') for each match
+    ├── QuayClient.has_tag('kolla', repo, 'latest') for each match (parallel)
     │
     ▼
 [('quay.io', 'kolla/nova-api', 'latest'),
@@ -366,8 +381,9 @@ resolve_quay_uri('kolla', '*', 'latest')
  ...]
     │
     ▼
-For each tuple: build a standard registry.Image input
-and run through the existing pipeline
+For each tuple (concurrently, up to -J workers):
+build a standard registry.Image input and run
+through the existing pipeline
 ```
 
 ### Module: `occystrap/quay.py`
@@ -377,15 +393,29 @@ and run through the existing pipeline
   cursor tokens) and `has_tag()` (uses `specificTag` filter). Accepts
   an optional bearer token for private organizations.
 - `resolve_quay_uri()` - Orchestrates the discovery flow: lists repos,
-  filters by glob, checks tags, returns tuples.
+  filters by glob, checks tags in parallel via `ThreadPoolExecutor`
+  (concurrency controlled by `-j` flag), returns tuples.
+- `_check_one_repo()` - Per-repo tag check helper, designed to run in
+  the thread pool. Handles tag existence and since-date filtering.
 
 ### Command Integration
 
 The `info` and `process` commands in `main.py` detect the `quay` scheme
 before calling `PipelineBuilder`. A helper `_resolve_quay_images()`
-parses the URI and runs the resolver. The commands then loop over the
-results, creating a fresh `registry.Image` input and pipeline for each
-image. The `PipelineBuilder` itself has no knowledge of `quay://`.
+parses the URI and runs the resolver. The commands then process images
+concurrently using `ThreadPoolExecutor` (controlled by the `-J` /
+`--image-parallel` flag, default 3), creating a fresh `registry.Image`
+input and pipeline for each image. Each image gets its own independent
+output writer instance.  The `PipelineBuilder` itself has no knowledge
+of `quay://`.
+
+Thread safety for concurrent multi-image processing:
+- `DirWriter` with `unique_names=true`: each image writes to its own
+  manifest file. `catalog.json` updates are serialized via a module-level
+  `threading.Lock`.
+- `RegistryWriter`: each image has its own instance with independent
+  `httpx.Client` and thread pool.
+- `LayerCache`: already thread-safe via `threading.Lock`.
 
 ## Key Concepts
 
@@ -798,6 +828,89 @@ compressed output with the same SHA256 digest.
 Media type constants in `constants.py` define Docker and OCI layer types:
 - `MEDIA_TYPE_DOCKER_LAYER_GZIP` / `MEDIA_TYPE_DOCKER_LAYER_ZSTD`
 - `MEDIA_TYPE_OCI_LAYER_GZIP` / `MEDIA_TYPE_OCI_LAYER_ZSTD`
+
+## HTTP Layer
+
+Registry HTTP communication uses httpx (`util.py`), providing connection pooling,
+HTTP/2 support, and structured retry/rate-limiting.
+
+### httpx and Connection Pooling
+
+All registry-facing HTTP requests go through `util.request_url()`, which uses
+httpx instead of requests. Since `httpx.Client` is not thread-safe, each
+worker thread in a `ThreadPoolExecutor` gets its own client via the
+`ThreadSafeClientMixin` in `util.py`. The main thread is seeded with the
+primary client, and worker threads lazily create their own:
+
+```python
+# util.py — shared mixin used by Image and RegistryWriter
+class ThreadSafeClientMixin:
+    def _init_thread_clients(self): ...
+    def _get_thread_client(self): ...
+    def _close_thread_clients(self): ...
+```
+
+The `create_client()` factory in `util.py` creates each client with connection
+pooling and optional HTTP/2:
+
+```python
+limits = httpx.Limits(
+    max_connections=20,
+    max_keepalive_connections=10)
+client = httpx.Client(
+    http2=True,
+    limits=limits,
+    follow_redirects=True,
+    timeout=httpx.Timeout(30.0, connect=10.0))
+```
+
+When no client is provided to `request_url()`, a temporary client is created
+and closed after the request — this is the fallback for one-off calls.
+
+**Docker daemon communication** (`inputs/docker.py`, `inputs/dockerpush.py`,
+`outputs/docker.py`) still uses `requests-unixsocket` for Unix domain socket
+access, since httpx does not natively support Unix sockets. This code is not
+affected by the httpx migration.
+
+### HTTP/2
+
+httpx negotiates HTTP/2 via ALPN during TLS handshake. If the registry
+supports HTTP/2, it is used automatically; otherwise, httpx falls back to
+HTTP/1.1. HTTP/2 provides multiplexed streams over a single connection, which
+can reduce latency when many requests are in flight (e.g., parallel layer
+downloads/uploads).
+
+### Retry Logic
+
+`request_url()` retries on transient failures with exponential backoff
+(base 2 seconds):
+
+- **429 (Too Many Requests)**: Respects the `Retry-After` header when present;
+  otherwise uses exponential backoff. Retried up to `retries` times.
+- **5xx (Server Errors)**: Retried with exponential backoff.
+- **Connection errors** (`httpx.ConnectError`, `httpx.RemoteProtocolError`,
+  `httpx.ReadError`): Retried with exponential backoff.
+
+The retry count defaults to 3 and is configurable via the `--retries` CLI
+flag or `OCCYSTRAP_RETRIES` environment variable.
+
+### Rate Limiting
+
+The `RateLimiter` class in `util.py` implements a simple token-bucket algorithm
+that enforces a maximum request rate (requests per second). It is thread-safe,
+using a lock to ensure correct spacing across parallel download/upload threads.
+
+Rate limiting is enabled via the `--rate-limit` CLI flag or
+`OCCYSTRAP_RATE_LIMIT` environment variable. When set, every call to
+`request_url()` calls `rate_limiter.acquire()` before making the HTTP request,
+blocking if needed to maintain the configured rate.
+
+### CLI Integration
+
+The `--retries` and `--rate-limit` global CLI options are stored in the Click
+context and passed through `PipelineBuilder` to `Image`, `RegistryWriter`, and
+`QuayClient` constructors, which forward them to `create_client()` and
+`request_url()`.
 
 ## Data Flow
 

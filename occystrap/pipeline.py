@@ -23,6 +23,7 @@ from occystrap.filters import (
     ExcludeFilter, InspectFilter, TimestampNormalizer, SearchFilter
 )
 from occystrap import uri
+from occystrap import util
 
 
 class PipelineError(Exception):
@@ -87,6 +88,9 @@ class PipelineBuilder:
                 'max_workers', self._get_ctx('MAX_WORKERS', 4))
             temp_dir = self._get_ctx('TEMP_DIR')
 
+            retries = self._get_ctx('RETRIES', 3)
+            rate_limit = self._get_ctx('RATE_LIMIT')
+
             return input_registry.Image(
                 host, image, tag,
                 os=os_name,
@@ -96,7 +100,11 @@ class PipelineBuilder:
                 username=username,
                 password=password,
                 max_workers=max_workers,
-                temp_dir=temp_dir)
+                temp_dir=temp_dir,
+                retries=retries,
+                rate_limiter=(
+                    util.RateLimiter(rate_limit)
+                    if rate_limit else None))
 
         elif uri_spec.scheme == 'docker':
             image, tag, socket = uri.parse_docker_uri(uri_spec)
@@ -200,6 +208,8 @@ class PipelineBuilder:
                 'compression', self._get_ctx('COMPRESSION'))
             max_workers = uri_spec.options.get(
                 'max_workers', self._get_ctx('MAX_WORKERS', 4))
+            rate_limit = self._get_ctx('RATE_LIMIT')
+
             return output_registry.RegistryWriter(
                 host, dest_image, dest_tag,
                 secure=(not insecure),
@@ -208,7 +218,10 @@ class PipelineBuilder:
                 compression_type=compression_type,
                 max_workers=max_workers,
                 layer_cache=layer_cache,
-                filters_hash=filters_hash)
+                filters_hash=filters_hash,
+                rate_limiter=(
+                    util.RateLimiter(rate_limit)
+                    if rate_limit else None))
 
         else:
             raise PipelineError('Unknown output scheme: %s' % uri_spec.scheme)
