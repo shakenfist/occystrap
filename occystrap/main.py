@@ -327,6 +327,8 @@ def _process_multi(ctx, images, source, destination, filters):
         for name in failed:
             click.echo('  %s' % name, err=True)
         sys.exit(1)
+    else:
+        click.echo('No failed images.', err=True)
 
 
 @click.command('process')
