@@ -195,7 +195,8 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
   Default is a no-op. Implementations: `DirWriter` checks manifest, config,
   and layer existence/sizes (full mode validates tar integrity); `TarWriter`
   re-opens the tarball and checks all entries; `DockerWriter` queries the
-  Docker API to confirm the image was loaded with the correct digest
+  Docker API to confirm the image was loaded with the correct digest;
+  `RegistryWriter` HEADs each blob and GETs the manifest to compare digests
 
 The base class also provides summary statistics tracking via
 `_log_summary()`, which uses `LOG.with_fields()` for structured
