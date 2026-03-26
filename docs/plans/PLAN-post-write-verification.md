@@ -260,7 +260,7 @@ the manifest and all blobs are reachable.
 
 | Phase | Plan | Status |
 |-------|------|--------|
-| 1. Verification framework and DirWriter | PLAN-post-write-verification-phase-01-framework.md | Not started |
+| 1. Verification framework and DirWriter | PLAN-post-write-verification-phase-01-framework.md | Complete |
 | 2. TarWriter and DockerWriter verifiers | PLAN-post-write-verification-phase-02-tar-docker.md | Not started |
 | 3. RegistryWriter verifier | PLAN-post-write-verification-phase-03-registry.md | Not started |
 | 4. Documentation and functional tests | PLAN-post-write-verification-phase-04-docs-tests.md | Not started |

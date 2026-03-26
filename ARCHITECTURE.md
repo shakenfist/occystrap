@@ -191,6 +191,9 @@ All output writers inherit from the `ImageOutput` abstract base class defined in
 - `process_image_element(element)` - Handles an `ImageElement` (config or
   layer)
 - `finalize()` - Writes manifest and completes output
+- `verify(full=False)` - Post-write verification. Returns `CheckResults`.
+  Default is a no-op; `DirWriter` checks manifest, config, and layer
+  existence/sizes (full mode validates tar integrity)
 
 The base class also provides summary statistics tracking via
 `_log_summary()`, which uses `LOG.with_fields()` for structured

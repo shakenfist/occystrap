@@ -23,6 +23,8 @@ name:
 | `--temp-dir PATH` | `OCCYSTRAP_TEMP_DIR` | Directory for temporary files (default: system temp) |
 | `--layer-cache PATH` | `OCCYSTRAP_LAYER_CACHE` | JSON file for cross-invocation layer caching |
 | `-O`, `--output-format` | | Output format for `info`/`check`: `text` (default) or `json` |
+| `--verify` / `--no-verify` | `OCCYSTRAP_VERIFY` | Verify output after processing (default: enabled) |
+| `--verify-full` | `OCCYSTRAP_VERIFY_FULL` | Full verification: re-read and validate all layer data |
 
 Example:
 

@@ -94,8 +94,11 @@ rename it to a more generic helper).
 1. Create a new file in `occystrap/outputs/`
 2. Subclass `ImageOutput` from `occystrap.outputs.base`
 3. Implement `fetch_callback()`, `process_image_element()`, `finalize()`
-4. Register in `PipelineBuilder.build_output()` in `occystrap/pipeline.py`
-5. Add the scheme to `OUTPUT_SCHEMES` in `occystrap/uri.py`
+4. Optionally override `verify(full=False)` for post-write output verification.
+   Record expectations during `process_image_element()` and check them in
+   `verify()`. See `DirWriter` for a reference implementation.
+5. Register in `PipelineBuilder.build_output()` in `occystrap/pipeline.py`
+6. Add the scheme to `OUTPUT_SCHEMES` in `occystrap/uri.py`
 
 ## Build System
 
