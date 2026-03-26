@@ -137,6 +137,7 @@ class CheckTarfileTestCase(testtools.TestCase):
             # Process registry -> tar
             result = runner.invoke(cli, [
                 '--insecure',
+                '--no-verify',
                 'process',
                 'registry://localhost:5000/'
                 'library/busybox:latest',
@@ -175,6 +176,7 @@ class CheckTarfileTestCase(testtools.TestCase):
         try:
             result = runner.invoke(cli, [
                 '--insecure',
+                '--no-verify',
                 'process',
                 'registry://localhost:5000/'
                 'library/busybox:latest',
@@ -221,6 +223,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
         try:
             result = runner.invoke(cli, [
                 '--insecure',
+                '--no-verify',
                 'process',
                 'registry://localhost:5000/'
                 'library/busybox:latest',
@@ -276,6 +279,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
         try:
             result = runner.invoke(cli, [
                 '--insecure',
+                '--no-verify',
                 'process',
                 'registry://localhost:5000/'
                 'library/ubuntu:latest',
@@ -319,6 +323,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
         try:
             result = runner.invoke(cli, [
                 '--insecure',
+                '--no-verify',
                 'process',
                 'registry://localhost:5000/'
                 'library/ubuntu:latest',
@@ -379,6 +384,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
         # Push busybox to a test destination
         result = runner.invoke(cli, [
             '--insecure',
+            '--no-verify',
             'process',
             'registry://localhost:5000/'
             'library/busybox:latest',
@@ -416,6 +422,7 @@ class CheckAfterProcessTestCase(testtools.TestCase):
         try:
             result = runner.invoke(cli, [
                 '--insecure',
+                '--no-verify',
                 'process',
                 'registry://localhost:5000/'
                 'library/ubuntu:latest',
