@@ -12,6 +12,7 @@ from occystrap import constants
 from occystrap.outputs.directory import DirWriter
 from occystrap.outputs.tarfile import TarWriter
 from occystrap.outputs.docker import DockerWriter
+from occystrap.outputs.registry import RegistryWriter
 from occystrap.outputs.base import ImageOutput
 
 
@@ -512,5 +513,209 @@ class TestDockerWriterVerify(unittest.TestCase):
         self.assertFalse(results.has_errors)
         self.assertTrue(
             any('Cannot connect' in r['message']
+                for r in results.results
+                if r['severity'] == 'warning'))
+
+
+class TestRegistryWriterVerify(unittest.TestCase):
+    """Test RegistryWriter.verify() with mocked requests."""
+
+    def _make_writer(self):
+        """Create a RegistryWriter with mock client."""
+        mock_client = mock.MagicMock()
+        writer = RegistryWriter(
+            'ghcr.io', 'myuser/myimage', 'v1.0',
+            client=mock_client)
+        # Simulate state after finalize()
+        writer._config_digest = 'sha256:configabc'
+        writer._config_size = 100
+        writer._layers = [
+            {'digest': 'sha256:layer1',
+             'size': 1000,
+             'mediaType': 'application/vnd.docker.'
+             'image.rootfs.diff.tar.gzip'},
+            {'digest': 'sha256:layer2',
+             'size': 2000,
+             'mediaType': 'application/vnd.docker.'
+             'image.rootfs.diff.tar.gzip'},
+        ]
+        return writer
+
+    def _mock_request_all_ok(self, writer):
+        """Mock _request to return success for all calls."""
+        manifest_json = {
+            'config': {
+                'digest': 'sha256:configabc',
+            },
+            'layers': [
+                {'digest': 'sha256:layer1'},
+                {'digest': 'sha256:layer2'},
+            ],
+        }
+
+        def side_effect(method, url, headers=None,
+                        data=None, stream=False):
+            r = mock.MagicMock()
+            if method == 'HEAD':
+                r.status_code = 200
+            elif method == 'GET' and '/manifests/' in url:
+                r.status_code = 200
+                r.json.return_value = manifest_json
+            else:
+                r.status_code = 200
+            return r
+
+        writer._request = mock.MagicMock(
+            side_effect=side_effect)
+
+    @mock.patch('occystrap.outputs.registry.'
+                'util.create_client')
+    def test_verify_passes_all_ok(self, mock_create):
+        """verify() passes when all blobs and manifest
+        are present."""
+        mock_create.return_value = (
+            mock.MagicMock(), None)
+        writer = self._make_writer()
+        self._mock_request_all_ok(writer)
+
+        results = writer.verify()
+        self.assertFalse(
+            results.has_errors,
+            'Expected no errors but got: %s'
+            % [r['message'] for r in results.results
+               if r['severity'] == 'error'])
+        self.assertTrue(
+            any('verified' in r['message']
+                for r in results.results
+                if r['severity'] == 'info'))
+
+    @mock.patch('occystrap.outputs.registry.'
+                'util.create_client')
+    def test_verify_detects_missing_layer(
+            self, mock_create):
+        """verify() reports error when a layer blob
+        returns 404."""
+        mock_create.return_value = (
+            mock.MagicMock(), None)
+        writer = self._make_writer()
+
+        def side_effect(method, url, headers=None,
+                        data=None, stream=False):
+            r = mock.MagicMock()
+            if method == 'HEAD' \
+                    and 'sha256:layer2' in url:
+                r.status_code = 404
+            elif method == 'HEAD':
+                r.status_code = 200
+            elif method == 'GET':
+                r.status_code = 200
+                r.json.return_value = {
+                    'config': {
+                        'digest': 'sha256:configabc'},
+                    'layers': [
+                        {'digest': 'sha256:layer1'},
+                        {'digest': 'sha256:layer2'}],
+                }
+            else:
+                r.status_code = 200
+            return r
+
+        writer._request = mock.MagicMock(
+            side_effect=side_effect)
+
+        results = writer.verify()
+        self.assertTrue(results.has_errors)
+        self.assertTrue(
+            any('Layer blob not found'
+                in r['message']
+                for r in results.results))
+
+    @mock.patch('occystrap.outputs.registry.'
+                'util.create_client')
+    def test_verify_detects_manifest_config_mismatch(
+            self, mock_create):
+        """verify() reports error when manifest config
+        digest doesn't match."""
+        mock_create.return_value = (
+            mock.MagicMock(), None)
+        writer = self._make_writer()
+
+        def side_effect(method, url, headers=None,
+                        data=None, stream=False):
+            r = mock.MagicMock()
+            if method == 'HEAD':
+                r.status_code = 200
+            elif method == 'GET':
+                r.status_code = 200
+                r.json.return_value = {
+                    'config': {
+                        'digest': 'sha256:WRONG'},
+                    'layers': [
+                        {'digest': 'sha256:layer1'},
+                        {'digest': 'sha256:layer2'}],
+                }
+            else:
+                r.status_code = 200
+            return r
+
+        writer._request = mock.MagicMock(
+            side_effect=side_effect)
+
+        results = writer.verify()
+        self.assertTrue(results.has_errors)
+        self.assertTrue(
+            any('config digest mismatch'
+                in r['message']
+                for r in results.results))
+
+    @mock.patch('occystrap.outputs.registry.'
+                'util.create_client')
+    def test_verify_detects_missing_manifest(
+            self, mock_create):
+        """verify() reports error when manifest GET
+        returns 404."""
+        mock_create.return_value = (
+            mock.MagicMock(), None)
+        writer = self._make_writer()
+
+        def side_effect(method, url, headers=None,
+                        data=None, stream=False):
+            r = mock.MagicMock()
+            if method == 'HEAD':
+                r.status_code = 200
+            elif method == 'GET' \
+                    and '/manifests/' in url:
+                r.status_code = 404
+            else:
+                r.status_code = 200
+            return r
+
+        writer._request = mock.MagicMock(
+            side_effect=side_effect)
+
+        results = writer.verify()
+        self.assertTrue(results.has_errors)
+        self.assertTrue(
+            any('Manifest not found'
+                in r['message']
+                for r in results.results))
+
+    @mock.patch('occystrap.outputs.registry.'
+                'util.create_client')
+    def test_verify_warns_on_network_error(
+            self, mock_create):
+        """verify() warns (not errors) when network
+        fails during verification."""
+        mock_create.return_value = (
+            mock.MagicMock(), None)
+        writer = self._make_writer()
+        writer._request = mock.MagicMock(
+            side_effect=ConnectionError('refused'))
+
+        results = writer.verify()
+        self.assertFalse(results.has_errors)
+        self.assertTrue(
+            any('Verification failed'
+                in r['message']
                 for r in results.results
                 if r['severity'] == 'warning'))
