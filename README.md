@@ -532,6 +532,30 @@ For detailed guidance on tuning these settings for your workload, see
 [Performance Tuning](docs/performance.md). A benchmark script is provided at
 `tools/benchmark.sh` to measure performance with different settings.
 
+## Output Verification
+
+By default, occystrap verifies output integrity after processing each image.
+This checks that all expected files (manifest, config, layers) exist with the
+correct sizes:
+
+```
+# Verification is on by default
+occystrap process registry://docker.io/library/busybox:latest dir://busybox
+
+# Full verification re-reads and validates all layer data
+occystrap --verify-full process registry://docker.io/library/busybox:latest dir://busybox
+
+# Disable verification for maximum speed
+occystrap --no-verify process registry://docker.io/library/busybox:latest dir://busybox
+```
+
+The summary line shows verification status:
+
+```
+Summary: 3 layers, 125.4 MB, 2.3s, verified OK
+Summary: 47/47 images, 312 layers, 4.2 GB, 38.1s, 2 verify errors
+```
+
 ## Layer Compression
 
 When pushing images to registries, occystrap supports both gzip (default) and

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import time
 
+from occystrap.check import CheckResults
 from shakenfist_utilities import logs
 
 
@@ -116,3 +117,21 @@ class ImageOutput(ABC):
         close files, or perform any final cleanup.
         """
         pass
+
+    def verify(self, full=False):
+        """Verify the output is complete and correct.
+
+        Called after finalize() and any post-processing
+        (e.g., write_bundle()). Returns CheckResults
+        with any errors or warnings found.
+
+        Override in subclasses for type-specific checks.
+        The default implementation returns an empty
+        (passing) result.
+
+        Args:
+            full: If True, re-read and validate all
+                data (slower). If False, only check
+                file/blob existence and sizes (fast).
+        """
+        return CheckResults()

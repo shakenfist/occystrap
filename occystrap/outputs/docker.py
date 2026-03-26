@@ -23,10 +23,12 @@ import json
 import os
 import tarfile
 import tempfile
+from urllib.parse import quote
 
 import requests_unixsocket
 
 from occystrap import constants
+from occystrap.check import CheckResults
 from occystrap.outputs.base import ImageOutput
 from shakenfist_utilities import logs
 
@@ -191,3 +193,61 @@ class DockerWriter(ImageOutput):
         finally:
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
+
+    def verify(self, full=False):
+        """Verify the image was loaded into Docker.
+
+        Queries the Docker API to confirm the image
+        exists with the expected tag and config digest.
+        """
+        results = CheckResults()
+
+        # Derive expected image ID from config filename
+        config_name = self._tar_manifest[0].get('Config')
+        if config_name:
+            expected_id = 'sha256:%s' % (
+                config_name.replace('.json', ''))
+        else:
+            expected_id = None
+
+        try:
+            session = self._get_session()
+            image_ref = '%s:%s' % (
+                self.image.split('/')[-1], self.tag)
+            url = self._socket_url(
+                '/images/%s/json'
+                % quote(image_ref, safe=''))
+            r = session.get(url)
+
+            if r.status_code == 404:
+                results.error(
+                    'verify.docker',
+                    'Image %s not found in Docker'
+                    ' daemon' % image_ref)
+            elif r.status_code != 200:
+                results.warning(
+                    'verify.docker',
+                    'Docker API returned %d for %s'
+                    % (r.status_code, image_ref))
+            elif expected_id:
+                data = r.json()
+                actual_id = data.get('Id', '')
+                if actual_id != expected_id:
+                    results.error(
+                        'verify.docker',
+                        'Image ID mismatch: expected'
+                        ' %s, got %s'
+                        % (expected_id, actual_id))
+                else:
+                    results.info(
+                        'verify.ok',
+                        'Image %s verified in Docker'
+                        ' daemon' % image_ref)
+        except (ConnectionError, OSError) as e:
+            results.warning(
+                'verify.docker',
+                'Cannot connect to Docker daemon'
+                ' at %s: %s'
+                % (self.socket_path, e))
+
+        return results

@@ -85,6 +85,30 @@ class CheckResults:
             if r['severity'] == CHECK_WARNING)
 
 
+def validate_manifest_structure(manifest, results):
+    """Validate that a parsed manifest has the expected
+    Docker v1.2 tarball structure.
+
+    Returns True if valid, False if errors were recorded.
+    Used by DirWriter and TarWriter verify() methods to
+    avoid duplicating this logic.
+    """
+    if not isinstance(manifest, list) or not manifest:
+        results.error(
+            'verify.manifest',
+            'Manifest is not a non-empty list')
+        return False
+    if 'Layers' not in manifest[0]:
+        results.error(
+            'verify.manifest',
+            'Manifest missing Layers key')
+    if 'Config' not in manifest[0]:
+        results.error(
+            'verify.manifest',
+            'Manifest missing Config key')
+    return not results.has_errors
+
+
 def check_metadata(manifest, config, results):
     """Run metadata-only checks (--fast mode).
 

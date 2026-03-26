@@ -27,6 +27,7 @@ import httpx
 
 from occystrap import compression
 from occystrap import constants
+from occystrap.check import CheckResults
 from occystrap.outputs.base import ImageOutput
 from occystrap.progress import LayerProgress
 from occystrap import util
@@ -570,3 +571,125 @@ class RegistryWriter(ImageOutput, util.ThreadSafeClientMixin):
         self._close_thread_clients()
         if self._own_client:
             self._client.close()
+
+    def verify(self, full=False):
+        """Verify the pushed image is reachable.
+
+        Creates a fresh httpx client (finalize() closes
+        all clients) and checks that each blob and the
+        manifest are reachable in the registry.
+        """
+        results = CheckResults()
+
+        if not self._config_digest or not self._layers:
+            results.warning(
+                'verify.registry',
+                'No config or layers recorded; '
+                'skipping verification')
+            return results
+
+        # Create a fresh client since finalize() closed
+        # all clients.
+        self._client, self._rate_limiter = (
+            util.create_client())
+        self._own_client = True
+        self._cached_auth = None
+        self._init_thread_clients()
+
+        try:
+            # Check config blob
+            if not self._blob_exists(
+                    self._config_digest):
+                results.error(
+                    'verify.config',
+                    'Config blob not found in'
+                    ' registry: %s'
+                    % self._config_digest[:19])
+
+            # Check each layer blob
+            for layer in self._layers:
+                digest = layer['digest']
+                if not self._blob_exists(digest):
+                    results.error(
+                        'verify.layer',
+                        'Layer blob not found in'
+                        ' registry: %s'
+                        % digest[:19])
+
+            # Fetch and compare manifest
+            url = (
+                f'{self._moniker}://{self.registry}'
+                f'/v2/{self.image}/manifests/{self.tag}')
+            r = self._request(
+                'GET', url,
+                headers={
+                    'Accept':
+                    constants.MEDIA_TYPE_DOCKER_MANIFEST_V2
+                })
+            if r.status_code == 404:
+                results.error(
+                    'verify.manifest',
+                    'Manifest not found in registry'
+                    ' for %s:%s'
+                    % (self.image, self.tag))
+            elif r.status_code == 200:
+                try:
+                    remote = r.json()
+                    remote_config = remote.get(
+                        'config', {}).get('digest')
+                    if remote_config \
+                            != self._config_digest:
+                        results.error(
+                            'verify.manifest',
+                            'Manifest config digest'
+                            ' mismatch: expected %s,'
+                            ' got %s'
+                            % (self._config_digest[:19],
+                               (remote_config or 'None')
+                               [:19]))
+                    remote_layer_digests = [
+                        ly['digest']
+                        for ly in remote.get(
+                            'layers', [])]
+                    expected_digests = [
+                        ly['digest']
+                        for ly in self._layers]
+                    if remote_layer_digests \
+                            != expected_digests:
+                        results.error(
+                            'verify.manifest',
+                            'Manifest layer digests'
+                            ' mismatch: expected %d'
+                            ' layers, got %d'
+                            % (len(expected_digests),
+                               len(remote_layer_digests)
+                               ))
+                except (ValueError, KeyError) as e:
+                    results.error(
+                        'verify.manifest',
+                        'Cannot parse remote manifest:'
+                        ' %s' % e)
+            else:
+                results.warning(
+                    'verify.manifest',
+                    'Manifest GET returned %d'
+                    % r.status_code)
+
+            if not results.has_errors:
+                results.info(
+                    'verify.ok',
+                    'Image %s:%s verified in registry'
+                    ' (%d layers)'
+                    % (self.image, self.tag,
+                       len(self._layers)))
+
+        except Exception as e:
+            results.warning(
+                'verify.registry',
+                'Verification failed (push may'
+                ' still be OK): %s' % e)
+        finally:
+            self._close_thread_clients()
+            self._client.close()
+
+        return results
