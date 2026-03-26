@@ -71,6 +71,14 @@ LOG = logs.setup_console(__name__)
               envvar='OCCYSTRAP_IMAGE_PARALLEL',
               help='Number of images to process in parallel '
               'for bulk operations (default: 3)')
+@click.option('--verify/--no-verify', default=True,
+              envvar='OCCYSTRAP_VERIFY',
+              help='Verify output after processing '
+              '(default: enabled)')
+@click.option('--verify-full', is_flag=True, default=False,
+              envvar='OCCYSTRAP_VERIFY_FULL',
+              help='Full verification: re-read and validate '
+              'all layer data (implies --verify)')
 @click.pass_context
 def cli(ctx, verbose=None, debug=None, os=None,
         architecture=None, variant=None,
@@ -78,7 +86,8 @@ def cli(ctx, verbose=None, debug=None, os=None,
         compression=None, parallel=None, temp_dir=None,
         layer_cache=None, output_format=None,
         retries=None, rate_limit=None,
-        image_parallel=None):
+        image_parallel=None, verify=None,
+        verify_full=None):
     if debug:
         # Enable debug for all loggers (occystrap +
         # libraries like requests, urllib3, etc.)
@@ -114,12 +123,25 @@ def cli(ctx, verbose=None, debug=None, os=None,
     ctx.obj['RETRIES'] = retries
     ctx.obj['RATE_LIMIT'] = rate_limit
     ctx.obj['IMAGE_PARALLEL'] = image_parallel
+    ctx.obj['VERIFY'] = verify or verify_full
+    ctx.obj['VERIFY_FULL'] = verify_full
+
+
+def _get_inner_writer(output):
+    """Walk the filter chain to find the actual output
+    writer (filters don't track stats or implement
+    verify).
+    """
+    writer = output
+    while hasattr(writer, '_wrapped') and writer._wrapped:
+        writer = writer._wrapped
+    return writer
 
 
 def _fetch(img, output):
     """Fetch image elements and write to output.
 
-    Returns a dict of processing statistics.
+    Returns a tuple of (stats_dict, output_writer).
     """
     # Attach request stats if the input supports it
     stats = util.RequestStats()
@@ -134,19 +156,14 @@ def _fetch(img, output):
             output.process_image_element(element)
         output.finalize()
 
-    # Walk filter chain to find the actual output writer
-    # with tracking stats (filters don't call
-    # _track_element).
-    writer = output
-    while hasattr(writer, '_wrapped') and writer._wrapped:
-        writer = writer._wrapped
+    writer = _get_inner_writer(output)
 
     return {
         'bytes': getattr(writer, '_total_bytes', 0),
         'layers': getattr(writer, '_layer_count', 0),
         'retries': stats.retries,
         'rate_limits': stats.rate_limits,
-    }
+    }, writer
 
 
 def _resolve_quay_images(source, ctx):
@@ -200,7 +217,8 @@ def _resolve_quay_images(source, ctx):
 
 def _print_summary(total_images, succeeded, failed_count,
                    total_layers, total_bytes, elapsed,
-                   retries, rate_limits):
+                   retries, rate_limits,
+                   verified=None, verify_errors=0):
     """Print a processing summary to stderr."""
     parts = []
     if total_images > 1:
@@ -215,6 +233,11 @@ def _print_summary(total_images, succeeded, failed_count,
         parts.append('%d rate limits' % rate_limits)
     if failed_count:
         parts.append('%d failed' % failed_count)
+    if verified is not None:
+        if verify_errors:
+            parts.append('%d verify errors' % verify_errors)
+        else:
+            parts.append('verified OK')
 
     click.echo('Summary: %s' % ', '.join(parts), err=True)
 
@@ -227,7 +250,7 @@ def _process_single(ctx, source, destination, filters):
     builder = PipelineBuilder(ctx)
     input_source, output = builder.build_pipeline(
         source, destination, list(filters))
-    stats = _fetch(input_source, output)
+    stats, writer = _fetch(input_source, output)
 
     # Handle post-processing for certain outputs
     if hasattr(output, 'write_bundle'):
@@ -236,6 +259,19 @@ def _process_single(ctx, source, destination, filters):
             output.write_bundle()
         elif dest_spec.scheme == 'dir' and dest_spec.options.get('expand'):
             output.write_bundle()
+
+    # Post-write verification
+    ctx_obj = ctx.obj if ctx and ctx.obj else {}
+    if ctx_obj.get('VERIFY'):
+        full = ctx_obj.get('VERIFY_FULL', False)
+        results = writer.verify(full=full)
+        stats['verify_errors'] = results.error_count
+        stats['verify_warnings'] = results.warning_count
+        for r in results.results:
+            if r['severity'] == 'error':
+                LOG.error('Verify: %s' % r['message'])
+            elif r['severity'] == 'warning':
+                LOG.warning('Verify: %s' % r['message'])
 
     return stats
 
@@ -288,6 +324,7 @@ def _process_multi(ctx, images, source, destination, filters):
     total_layers = 0
     total_retries = 0
     total_rate_limits = 0
+    total_verify_errors = 0
     start_time = time.time()
 
     with ThreadPoolExecutor(
@@ -313,6 +350,8 @@ def _process_multi(ctx, images, source, destination, filters):
                         'retries', 0)
                     total_rate_limits += image_stats.get(
                         'rate_limits', 0)
+                    total_verify_errors += image_stats.get(
+                        'verify_errors', 0)
                 click.echo(
                     '[%d/%d] %s'
                     % (done + len(failed),
@@ -325,14 +364,22 @@ def _process_multi(ctx, images, source, destination, filters):
                 failed.append(name)
 
     elapsed = time.time() - start_time
+    verify_on = ctx.obj.get('VERIFY')
     _print_summary(
         len(images), done, len(failed),
         total_layers, total_bytes, elapsed,
-        total_retries, total_rate_limits)
-    if failed:
-        click.echo('Failed images:', err=True)
-        for name in failed:
-            click.echo('  %s' % name, err=True)
+        total_retries, total_rate_limits,
+        verified=True if verify_on else None,
+        verify_errors=total_verify_errors)
+    if failed or total_verify_errors:
+        if failed:
+            click.echo('Failed images:', err=True)
+            for name in failed:
+                click.echo('  %s' % name, err=True)
+        if total_verify_errors:
+            click.echo(
+                'Verification errors: %d'
+                % total_verify_errors, err=True)
         sys.exit(1)
     else:
         click.echo('No failed images.', err=True)
@@ -392,13 +439,19 @@ def process_cmd(ctx, source, destination, filters):
                 ctx, source, destination, filters)
             elapsed = time.time() - start_time
             if isinstance(stats, dict):
+                verify_on = ctx.obj.get('VERIFY')
                 _print_summary(
                     1, 1, 0,
                     stats.get('layers', 0),
                     stats.get('bytes', 0),
                     elapsed,
                     stats.get('retries', 0),
-                    stats.get('rate_limits', 0))
+                    stats.get('rate_limits', 0),
+                    verified=True if verify_on else None,
+                    verify_errors=stats.get(
+                        'verify_errors', 0))
+                if stats.get('verify_errors', 0):
+                    sys.exit(1)
 
     except (PipelineError, uri.URIParseError,
             quay_module.QuayAPIError) as e:

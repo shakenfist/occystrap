@@ -130,6 +130,11 @@ class DirWriter(ImageOutput):
         # For out-of-order layer delivery
         self._indexed_layers = []
 
+        # Verification expectations: recorded during
+        # process_image_element(), checked in verify().
+        self._expected_layers = {}
+        self._expected_config_size = None
+
     @property
     def requires_ordered_layers(self):
         # expand=True needs ordered layers for
@@ -167,10 +172,12 @@ class DirWriter(ImageOutput):
             config_data = element.data.read()
             with open(config_file, 'wb') as f:
                 d = json.loads(config_data)
-                f.write(json.dumps(
+                written = json.dumps(
                     d, indent=4,
-                    sort_keys=True).encode('ascii'))
+                    sort_keys=True).encode('ascii')
+                f.write(written)
             self.tar_manifest[0]['Config'] = element.name
+            self._expected_config_size = len(written)
             self._track_element(
                 element.element_type, len(config_data))
 
@@ -228,6 +235,7 @@ class DirWriter(ImageOutput):
                         layer_size += len(d)
                         f.write(d)
                         d = element.data.read(102400)
+            self._expected_layers[layer_file] = layer_size
             self._track_element(
                 element.element_type, layer_size)
 
@@ -348,6 +356,114 @@ class DirWriter(ImageOutput):
                     c, indent=4, sort_keys=True))
 
         self._log_summary()
+
+    def verify(self, full=False):
+        """Verify the directory output is complete.
+
+        Checks that the manifest, config, and all layer
+        files exist with the expected sizes. In full
+        mode, additionally validates each layer is a
+        valid tarball.
+        """
+        from occystrap.check import CheckResults
+        results = CheckResults()
+
+        # Check manifest file
+        manifest_filename = self._manifest_filename()
+        manifest_path = safe_path_join(
+            self.image_path,
+            '%s.json' % manifest_filename)
+        if not os.path.exists(manifest_path):
+            results.error(
+                'verify.manifest',
+                'Manifest file missing: %s'
+                % manifest_path)
+            return results
+
+        try:
+            with open(manifest_path, 'r') as f:
+                manifest = json.loads(f.read())
+            if not isinstance(manifest, list) \
+                    or not manifest:
+                results.error(
+                    'verify.manifest',
+                    'Manifest is not a non-empty list')
+                return results
+            if 'Layers' not in manifest[0]:
+                results.error(
+                    'verify.manifest',
+                    'Manifest missing Layers key')
+            if 'Config' not in manifest[0]:
+                results.error(
+                    'verify.manifest',
+                    'Manifest missing Config key')
+        except (json.JSONDecodeError, OSError) as e:
+            results.error(
+                'verify.manifest',
+                'Cannot read manifest: %s' % e)
+            return results
+
+        # Check config file
+        config_name = self.tar_manifest[0].get('Config')
+        if config_name:
+            config_path = safe_path_join(
+                self.image_path, config_name)
+            if not os.path.exists(config_path):
+                results.error(
+                    'verify.config',
+                    'Config file missing: %s'
+                    % config_name)
+            elif self._expected_config_size is not None:
+                actual = os.path.getsize(config_path)
+                if actual != self._expected_config_size:
+                    results.error(
+                        'verify.config',
+                        'Config size mismatch: expected'
+                        ' %d, got %d'
+                        % (self._expected_config_size,
+                           actual))
+
+        # Check layer files
+        layers = self.tar_manifest[0].get('Layers', [])
+        for layer_path in layers:
+            layer_file = safe_path_join(
+                self.image_path, layer_path)
+            if not os.path.exists(layer_file):
+                results.error(
+                    'verify.layer',
+                    'Layer file missing: %s'
+                    % layer_path)
+                continue
+
+            expected_size = self._expected_layers.get(
+                layer_path)
+            if expected_size is not None:
+                actual = os.path.getsize(layer_file)
+                if actual != expected_size:
+                    results.error(
+                        'verify.layer',
+                        'Layer size mismatch for %s:'
+                        ' expected %d, got %d'
+                        % (layer_path, expected_size,
+                           actual))
+
+            if full:
+                try:
+                    with tarfile.open(layer_file) as tf:
+                        tf.getmembers()
+                except (tarfile.TarError, OSError) as e:
+                    results.error(
+                        'verify.layer',
+                        'Layer is not a valid tar: %s'
+                        ' (%s)' % (layer_path, e))
+
+        if not results.has_errors:
+            results.info(
+                'verify.ok',
+                'All %d layers verified'
+                % len(layers))
+
+        return results
 
     def _extract_rootfs(self, rootfs_path):
         # Reading tarfiles is expensive, as tarfile needs to scan the
