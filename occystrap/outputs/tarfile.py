@@ -4,6 +4,8 @@ import os
 import tarfile
 
 from occystrap import constants
+from occystrap.check import (
+    CheckResults, validate_manifest_structure)
 from occystrap.outputs.base import ImageOutput
 from shakenfist_utilities import logs
 
@@ -110,7 +112,6 @@ class TarWriter(ImageOutput):
         entries are present. In full mode, additionally
         validates each layer entry is a valid tarball.
         """
-        from occystrap.check import CheckResults
         results = CheckResults()
 
         # Check tarball exists
@@ -142,21 +143,9 @@ class TarWriter(ImageOutput):
             try:
                 mf = tf.extractfile('manifest.json')
                 manifest = json.loads(mf.read())
-                if not isinstance(manifest, list) \
-                        or not manifest:
-                    results.error(
-                        'verify.manifest',
-                        'manifest.json is not a'
-                        ' non-empty list')
+                if not validate_manifest_structure(
+                        manifest, results):
                     return results
-                if 'Layers' not in manifest[0]:
-                    results.error(
-                        'verify.manifest',
-                        'Manifest missing Layers key')
-                if 'Config' not in manifest[0]:
-                    results.error(
-                        'verify.manifest',
-                        'Manifest missing Config key')
             except (json.JSONDecodeError, OSError) as e:
                 results.error(
                     'verify.manifest',

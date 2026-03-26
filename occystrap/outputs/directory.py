@@ -5,6 +5,8 @@ import tarfile
 import threading
 
 from occystrap import constants
+from occystrap.check import (
+    CheckResults, validate_manifest_structure)
 from occystrap.outputs.base import ImageOutput
 from occystrap.util import safe_path_join
 from shakenfist_utilities import logs
@@ -365,7 +367,6 @@ class DirWriter(ImageOutput):
         mode, additionally validates each layer is a
         valid tarball.
         """
-        from occystrap.check import CheckResults
         results = CheckResults()
 
         # Check manifest file
@@ -383,20 +384,9 @@ class DirWriter(ImageOutput):
         try:
             with open(manifest_path, 'r') as f:
                 manifest = json.loads(f.read())
-            if not isinstance(manifest, list) \
-                    or not manifest:
-                results.error(
-                    'verify.manifest',
-                    'Manifest is not a non-empty list')
+            if not validate_manifest_structure(
+                    manifest, results):
                 return results
-            if 'Layers' not in manifest[0]:
-                results.error(
-                    'verify.manifest',
-                    'Manifest missing Layers key')
-            if 'Config' not in manifest[0]:
-                results.error(
-                    'verify.manifest',
-                    'Manifest missing Config key')
         except (json.JSONDecodeError, OSError) as e:
             results.error(
                 'verify.manifest',

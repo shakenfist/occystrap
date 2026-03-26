@@ -23,10 +23,12 @@ import json
 import os
 import tarfile
 import tempfile
+from urllib.parse import quote
 
 import requests_unixsocket
 
 from occystrap import constants
+from occystrap.check import CheckResults
 from occystrap.outputs.base import ImageOutput
 from shakenfist_utilities import logs
 
@@ -198,7 +200,6 @@ class DockerWriter(ImageOutput):
         Queries the Docker API to confirm the image
         exists with the expected tag and config digest.
         """
-        from occystrap.check import CheckResults
         results = CheckResults()
 
         # Derive expected image ID from config filename
@@ -214,7 +215,8 @@ class DockerWriter(ImageOutput):
             image_ref = '%s:%s' % (
                 self.image.split('/')[-1], self.tag)
             url = self._socket_url(
-                '/images/%s/json' % image_ref)
+                '/images/%s/json'
+                % quote(image_ref, safe=''))
             r = session.get(url)
 
             if r.status_code == 404:

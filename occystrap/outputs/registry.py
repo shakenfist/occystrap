@@ -27,6 +27,7 @@ import httpx
 
 from occystrap import compression
 from occystrap import constants
+from occystrap.check import CheckResults
 from occystrap.outputs.base import ImageOutput
 from occystrap.progress import LayerProgress
 from occystrap import util
@@ -578,7 +579,6 @@ class RegistryWriter(ImageOutput, util.ThreadSafeClientMixin):
         all clients) and checks that each blob and the
         manifest are reachable in the registry.
         """
-        from occystrap.check import CheckResults
         results = CheckResults()
 
         if not self._config_digest or not self._layers:
@@ -683,7 +683,7 @@ class RegistryWriter(ImageOutput, util.ThreadSafeClientMixin):
                     % (self.image, self.tag,
                        len(self._layers)))
 
-        except (Exception) as e:
+        except Exception as e:
             results.warning(
                 'verify.registry',
                 'Verification failed (push may'
