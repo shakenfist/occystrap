@@ -6,9 +6,12 @@ import os
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 
 from occystrap import constants
 from occystrap.outputs.directory import DirWriter
+from occystrap.outputs.tarfile import TarWriter
+from occystrap.outputs.docker import DockerWriter
 from occystrap.outputs.base import ImageOutput
 
 
@@ -257,3 +260,257 @@ class TestDirWriterVerify(unittest.TestCase):
                 'Expected no errors but got: %s'
                 % [r['message'] for r in results.results
                    if r['severity'] == 'error'])
+
+
+class TestTarWriterVerify(unittest.TestCase):
+    """Test TarWriter.verify() with real tarballs."""
+
+    def _make_layer_tar(self, content=b'hello world'):
+        """Create a minimal valid tar in memory."""
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode='w') as tf:
+            info = tarfile.TarInfo(name='test.txt')
+            info.size = len(content)
+            tf.addfile(info, io.BytesIO(content))
+        buf.seek(0)
+        return buf
+
+    def _make_config(self):
+        """Create a minimal config JSON."""
+        return json.dumps({
+            'rootfs': {
+                'type': 'layers',
+                'diff_ids': ['sha256:abc123']
+            }
+        }).encode('utf-8')
+
+    def _process_image(self, writer):
+        """Process a config and one layer."""
+        writer.process_image_element(
+            constants.ImageElement(
+                constants.CONFIG_FILE,
+                'abc123.json',
+                io.BytesIO(self._make_config())))
+        writer.process_image_element(
+            constants.ImageElement(
+                constants.IMAGE_LAYER,
+                'def456',
+                self._make_layer_tar()))
+        writer.finalize()
+
+    def test_verify_passes_for_correct_tarball(self):
+        """verify() returns no errors for a correctly
+        written tarball."""
+        with tempfile.NamedTemporaryFile(
+                suffix='.tar', delete=False) as f:
+            tar_path = f.name
+
+        try:
+            writer = TarWriter(
+                'test/image', 'latest', tar_path)
+            self._process_image(writer)
+
+            results = writer.verify()
+            self.assertFalse(
+                results.has_errors,
+                'Expected no errors but got: %s'
+                % [r['message'] for r in results.results
+                   if r['severity'] == 'error'])
+        finally:
+            if os.path.exists(tar_path):
+                os.unlink(tar_path)
+
+    def test_verify_full_passes_for_correct_tarball(self):
+        """verify(full=True) returns no errors for a
+        correctly written tarball."""
+        with tempfile.NamedTemporaryFile(
+                suffix='.tar', delete=False) as f:
+            tar_path = f.name
+
+        try:
+            writer = TarWriter(
+                'test/image', 'latest', tar_path)
+            self._process_image(writer)
+
+            results = writer.verify(full=True)
+            self.assertFalse(
+                results.has_errors,
+                'Expected no errors but got: %s'
+                % [r['message'] for r in results.results
+                   if r['severity'] == 'error'])
+        finally:
+            if os.path.exists(tar_path):
+                os.unlink(tar_path)
+
+    def test_verify_detects_missing_tarball(self):
+        """verify() reports error when tarball doesn't
+        exist."""
+        writer = TarWriter.__new__(TarWriter)
+        writer.image_path = '/nonexistent/file.tar'
+        writer.tar_manifest = [{
+            'Layers': [], 'Config': 'a.json'}]
+
+        results = writer.verify()
+        self.assertTrue(results.has_errors)
+        self.assertTrue(
+            any('Tarball missing' in r['message']
+                for r in results.results))
+
+    def test_verify_detects_missing_layer_entry(self):
+        """verify() reports error when a layer entry is
+        missing from the tarball."""
+        with tempfile.NamedTemporaryFile(
+                suffix='.tar', delete=False) as f:
+            tar_path = f.name
+
+        try:
+            writer = TarWriter(
+                'test/image', 'latest', tar_path)
+            # Only write config, no layers
+            writer.process_image_element(
+                constants.ImageElement(
+                    constants.CONFIG_FILE,
+                    'abc123.json',
+                    io.BytesIO(self._make_config())))
+            # Manually add a fake layer to manifest
+            writer.tar_manifest[0]['Layers'].append(
+                'missing_layer/layer.tar')
+            writer.finalize()
+
+            results = writer.verify()
+            self.assertTrue(results.has_errors)
+            self.assertTrue(
+                any('Layer entry missing'
+                    in r['message']
+                    for r in results.results))
+        finally:
+            if os.path.exists(tar_path):
+                os.unlink(tar_path)
+
+    def test_verify_info_on_success(self):
+        """verify() includes info message on success."""
+        with tempfile.NamedTemporaryFile(
+                suffix='.tar', delete=False) as f:
+            tar_path = f.name
+
+        try:
+            writer = TarWriter(
+                'test/image', 'latest', tar_path)
+            self._process_image(writer)
+
+            results = writer.verify()
+            info_msgs = [
+                r['message'] for r in results.results
+                if r['severity'] == 'info']
+            self.assertTrue(
+                any('verified' in m for m in info_msgs))
+        finally:
+            if os.path.exists(tar_path):
+                os.unlink(tar_path)
+
+
+class TestDockerWriterVerify(unittest.TestCase):
+    """Test DockerWriter.verify() with mocked Docker API."""
+
+    def test_verify_passes_when_image_exists(self):
+        """verify() returns no errors when Docker reports
+        the image exists with correct ID."""
+        mock_session = mock.MagicMock()
+        mock_response = mock.MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'Id': 'sha256:abc123'
+        }
+        mock_session.get.return_value = mock_response
+
+        writer = DockerWriter.__new__(DockerWriter)
+        writer.image = 'test/image'
+        writer.tag = 'latest'
+        writer.socket_path = '/var/run/docker.sock'
+        writer._session = mock_session
+        writer._tar_manifest = [{
+            'Config': 'abc123.json',
+            'Layers': [],
+        }]
+
+        results = writer.verify()
+        self.assertFalse(results.has_errors)
+        self.assertTrue(
+            any('verified' in r['message']
+                for r in results.results
+                if r['severity'] == 'info'))
+
+    def test_verify_detects_missing_image(self):
+        """verify() reports error when Docker returns
+        404."""
+        mock_session = mock.MagicMock()
+        mock_response = mock.MagicMock()
+        mock_response.status_code = 404
+        mock_session.get.return_value = mock_response
+
+        writer = DockerWriter.__new__(DockerWriter)
+        writer.image = 'test/image'
+        writer.tag = 'latest'
+        writer.socket_path = '/var/run/docker.sock'
+        writer._session = mock_session
+        writer._tar_manifest = [{
+            'Config': 'abc123.json',
+            'Layers': [],
+        }]
+
+        results = writer.verify()
+        self.assertTrue(results.has_errors)
+        self.assertTrue(
+            any('not found' in r['message']
+                for r in results.results))
+
+    def test_verify_detects_id_mismatch(self):
+        """verify() reports error when image ID doesn't
+        match expected config digest."""
+        mock_session = mock.MagicMock()
+        mock_response = mock.MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'Id': 'sha256:wrong_digest'
+        }
+        mock_session.get.return_value = mock_response
+
+        writer = DockerWriter.__new__(DockerWriter)
+        writer.image = 'test/image'
+        writer.tag = 'latest'
+        writer.socket_path = '/var/run/docker.sock'
+        writer._session = mock_session
+        writer._tar_manifest = [{
+            'Config': 'abc123.json',
+            'Layers': [],
+        }]
+
+        results = writer.verify()
+        self.assertTrue(results.has_errors)
+        self.assertTrue(
+            any('mismatch' in r['message']
+                for r in results.results))
+
+    def test_verify_warns_on_connection_error(self):
+        """verify() warns (not errors) when Docker daemon
+        is unreachable."""
+        mock_session = mock.MagicMock()
+        mock_session.get.side_effect = \
+            ConnectionError('refused')
+
+        writer = DockerWriter.__new__(DockerWriter)
+        writer.image = 'test/image'
+        writer.tag = 'latest'
+        writer.socket_path = '/var/run/docker.sock'
+        writer._session = mock_session
+        writer._tar_manifest = [{
+            'Config': 'abc123.json',
+            'Layers': [],
+        }]
+
+        results = writer.verify()
+        self.assertFalse(results.has_errors)
+        self.assertTrue(
+            any('Cannot connect' in r['message']
+                for r in results.results
+                if r['severity'] == 'warning'))

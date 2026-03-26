@@ -101,3 +101,107 @@ class TarWriter(ImageOutput):
             ti, io.BytesIO(encoded_manifest))
         self.image_tar.close()
         self._log_summary()
+
+    def verify(self, full=False):
+        """Verify the tarball output is complete.
+
+        Re-opens the tarball read-only and checks that
+        manifest.json, the config file, and all layer
+        entries are present. In full mode, additionally
+        validates each layer entry is a valid tarball.
+        """
+        from occystrap.check import CheckResults
+        results = CheckResults()
+
+        # Check tarball exists
+        if not os.path.exists(self.image_path):
+            results.error(
+                'verify.tarball',
+                'Tarball missing: %s'
+                % self.image_path)
+            return results
+
+        try:
+            tf = tarfile.open(self.image_path, 'r')
+        except tarfile.TarError as e:
+            results.error(
+                'verify.tarball',
+                'Cannot open tarball: %s' % e)
+            return results
+
+        try:
+            members = {m.name for m in tf.getmembers()}
+
+            # Check manifest.json
+            if 'manifest.json' not in members:
+                results.error(
+                    'verify.manifest',
+                    'manifest.json missing from tarball')
+                return results
+
+            try:
+                mf = tf.extractfile('manifest.json')
+                manifest = json.loads(mf.read())
+                if not isinstance(manifest, list) \
+                        or not manifest:
+                    results.error(
+                        'verify.manifest',
+                        'manifest.json is not a'
+                        ' non-empty list')
+                    return results
+                if 'Layers' not in manifest[0]:
+                    results.error(
+                        'verify.manifest',
+                        'Manifest missing Layers key')
+                if 'Config' not in manifest[0]:
+                    results.error(
+                        'verify.manifest',
+                        'Manifest missing Config key')
+            except (json.JSONDecodeError, OSError) as e:
+                results.error(
+                    'verify.manifest',
+                    'Cannot read manifest.json: %s' % e)
+                return results
+
+            # Check config entry
+            config_name = manifest[0].get('Config')
+            if config_name and config_name not in members:
+                results.error(
+                    'verify.config',
+                    'Config entry missing from tarball:'
+                    ' %s' % config_name)
+
+            # Check layer entries
+            expected_layers = \
+                self.tar_manifest[0].get('Layers', [])
+            for layer_name in expected_layers:
+                if layer_name not in members:
+                    results.error(
+                        'verify.layer',
+                        'Layer entry missing from'
+                        ' tarball: %s' % layer_name)
+                elif full:
+                    try:
+                        layer_fobj = tf.extractfile(
+                            layer_name)
+                        with tarfile.open(
+                                fileobj=layer_fobj) \
+                                as inner:
+                            inner.getmembers()
+                    except (tarfile.TarError,
+                            OSError) as e:
+                        results.error(
+                            'verify.layer',
+                            'Layer is not a valid tar:'
+                            ' %s (%s)'
+                            % (layer_name, e))
+
+            if not results.has_errors:
+                results.info(
+                    'verify.ok',
+                    'All %d layers verified in tarball'
+                    % len(expected_layers))
+        finally:
+            tf.close()
+
+        return results
