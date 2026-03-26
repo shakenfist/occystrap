@@ -27,7 +27,7 @@ class VerifyDirTestCase(testtools.TestCase):
     def test_verify_dir_passes(self):
         """Process busybox to dir:// with --verify,
         verify passes (exit code 0)."""
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         outdir = tempfile.mkdtemp()
 
         try:
@@ -42,9 +42,9 @@ class VerifyDirTestCase(testtools.TestCase):
             self.assertEqual(
                 0, result.exit_code,
                 'process --verify failed: %s'
-                % (result.stderr or result.output))
+                % (result.output or result.output))
             self.assertIn(
-                'verified OK', result.stderr,
+                'verified OK', result.output,
                 'Summary should include verified OK')
         finally:
             shutil.rmtree(outdir, ignore_errors=True)
@@ -52,7 +52,7 @@ class VerifyDirTestCase(testtools.TestCase):
     def test_verify_full_dir_passes(self):
         """Process busybox to dir:// with --verify-full,
         full verification passes."""
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         outdir = tempfile.mkdtemp()
 
         try:
@@ -67,9 +67,9 @@ class VerifyDirTestCase(testtools.TestCase):
             self.assertEqual(
                 0, result.exit_code,
                 'process --verify-full failed: %s'
-                % (result.stderr or result.output))
+                % (result.output or result.output))
             self.assertIn(
-                'verified OK', result.stderr,
+                'verified OK', result.output,
                 'Summary should include verified OK')
         finally:
             shutil.rmtree(outdir, ignore_errors=True)
@@ -77,7 +77,7 @@ class VerifyDirTestCase(testtools.TestCase):
     def test_no_verify_skips_verification(self):
         """Process with --no-verify does not run
         verification (no 'verified' in summary)."""
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         outdir = tempfile.mkdtemp()
 
         try:
@@ -92,9 +92,9 @@ class VerifyDirTestCase(testtools.TestCase):
             self.assertEqual(
                 0, result.exit_code,
                 'process --no-verify failed: %s'
-                % (result.stderr or result.output))
+                % (result.output or result.output))
             self.assertNotIn(
-                'verified', result.stderr,
+                'verified', result.output,
                 'Summary should not mention verification'
                 ' when --no-verify is used')
         finally:
@@ -103,7 +103,7 @@ class VerifyDirTestCase(testtools.TestCase):
     def test_verify_dir_with_filter_passes(self):
         """Process busybox to dir:// with a filter and
         --verify, verify passes."""
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         outdir = tempfile.mkdtemp()
 
         try:
@@ -119,9 +119,9 @@ class VerifyDirTestCase(testtools.TestCase):
             self.assertEqual(
                 0, result.exit_code,
                 'process --verify with filter failed: %s'
-                % (result.stderr or result.output))
+                % (result.output or result.output))
             self.assertIn(
-                'verified OK', result.stderr,
+                'verified OK', result.output,
                 'Summary should include verified OK')
         finally:
             shutil.rmtree(outdir, ignore_errors=True)
@@ -133,7 +133,7 @@ class VerifyTarTestCase(testtools.TestCase):
     def test_verify_tar_passes(self):
         """Process busybox to tar:// with --verify,
         verify passes."""
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         with tempfile.NamedTemporaryFile(
                 delete=False, suffix='.tar') as tf:
             tar_path = tf.name
@@ -150,9 +150,9 @@ class VerifyTarTestCase(testtools.TestCase):
             self.assertEqual(
                 0, result.exit_code,
                 'process --verify tar failed: %s'
-                % (result.stderr or result.output))
+                % (result.output or result.output))
             self.assertIn(
-                'verified OK', result.stderr,
+                'verified OK', result.output,
                 'Summary should include verified OK')
         finally:
             if os.path.exists(tar_path):
@@ -161,7 +161,7 @@ class VerifyTarTestCase(testtools.TestCase):
     def test_verify_tar_with_filter_passes(self):
         """Process busybox to tar:// with a filter and
         --verify, verify passes."""
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
         with tempfile.NamedTemporaryFile(
                 delete=False, suffix='.tar') as tf:
             tar_path = tf.name
@@ -179,9 +179,9 @@ class VerifyTarTestCase(testtools.TestCase):
             self.assertEqual(
                 0, result.exit_code,
                 'process --verify tar+filter failed: %s'
-                % (result.stderr or result.output))
+                % (result.output or result.output))
             self.assertIn(
-                'verified OK', result.stderr,
+                'verified OK', result.output,
                 'Summary should include verified OK')
         finally:
             if os.path.exists(tar_path):
@@ -194,7 +194,7 @@ class VerifyRegistryTestCase(testtools.TestCase):
     def test_verify_registry_passes(self):
         """Process busybox to registry:// with --verify,
         verify passes."""
-        runner = CliRunner(mix_stderr=False)
+        runner = CliRunner()
 
         result = runner.invoke(cli, [
             '--insecure',
@@ -208,7 +208,7 @@ class VerifyRegistryTestCase(testtools.TestCase):
         self.assertEqual(
             0, result.exit_code,
             'process --verify registry failed: %s'
-            % (result.stderr or result.output))
+            % (result.output or result.output))
         self.assertIn(
-            'verified OK', result.stderr,
+            'verified OK', result.output,
             'Summary should include verified OK')
