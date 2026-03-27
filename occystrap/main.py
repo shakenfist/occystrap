@@ -267,6 +267,9 @@ def _process_single(ctx, source, destination, filters):
         results = writer.verify(full=full)
         stats['verify_errors'] = results.error_count
         stats['verify_warnings'] = results.warning_count
+        stats['verify_messages'] = [
+            r['message'] for r in results.results
+            if r['severity'] == 'error']
         for r in results.results:
             if r['severity'] == 'error':
                 LOG.error('Verify: %s' % r['message'])
@@ -319,6 +322,7 @@ def _process_multi(ctx, images, source, destination, filters):
             ctx, source_uri, destination, filters)
 
     failed = []
+    verify_failed = []
     done = 0
     total_bytes = 0
     total_layers = 0
@@ -350,8 +354,13 @@ def _process_multi(ctx, images, source, destination, filters):
                         'retries', 0)
                     total_rate_limits += image_stats.get(
                         'rate_limits', 0)
-                    total_verify_errors += image_stats.get(
+                    img_verify_errors = image_stats.get(
                         'verify_errors', 0)
+                    total_verify_errors += img_verify_errors
+                    if img_verify_errors:
+                        verify_failed.append(
+                            (name, image_stats.get(
+                                'verify_messages', [])))
                 click.echo(
                     '[%d/%d] %s'
                     % (done + len(failed),
@@ -376,10 +385,14 @@ def _process_multi(ctx, images, source, destination, filters):
             click.echo('Failed images:', err=True)
             for name in failed:
                 click.echo('  %s' % name, err=True)
-        if total_verify_errors:
+        if verify_failed:
             click.echo(
-                'Verification errors: %d'
-                % total_verify_errors, err=True)
+                'Verification errors:', err=True)
+            for name, messages in verify_failed:
+                click.echo('  %s:' % name, err=True)
+                for msg in messages:
+                    click.echo(
+                        '    %s' % msg, err=True)
         sys.exit(1)
     else:
         click.echo('No failed images.', err=True)
@@ -451,6 +464,13 @@ def process_cmd(ctx, source, destination, filters):
                     verify_errors=stats.get(
                         'verify_errors', 0))
                 if stats.get('verify_errors', 0):
+                    click.echo(
+                        'Verification errors:',
+                        err=True)
+                    for msg in stats.get(
+                            'verify_messages', []):
+                        click.echo(
+                            '  %s' % msg, err=True)
                     sys.exit(1)
 
     except (PipelineError, uri.URIParseError,

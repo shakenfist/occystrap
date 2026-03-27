@@ -201,12 +201,14 @@ class DirWriter(ImageOutput):
             layer_file_in_dir = safe_path_join(
                 self.image_path, layer_file)
             layer_size = 0
+            layer_preexisted = False
             if os.path.exists(layer_file_in_dir):
                 LOG.debug(
                     'Skipping layer already in'
                     ' output directory')
                 layer_size = os.path.getsize(
                     layer_file_in_dir)
+                layer_preexisted = True
             elif element.temp_path:
                 # Move the temp file directly instead
                 # of copying data through a read loop.
@@ -237,7 +239,16 @@ class DirWriter(ImageOutput):
                         layer_size += len(d)
                         f.write(d)
                         d = element.data.read(102400)
-            self._expected_layers[layer_file] = layer_size
+            # Don't record expected size for layers that
+            # already existed on disk — concurrent images
+            # sharing layers via deduplication can overwrite
+            # each other, making the size unpredictable.
+            # We still verify the file exists.
+            if layer_preexisted:
+                self._expected_layers[layer_file] = None
+            else:
+                self._expected_layers[layer_file] = \
+                    layer_size
             self._track_element(
                 element.element_type, layer_size)
 
