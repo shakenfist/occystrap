@@ -8,7 +8,20 @@
   "schedule": [
     "after 9pm"
   ],
+  "constraints": {
+    "python": ">=3.7"
+  },
   "packageRules": [
+    {
+      "description": "Group grpc packages together with widen strategy",
+      "matchPackagePatterns": [
+        "^grpcio",
+        "^googleapis-common-protos",
+        "^protobuf"
+      ],
+      "groupName": "grpc packages",
+      "rangeStrategy": "widen"
+    },
     {
       "description": "Automatically merge minor and patch-level updates",
       "matchUpdateTypes": [
@@ -19,9 +32,6 @@
       "automerge": false
     }
   ],
-  "constraints": {
-    "python": ">=3.7"
-  },
   "minimumReleaseAge": "3 days",
   "rollbackPrs": true
 }
