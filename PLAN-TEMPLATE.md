@@ -84,8 +84,11 @@ chosen to defer to here so that we don't forget them.
 
 ### Bugs fixed during this work
 
-This section should list any bugs we encounter during development
-that we fixed.
+This section should list any bugs we encounter during
+development that we fixed. You should also scan the relevant
+github bug tracker to see if there are any directly related
+bugs that we should either resolve as part of this master
+plan, or at least be aware of when planning.
 
 ### Back brief
 
