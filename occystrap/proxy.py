@@ -94,6 +94,13 @@ class _ProxyState:
         # decremented when processing completes. Blobs
         # are only deleted when refcount reaches 0.
         self.blob_refcounts = {}
+        # Manifests and blobs successfully pushed to us during
+        # this session. A push client (docker/buildkit) verifies
+        # the manifest it just pushed with a HEAD+GET; without an
+        # upstream configured we must answer from here or the
+        # client reports a spurious push failure.
+        self.served_manifests = {}
+        self.served_blob_sizes = {}
         self.lock = threading.Lock()
 
         # Semaphore limiting concurrent manifest
@@ -400,6 +407,21 @@ class ProxyRegistryHandler(
                 self.end_headers()
                 return
 
+            with self.state.lock:
+                served_size = (
+                    self.state.served_blob_sizes.get(
+                        digest_hex))
+            if served_size is not None:
+                self.send_response(200)
+                self.send_header(
+                    'Docker-Content-Digest',
+                    'sha256:%s' % digest_hex)
+                self.send_header(
+                    'Content-Length',
+                    str(served_size))
+                self.end_headers()
+                return
+
             # Check downstream if pull-through
             if self.state.upstream_uri:
                 self._handle_head_blob(path)
@@ -580,6 +602,10 @@ class ProxyRegistryHandler(
                 upload_path
             del self.state.uploads[upload_uuid]
 
+        with self.state.lock:
+            self.state.served_blob_sizes[expected_hex] = \
+                os.path.getsize(upload_path)
+
         blob_size = os.path.getsize(upload_path)
         LOG.debug(
             'Received blob sha256:%s... (%d bytes)',
@@ -606,6 +632,9 @@ class ProxyRegistryHandler(
         semaphore.
         """
         data = self._read_body()
+        content_type = self.headers.get(
+            'Content-Type',
+            constants.MEDIA_TYPE_DOCKER_MANIFEST_V2)
 
         # Compute manifest digest
         h = hashlib.sha256()
@@ -713,6 +742,18 @@ class ProxyRegistryHandler(
             LOG.info(
                 'Successfully processed %s:%s',
                 repo_name, tag)
+
+            digest_ref = 'sha256:%s' % manifest_digest
+            record = {
+                'data': data,
+                'content_type': content_type,
+                'digest': digest_ref,
+            }
+            with self.state.lock:
+                self.state.served_manifests[
+                    (repo_name, tag)] = record
+                self.state.served_manifests[
+                    (repo_name, digest_ref)] = record
 
             self.send_response(201)
             self.send_header(
@@ -968,6 +1009,24 @@ class ProxyRegistryHandler(
         from upstream, filters, pushes to downstream,
         then serves from downstream.
         """
+        repo_name, ref = (
+            self._parse_manifest_path(path))
+        with self.state.lock:
+            rec = self.state.served_manifests.get(
+                (repo_name, ref))
+        if rec:
+            self.send_response(200)
+            self.send_header(
+                'Content-Type', rec['content_type'])
+            self.send_header(
+                'Docker-Content-Digest', rec['digest'])
+            self.send_header(
+                'Content-Length',
+                str(len(rec['data'])))
+            self.end_headers()
+            self.wfile.write(rec['data'])
+            return
+
         if not self.state.upstream_uri:
             self.send_response(404)
             self.end_headers()
@@ -1107,6 +1166,23 @@ class ProxyRegistryHandler(
         Returns 200 if the image exists in downstream,
         404 otherwise. Does not trigger upstream fetch.
         """
+        repo_name, ref = (
+            self._parse_manifest_path(path))
+        with self.state.lock:
+            rec = self.state.served_manifests.get(
+                (repo_name, ref))
+        if rec:
+            self.send_response(200)
+            self.send_header(
+                'Content-Type', rec['content_type'])
+            self.send_header(
+                'Docker-Content-Digest', rec['digest'])
+            self.send_header(
+                'Content-Length',
+                str(len(rec['data'])))
+            self.end_headers()
+            return
+
         if not self.state.upstream_uri:
             self.send_response(404)
             self.end_headers()
