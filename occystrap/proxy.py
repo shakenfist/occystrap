@@ -99,6 +99,13 @@ class _ProxyState:
         # the manifest it just pushed with a HEAD+GET; without an
         # upstream configured we must answer from here or the
         # client reports a spurious push failure.
+        #
+        # These are session-lifetime by design and never pruned:
+        # the intended use is a short burst of pushes (e.g. a
+        # kolla-build run) where the entries are small (manifests
+        # are a few KB; blob sizes are a single int each). A proxy
+        # left running across very many pushes would accumulate
+        # memory; bound this if that becomes a real deployment.
         self.served_manifests = {}
         self.served_blob_sizes = {}
         self.lock = threading.Lock()
@@ -597,16 +604,14 @@ class ProxyRegistryHandler(
             self.end_headers()
             return
 
+        blob_size = os.path.getsize(upload_path)
         with self.state.lock:
             self.state.blobs[expected_hex] = \
                 upload_path
             del self.state.uploads[upload_uuid]
-
-        with self.state.lock:
             self.state.served_blob_sizes[expected_hex] = \
-                os.path.getsize(upload_path)
+                blob_size
 
-        blob_size = os.path.getsize(upload_path)
         LOG.debug(
             'Received blob sha256:%s... (%d bytes)',
             expected_hex[:12], blob_size)
@@ -1009,15 +1014,17 @@ class ProxyRegistryHandler(
         from upstream, filters, pushes to downstream,
         then serves from downstream.
         """
-        repo_name, ref = (
+        repo_name, tag = (
             self._parse_manifest_path(path))
         with self.state.lock:
             rec = self.state.served_manifests.get(
-                (repo_name, ref))
+                (repo_name, tag))
         if rec:
             self.send_response(200)
             self.send_header(
-                'Content-Type', rec['content_type'])
+                'Content-Type',
+                sanitize_header_value(
+                    rec['content_type']))
             self.send_header(
                 'Docker-Content-Digest', rec['digest'])
             self.send_header(
@@ -1031,9 +1038,6 @@ class ProxyRegistryHandler(
             self.send_response(404)
             self.end_headers()
             return
-
-        repo_name, tag = (
-            self._parse_manifest_path(path))
 
         downstream_img = (
             self._get_downstream_image(repo_name))
@@ -1166,15 +1170,17 @@ class ProxyRegistryHandler(
         Returns 200 if the image exists in downstream,
         404 otherwise. Does not trigger upstream fetch.
         """
-        repo_name, ref = (
+        repo_name, tag = (
             self._parse_manifest_path(path))
         with self.state.lock:
             rec = self.state.served_manifests.get(
-                (repo_name, ref))
+                (repo_name, tag))
         if rec:
             self.send_response(200)
             self.send_header(
-                'Content-Type', rec['content_type'])
+                'Content-Type',
+                sanitize_header_value(
+                    rec['content_type']))
             self.send_header(
                 'Docker-Content-Digest', rec['digest'])
             self.send_header(
@@ -1187,9 +1193,6 @@ class ProxyRegistryHandler(
             self.send_response(404)
             self.end_headers()
             return
-
-        repo_name, tag = (
-            self._parse_manifest_path(path))
 
         downstream_img = (
             self._get_downstream_image(repo_name))
