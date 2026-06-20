@@ -498,6 +498,239 @@ class TestProxyManifest(unittest.TestCase):
             str(dest_spec))
 
 
+class TestProxyPostPushVerification(unittest.TestCase):
+    """A push client (docker/buildkit) verifies the
+    manifest it just pushed with a HEAD+GET. When the
+    proxy has no upstream configured it must answer
+    these from the manifests it accepted this session,
+    otherwise the client reports a spurious push
+    failure (the bug that broke kolla-build's
+    ``docker buildx build --push``)."""
+
+    def setUp(self):
+        # No upstream: push-only proxy, as used in CI.
+        self.state = _ProxyState(
+            downstream_uri='localhost:9999')
+        self.server, self.port = _start_test_proxy(
+            self.state)
+        self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
+
+    def tearDown(self):
+        self.server.shutdown()
+        for path in self.state.blobs.values():
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    @mock.patch(
+        'occystrap.proxy.PipelineBuilder')
+    def _push_image(self, repo, tag, mock_builder_cls):
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_output = mock.MagicMock()
+        mock_output.requires_ordered_layers = True
+        mock_output.fetch_callback = \
+            mock.MagicMock(return_value=True)
+        mock_builder.build_output.return_value = \
+            mock_output
+
+        (manifest_bytes, config_bytes,
+         config_hex, layer_blobs) = \
+            _make_test_image()
+
+        _upload_blob(
+            self.sess, self.base, repo, config_bytes)
+        for compressed, _, _ in layer_blobs:
+            _upload_blob(
+                self.sess, self.base, repo, compressed)
+
+        r = self.sess.put(
+            '%s/v2/%s/manifests/%s'
+            % (self.base, repo, tag),
+            data=manifest_bytes,
+            headers={
+                'Content-Type':
+                    constants
+                    .MEDIA_TYPE_DOCKER_MANIFEST_V2
+            })
+        self.assertEqual(r.status_code, 201)
+        return manifest_bytes, config_hex
+
+    def test_head_manifest_by_tag_after_push(self):
+        manifest_bytes, _ = self._push_image(
+            'test/img', 'latest')
+        digest = 'sha256:%s' % hashlib.sha256(
+            manifest_bytes).hexdigest()
+
+        r = self.sess.head(
+            '%s/v2/test/img/manifests/latest'
+            % self.base)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(
+            r.headers.get('Docker-Content-Digest'),
+            digest)
+        self.assertEqual(
+            r.headers.get('Content-Length'),
+            str(len(manifest_bytes)))
+
+    def test_get_manifest_by_tag_after_push(self):
+        manifest_bytes, _ = self._push_image(
+            'test/img', 'latest')
+
+        r = self.sess.get(
+            '%s/v2/test/img/manifests/latest'
+            % self.base)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, manifest_bytes)
+
+    def test_head_and_get_manifest_by_digest(self):
+        manifest_bytes, _ = self._push_image(
+            'test/img', 'latest')
+        digest = 'sha256:%s' % hashlib.sha256(
+            manifest_bytes).hexdigest()
+
+        # buildkit verifies by digest, not just tag.
+        r = self.sess.head(
+            '%s/v2/test/img/manifests/%s'
+            % (self.base, digest))
+        self.assertEqual(r.status_code, 200)
+
+        r = self.sess.get(
+            '%s/v2/test/img/manifests/%s'
+            % (self.base, digest))
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, manifest_bytes)
+
+    def test_head_blob_404_after_cleanup(self):
+        # Blobs are cleaned from disk after processing. We must
+        # NOT advertise them as present afterwards: a push client
+        # uses HEAD blob as a pre-upload existence check, and a
+        # false 200 would make it skip an upload the proxy can no
+        # longer satisfy. Existence is only reported while the
+        # blob is still on disk (verification needs the manifest,
+        # not the blobs).
+        _, config_hex = self._push_image(
+            'test/img', 'latest')
+        self.assertEqual(len(self.state.blobs), 0)
+
+        r = self.sess.head(
+            '%s/v2/test/img/blobs/sha256:%s'
+            % (self.base, config_hex))
+        self.assertEqual(r.status_code, 404)
+
+    def test_unknown_manifest_still_404(self):
+        # An image we never received must still 404.
+        r = self.sess.head(
+            '%s/v2/test/img/manifests/latest'
+            % self.base)
+        self.assertEqual(r.status_code, 404)
+        r = self.sess.get(
+            '%s/v2/test/img/manifests/latest'
+            % self.base)
+        self.assertEqual(r.status_code, 404)
+
+    @mock.patch('occystrap.proxy.PipelineBuilder')
+    def test_manifest_without_content_type_uses_media_type(
+            self, mock_builder_cls):
+        # An OCI client may omit Content-Type; the served
+        # verification response should fall back to the
+        # manifest's own mediaType, not blindly assume one.
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_output = mock.MagicMock()
+        mock_output.requires_ordered_layers = True
+        mock_output.fetch_callback = \
+            mock.MagicMock(return_value=True)
+        mock_builder.build_output.return_value = \
+            mock_output
+
+        (manifest_bytes, config_bytes,
+         config_hex, layer_blobs) = _make_test_image()
+        _upload_blob(
+            self.sess, self.base, 'test/img', config_bytes)
+        for compressed, _, _ in layer_blobs:
+            _upload_blob(
+                self.sess, self.base, 'test/img', compressed)
+
+        # PUT with no Content-Type header.
+        r = self.sess.put(
+            '%s/v2/test/img/manifests/latest' % self.base,
+            data=manifest_bytes)
+        self.assertEqual(r.status_code, 201)
+
+        r = self.sess.head(
+            '%s/v2/test/img/manifests/latest' % self.base)
+        self.assertEqual(r.status_code, 200)
+        # _make_test_image stamps the Docker v2 mediaType.
+        self.assertEqual(
+            r.headers.get('Content-Type'),
+            constants.MEDIA_TYPE_DOCKER_MANIFEST_V2)
+
+
+class TestProxyVerificationWithUpstream(unittest.TestCase):
+    """With pull-through enabled the verification cache must
+    not be used: the proxy filters images before pushing
+    downstream (changing layer/manifest digests), so a pull
+    must be served the filtered downstream copy, never the
+    raw bytes the client pushed."""
+
+    def setUp(self):
+        self.state = _ProxyState(
+            downstream_uri='localhost:9999',
+            upstream_uri='localhost:9998')
+        self.server, self.port = _start_test_proxy(
+            self.state)
+        self.base = 'http://127.0.0.1:%d' % self.port
+        self.sess = _no_proxy_session()
+
+    def tearDown(self):
+        self.server.shutdown()
+        for path in self.state.blobs.values():
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    @mock.patch('occystrap.proxy.PipelineBuilder')
+    def test_cache_not_populated_or_consulted(
+            self, mock_builder_cls):
+        mock_builder = mock.MagicMock()
+        mock_builder_cls.return_value = mock_builder
+        mock_output = mock.MagicMock()
+        mock_output.requires_ordered_layers = True
+        mock_output.fetch_callback = \
+            mock.MagicMock(return_value=True)
+        mock_builder.build_output.return_value = \
+            mock_output
+
+        (manifest_bytes, config_bytes,
+         config_hex, layer_blobs) = _make_test_image()
+        _upload_blob(
+            self.sess, self.base, 'test/img', config_bytes)
+        for compressed, _, _ in layer_blobs:
+            _upload_blob(
+                self.sess, self.base, 'test/img', compressed)
+
+        r = self.sess.put(
+            '%s/v2/test/img/manifests/latest' % self.base,
+            data=manifest_bytes,
+            headers={
+                'Content-Type':
+                    constants.MEDIA_TYPE_DOCKER_MANIFEST_V2
+            })
+        self.assertEqual(r.status_code, 201)
+
+        # Nothing cached in pull-through mode, and a HEAD is not
+        # answered from cache (it falls through to the unreachable
+        # downstream and 404s rather than returning a stale 200).
+        self.assertEqual(len(self.state.served_manifests), 0)
+        r = self.sess.head(
+            '%s/v2/test/img/manifests/latest' % self.base)
+        self.assertEqual(r.status_code, 404)
+
+
 class TestProxyInput(unittest.TestCase):
     """Tests for _ProxyInput synthetic input."""
 
