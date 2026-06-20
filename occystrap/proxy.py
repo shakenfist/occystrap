@@ -60,7 +60,7 @@ class _ProxyState:
     """Shared state between the proxy HTTP handler
     threads and the main process.
 
-    All mutations to uploads, blobs, blob_refcounts,
+    All mutations to uploads, blobs,
     active_processing, pull_locks, downstream_images,
     and statistics must be protected by the lock.
     """
@@ -87,13 +87,15 @@ class _ProxyState:
 
         # In-progress uploads: uuid -> {path, offset}
         self.uploads = {}
-        # Completed blobs: digest_hex -> temp file path
+        # Completed blobs: digest_hex -> temp file path.
+        # Blobs are retained for the lifetime of the proxy
+        # (cleaned up at shutdown) rather than deleted after the
+        # manifest that referenced them. A blob uploaded by one
+        # push must stay available to other concurrent pushes that
+        # share it -- e.g. a common base layer: the client is told
+        # via HEAD that the blob already exists and skips
+        # re-uploading it, so the proxy must keep it until it stops.
         self.blobs = {}
-        # Blob reference counts: digest_hex -> int.
-        # Incremented when a manifest references a blob,
-        # decremented when processing completes. Blobs
-        # are only deleted when refcount reaches 0.
-        self.blob_refcounts = {}
         # Manifests successfully pushed to us this session, kept
         # only when no upstream is configured (push-only mode). A
         # push client (docker/buildkit) verifies the manifest it
@@ -669,16 +671,11 @@ class ProxyRegistryHandler(
         referenced_blobs.add(
             config_digest.split(':')[1])
 
-        # Under lock: increment refcounts, snapshot
-        # blob paths, and mark processing as active.
-        # Refcounts must be incremented before
-        # acquiring the semaphore so blobs are
-        # protected even while waiting for a slot.
+        # Under lock: snapshot the paths of the blobs this manifest
+        # references and mark processing as active. Blobs are
+        # retained for the session, so the snapshot stays valid for
+        # the duration of processing without any refcounting.
         with self.state.lock:
-            for hex_digest in referenced_blobs:
-                rc = self.state.blob_refcounts
-                rc[hex_digest] = (
-                    rc.get(hex_digest, 0) + 1)
             blobs_snapshot = {
                 k: v
                 for k, v in self.state.blobs.items()
@@ -708,26 +705,11 @@ class ProxyRegistryHandler(
         finally:
             self.state.processing_semaphore.release()
 
-            # Decrement refcounts and clean up blobs
-            # that are no longer referenced by any
-            # in-flight manifest processing.
+            # Blobs are intentionally retained for the session (see
+            # _ProxyState.blobs) so concurrent pushes sharing a
+            # layer can still find it; they are unlinked when the
+            # proxy shuts down.
             with self.state.lock:
-                for hex_digest in referenced_blobs:
-                    rc = self.state.blob_refcounts
-                    count = rc.get(hex_digest, 1) - 1
-                    if count <= 0:
-                        rc.pop(hex_digest, None)
-                        blob_path = (
-                            self.state.blobs.pop(
-                                hex_digest, None))
-                        if blob_path:
-                            try:
-                                os.unlink(blob_path)
-                            except OSError:
-                                pass
-                    else:
-                        rc[hex_digest] = count
-
                 self.state.active_processing -= 1
 
         # Send HTTP response after cleanup so state

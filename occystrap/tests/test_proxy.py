@@ -414,10 +414,12 @@ class TestProxyManifest(unittest.TestCase):
 
     @mock.patch(
         'occystrap.proxy.PipelineBuilder')
-    def test_blobs_cleaned_up_after_processing(
+    def test_blobs_retained_after_processing(
             self, mock_builder_cls):
-        """Blobs referenced by a manifest are cleaned
-        up after processing."""
+        """Blobs referenced by a manifest are retained
+        after processing (cleaned up only at proxy
+        shutdown), so a concurrent push sharing a layer
+        can still find it."""
         mock_builder = mock.MagicMock()
         mock_builder_cls.return_value = mock_builder
 
@@ -449,8 +451,9 @@ class TestProxyManifest(unittest.TestCase):
             data=manifest_bytes)
         self.assertEqual(r.status_code, 201)
 
-        # Blobs should be cleaned up
-        self.assertEqual(len(self.state.blobs), 0)
+        # Blobs are retained for the session, not deleted
+        # after the manifest that referenced them.
+        self.assertTrue(len(self.state.blobs) > 0)
 
     @mock.patch(
         'occystrap.proxy.PipelineBuilder')
@@ -603,22 +606,25 @@ class TestProxyPostPushVerification(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.content, manifest_bytes)
 
-    def test_head_blob_404_after_cleanup(self):
-        # Blobs are cleaned from disk after processing. We must
-        # NOT advertise them as present afterwards: a push client
-        # uses HEAD blob as a pre-upload existence check, and a
-        # false 200 would make it skip an upload the proxy can no
-        # longer satisfy. Existence is only reported while the
-        # blob is still on disk (verification needs the manifest,
-        # not the blobs).
+    def test_head_blob_200_retained_after_processing(self):
+        # Blobs are retained for the session, so a HEAD after
+        # processing correctly reports the blob as present -- and
+        # because it is genuinely still on disk, a concurrent push
+        # that skips re-uploading it can still be satisfied. (This
+        # is safe precisely because retention keeps the bytes; the
+        # earlier hazard was advertising a blob that had been
+        # deleted.)
         _, config_hex = self._push_image(
             'test/img', 'latest')
-        self.assertEqual(len(self.state.blobs), 0)
+        self.assertTrue(len(self.state.blobs) > 0)
 
         r = self.sess.head(
             '%s/v2/test/img/blobs/sha256:%s'
             % (self.base, config_hex))
-        self.assertEqual(r.status_code, 404)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(
+            r.headers.get('Docker-Content-Digest'),
+            'sha256:%s' % config_hex)
 
     def test_unknown_manifest_still_404(self):
         # An image we never received must still 404.
@@ -894,10 +900,6 @@ class TestProxyState(unittest.TestCase):
         self.assertFalse(
             state.processing_semaphore
             .acquire(blocking=False))
-
-    def test_blob_refcounts_initialized(self):
-        state = _ProxyState()
-        self.assertEqual(state.blob_refcounts, {})
 
     def test_active_processing_initialized(self):
         state = _ProxyState()
@@ -1281,8 +1283,6 @@ class TestBlobRefcounting(unittest.TestCase):
                     .MEDIA_TYPE_DOCKER_MANIFEST_V2
             })
         self.assertEqual(r.status_code, 201)
-        self.assertEqual(
-            self.state.blob_refcounts, {})
         self.assertEqual(
             self.state.active_processing, 0)
 
