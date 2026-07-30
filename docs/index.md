@@ -49,6 +49,8 @@ occystrap process registry://docker.io/library/python:3.11 tar://python.tar \
 - [Use Cases](use-cases.md) - Common scenarios and examples
 - [Performance Tuning](performance.md) - Parallelism flags, connection
   efficiency, and recommended settings
+- [Development](development.md) - Setup, tests, releasing, and the PR
+  bot commands
 
 ## Key Concepts
 
