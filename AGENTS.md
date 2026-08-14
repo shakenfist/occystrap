@@ -9,6 +9,21 @@ input -> filter -> output pipeline pattern. It can fetch images from registries,
 local Docker daemons, or tarballs, process them through filters, and write to
 various output formats.
 
+## Where the documentation lives
+
+| Question | Document |
+|----------|----------|
+| How is it put together? | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| How does the pipeline work? | [docs/pipeline.md](docs/pipeline.md) |
+| What are the commands and URIs? | [docs/command-reference.md](docs/command-reference.md) |
+| How do the Docker, Quay, proxy, parallelism and HTTP internals work? | [docs/internals.md](docs/internals.md) |
+| How do I tune it? | [docs/performance.md](docs/performance.md) |
+| How do I build, test and release it? | [docs/development.md](docs/development.md) |
+
+[docs/index.md](docs/index.md) is the full index. New user-visible
+documentation belongs in `docs/`; this file and `ARCHITECTURE.md` are a
+summary and an index into it.
+
 ## Key Patterns
 
 ### Adding a New Filter

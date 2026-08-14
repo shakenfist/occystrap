@@ -46,6 +46,9 @@ occystrap process registry://docker.io/library/python:3.11 tar://python.tar \
 
 ### Guides
 
+- [Implementation Internals](internals.md) - Quay discovery, the Docker
+  daemon and registry integrations, the filtering proxy, parallelism and
+  caching, and the HTTP layer
 - [Use Cases](use-cases.md) - Common scenarios and examples
 - [Performance Tuning](performance.md) - Parallelism flags, connection
   efficiency, and recommended settings
