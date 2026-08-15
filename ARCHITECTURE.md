@@ -12,6 +12,7 @@ occystrap/
     check.py             # Image validation checks for the check command
     constants.py         # Element/compression type constants, media types
     compression.py       # Compression utilities (gzip/zstd detection & streaming)
+    tarformat.py         # USTAR/PAX tar format selection
     common.py            # Shared utilities
     util.py              # Additional utilities
     uri.py               # URI parsing for pipeline specification
@@ -45,51 +46,38 @@ occystrap/
         ocibundle.py     # Creates OCI runtime bundles
         mounts.py        # Creates overlay mount-based extraction
     tests/               # Unit tests (run with tox -epy3)
-        __init__.py
-        test_compression.py
-        test_check.py
-        test_info.py
-        test_inspect.py
-        test_registry_output.py
-        test_layer_cache.py
-        test_dockerpush.py
-        test_proxy.py
-        test_quay.py
-        test_tarformat.py
 
 deploy/
     occystrap_ci/
         tests/           # Functional tests (run in CI)
-            test_check.py
-            test_dir_deep_images.py
-            test_docker_input.py
-            test_docker_output.py
-            test_exclude_filter.py
-            test_filter_chaining.py
-            test_info.py
-            test_inspect_filter.py
-            test_normalize_timestamps.py
-            test_oci_hello_world.py
-            test_quay_bulk.py
-            test_registry_push.py
-            test_search_layers.py
-            test_whiteout.py
+
+docs/                        # All user-facing documentation
+    index.md                 # Documentation index
+    installation.md          # Install and verify
+    command-reference.md     # Every command, flag and URI
+    pipeline.md              # Pipeline, elements, interface contracts
+    internals.md             # Quay, Docker, proxy, parallelism, HTTP
+    performance.md           # Tuning parallelism and connection reuse
+    use-cases.md             # Worked scenarios
+    development.md           # Build, test, release, PR bot commands
+    docker-tarball-formats.md  # Docker save tarball reference
+    tar-format-selection.md  # Choosing a tar format
+    plans/                   # Design and phase plans
 
 pyproject.toml               # Build config (setuptools + setuptools_scm)
 tox.ini                      # Test runner configuration
 
-tools/
-    benchmark.sh             # Performance benchmark script
-    check-log-levels.sh      # Pre-commit log verbosity checker
+tools/                       # Benchmarking, pre-commit helpers, and the
+                             # PR review/automation scripts
 
 .github/
-    workflows/
-        codeql-analysis.yml    # CodeQL security scanning
-        functional-tests.yml   # CI functional tests
-        python-unit-tests.yml  # CI unit tests
-        release.yml            # Automated PyPI release pipeline
-    actionlint.yaml            # actionlint configuration
+    workflows/               # CI, release, CodeQL, and the PR bot workflows
+    actionlint.yaml          # actionlint configuration
 ```
+
+Individual test files, `tools/` scripts and workflow files are
+deliberately not listed. They change often and the directory itself is
+the durable fact; listing each one only creates something to go stale.
 
 ## Pipeline pattern
 
@@ -105,8 +93,11 @@ sanitisation rules are all documented in
 [docs/pipeline.md](docs/pipeline.md).
 
 The `info` and `check` commands are read-only consumers of the same
-sources; their output is described in
-[docs/command-reference.md](docs/command-reference.md).
+sources. Their flags and output are described in
+[docs/command-reference.md](docs/command-reference.md); how they are
+implemented — the `check.py` module split, the fast/full boundary and
+the `main.py` info helpers — is in
+[docs/internals.md](docs/internals.md#metadata-only-commands).
 
 ## Command surface
 

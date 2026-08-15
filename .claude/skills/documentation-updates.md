@@ -15,9 +15,9 @@ documentation before committing.
 | New CLI flag | `docs/command-reference.md` |
 | New command | `docs/command-reference.md` |
 | New filter | `docs/command-reference.md`, `docs/pipeline.md` |
-| New input source | `docs/command-reference.md`, `docs/pipeline.md` |
-| New output writer | `docs/command-reference.md`, `docs/pipeline.md` |
-| Compression changes | `docs/command-reference.md` |
+| New input source | `docs/command-reference.md`, `docs/pipeline.md`, `docs/internals.md` if it has non-obvious mechanics |
+| New output writer | `docs/command-reference.md`, `docs/pipeline.md`, `docs/internals.md` if it has non-obvious mechanics |
+| Compression changes | `docs/command-reference.md`, `docs/internals.md` |
 | URI scheme changes | `docs/command-reference.md` |
 | Pipeline behavior | `docs/pipeline.md` |
 | Proxy, Quay, parallelism, caching, HTTP | `docs/internals.md` |

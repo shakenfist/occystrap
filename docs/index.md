@@ -43,6 +43,10 @@ occystrap process registry://docker.io/library/python:3.11 tar://python.tar \
   URI schemes, and filters
 - [Pipeline Architecture](pipeline.md) - Understanding inputs, filters, and
   outputs
+- [Docker Tarball Formats](docker-tarball-formats.md) - Docker save tarball
+  format reference
+- [Choosing a Tar Format](tar-format-selection.md) - Which tar format suits a
+  given destination
 
 ### Guides
 
@@ -54,6 +58,9 @@ occystrap process registry://docker.io/library/python:3.11 tar://python.tar \
   efficiency, and recommended settings
 - [Development](development.md) - Setup, tests, releasing, and the PR
   bot commands
+
+Design and phase plans, current and historical, live in
+[plans/](plans/).
 
 ## Key Concepts
 

@@ -79,6 +79,45 @@ Thread safety for concurrent multi-image processing:
   `httpx.Client` and thread pool.
 - `LayerCache`: already thread-safe via `threading.Lock`.
 
+## Metadata-Only Commands
+
+`info` and `check` are read-only consumers of an input source. Neither
+builds an output writer, and in `--fast` mode neither downloads a layer.
+Both rely on `get_manifest()` and `get_config()` returning `None` when a
+source cannot answer, rather than raising — see the input contract in
+[pipeline.md](pipeline.md#input-sources).
+
+### The info command
+
+`_build_info(input_source)` in `main.py` assembles a dict from whatever
+metadata the source can provide, degrading as the source allows: a
+registry input yields both manifest and config, a docker or tarfile input
+config only, and `dockerpush://` neither. `_print_info_text(info)` renders
+the human-readable form, and the `-O/--output-format` global option
+selects text or JSON. Sizes are formatted by `util.format_size()`, shared
+with `check.py` rather than reimplemented.
+
+### The check command
+
+`check.py` separates the accumulator from the checks. `CheckResults`
+collects `error()`, `warning()` and `info()` entries, each tagged with a
+check id, and exposes `has_errors`, `error_count` and `warning_count`.
+
+The checks split along the fast/full boundary:
+
+| Function | Mode | What it needs |
+|----------|------|---------------|
+| `check_metadata(...)` | both | Manifest and config blob only |
+| `check_layers(...)` | full only | Downloads and decompresses every layer |
+
+`check_metadata()` calls `validate_manifest_structure()` and compares
+manifest layers against config `diff_ids`. `check_layers()` verifies each
+diff_id by decompressing the layer, and scans tar entries via
+`_check_tar_entry()` and `_check_whiteout()`.
+
+`check_cmd` always runs `check_metadata()` and adds `check_layers()` only
+when `--fast` is absent. It exits non-zero when `results.has_errors` is
+true, which is what makes the command usable as a CI gate.
 
 ## Docker Daemon Hybrid Streaming
 
@@ -457,7 +496,8 @@ formats:
 - **Detection**: Magic byte and media type detection for gzip/zstd
 - **Streaming decompression**: Used by registry input for downloading layers
 - **Streaming compression**: Used by registry output for uploading layers
-- **Configurable output**: `--compression` CLI option (gzip default, zstd optional)
+- **Configurable output**: `--compression` CLI option (gzip default, zstd
+  optional)
 - **Deterministic output**: gzip uses `mtime=0` to suppress header timestamps;
   zstd is inherently deterministic (no timestamps in format)
 
@@ -472,8 +512,8 @@ Media type constants in `constants.py` define Docker and OCI layer types:
 
 ## HTTP Layer
 
-Registry HTTP communication uses httpx (`util.py`), providing connection pooling,
-HTTP/2 support, and structured retry/rate-limiting.
+Registry HTTP communication uses httpx (`util.py`), providing connection
+pooling, HTTP/2 support, and structured retry/rate-limiting.
 
 ### httpx and Connection Pooling
 
@@ -552,4 +592,3 @@ The `--retries` and `--rate-limit` global CLI options are stored in the Click
 context and passed through `PipelineBuilder` to `Image`, `RegistryWriter`, and
 `QuayClient` constructors, which forward them to `create_client()` and
 `request_url()`.
-
