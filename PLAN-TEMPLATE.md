@@ -13,10 +13,13 @@ external concepts (Docker Registry V2, OCI specs, container image
 formats, compression), research as needed to give a confident
 answer. Flag any uncertainty explicitly rather than guessing.
 
-Consult `ARCHITECTURE.md` for the pipeline pattern, element types,
-input/filter/output interfaces, and cross-cutting concerns (layer
-caching, parallel downloads, compression). Consult `CLAUDE.md` for
-build commands and project conventions.
+Consult `docs/pipeline.md` for the pipeline pattern, element types
+and the input/filter/output interfaces, and `docs/internals.md` for
+cross-cutting concerns (layer caching, parallel downloads,
+compression, the proxy, the HTTP layer). `ARCHITECTURE.md` is a
+summary and an index into `docs/`, and `docs/index.md` is the full
+index. Consult `CLAUDE.md` for build commands and project
+conventions.
 
 When we get to detailed planning, I prefer a separate plan file
 per detailed phase. These separate files should be named for the

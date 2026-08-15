@@ -257,7 +257,10 @@ You are reviewing Pull Request #${pr_number} for the Shaken Fist occystrap proje
 ## Your Task
 
 0. Read the contents of AGENTS.md, ARCHITECTURE.md, and README.md to
-   gather context.
+   gather context. ARCHITECTURE.md is a summary and an index -- for
+   detail, read docs/pipeline.md (pipeline structure, element types,
+   input/filter/output interfaces) and docs/internals.md (Docker, Quay,
+   proxy, parallelism, caching, HTTP). docs/index.md lists the rest.
 
 1. Read the PR diff below carefully
 

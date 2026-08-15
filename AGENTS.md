@@ -9,6 +9,22 @@ input -> filter -> output pipeline pattern. It can fetch images from registries,
 local Docker daemons, or tarballs, process them through filters, and write to
 various output formats.
 
+## Where the documentation lives
+
+Three documents cover most of what an agent needs:
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — the module inventory and directory
+  structure, plus an index into the rest.
+- [docs/pipeline.md](docs/pipeline.md) — the pipeline, element types, and
+  the input, filter and output interface contracts.
+- [docs/internals.md](docs/internals.md) — Quay discovery, the Docker
+  integrations, the proxy, parallelism, caching and the HTTP layer.
+
+[docs/index.md](docs/index.md) is the full index; go there for anything
+else rather than looking for a second list in this file. New user-visible
+documentation belongs in `docs/`; this file and `ARCHITECTURE.md` are a
+summary and an index into it.
+
 ## Key Patterns
 
 ### Adding a New Filter

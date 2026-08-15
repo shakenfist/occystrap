@@ -61,12 +61,13 @@ directory:
 - [Use Cases](https://github.com/shakenfist/occystrap/blob/develop/docs/use-cases.md) - Common scenarios and examples, including airgapped mirroring and Podman
 - [Performance Tuning](https://github.com/shakenfist/occystrap/blob/develop/docs/performance.md) - Parallelism, rate limiting, retries, and benchmarking
 - [Pipeline Architecture](https://github.com/shakenfist/occystrap/blob/develop/docs/pipeline.md) - How inputs, filters, and outputs compose
+- [Implementation Internals](https://github.com/shakenfist/occystrap/blob/develop/docs/internals.md) - Quay discovery, the Docker integrations, the proxy, parallelism, caching, and the HTTP layer
 - [Development](https://github.com/shakenfist/occystrap/blob/develop/docs/development.md) - Setup, tests, releasing, and the PR bot commands
 - [Docker Tarball Formats](https://github.com/shakenfist/occystrap/blob/develop/docs/docker-tarball-formats.md) - Docker save tarball format reference
 
 Project reference files:
 
-- [ARCHITECTURE.md](https://github.com/shakenfist/occystrap/blob/develop/ARCHITECTURE.md) - Modules, commands, and pipeline components
+- [ARCHITECTURE.md](https://github.com/shakenfist/occystrap/blob/develop/ARCHITECTURE.md) - Directory structure and an index into docs/
 - [AGENTS.md](https://github.com/shakenfist/occystrap/blob/develop/AGENTS.md) - Guide for AI coding assistants
 - [IMAGE_STORES.md](https://github.com/shakenfist/occystrap/blob/develop/IMAGE_STORES.md) - Image storage format notes
 

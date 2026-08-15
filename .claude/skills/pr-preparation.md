@@ -18,10 +18,15 @@ Must show all checks passing. Fix any failures before proceeding.
 Check whether docs/ needs updates:
 
 - `docs/command-reference.md` for CLI changes
+- `docs/pipeline.md` for pipeline and interface changes
+- `docs/internals.md` for Docker, Quay, proxy, parallelism, caching
+  and HTTP internals
 - `docs/use-cases.md` for new workflows
-- `README.md` for user-facing changes
+- `docs/index.md` when adding a document to `docs/`
+- `README.md` only when the pitch, install story or curated links change
 - `AGENTS.md` for pattern changes
-- `ARCHITECTURE.md` for structural changes
+- `ARCHITECTURE.md` for structural changes -- the module inventory or
+  directory structure. It is a summary and an index into `docs/`
 
 ### 3. Plan File Updated
 
