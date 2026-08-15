@@ -182,6 +182,8 @@ jobs:
 
           occystrap is a Docker/OCI container image processing tool. Read
           AGENTS.md and ARCHITECTURE.md to understand the project structure.
+          ARCHITECTURE.md is a summary and an index into docs/ -- for detail,
+          read docs/pipeline.md and docs/internals.md.
 
           ## Test Failures
 

@@ -6,6 +6,14 @@ The parts of occystrap that are neither pipeline structure (see
 Quay, the Docker daemon and registry integrations, the filtering proxy,
 the parallelism and caching machinery, and the HTTP layer.
 
+Several topics appear in both this file and `pipeline.md`, at different
+altitudes. **`pipeline.md` owns what a behaviour is and why it exists;
+this file owns how the modules implement it.** When you change one of
+those behaviours, a change to the observable contract belongs in
+`pipeline.md` and a change to the mechanism belongs here — and if the
+mechanism change makes `pipeline.md`'s description wrong rather than
+merely brief, `pipeline.md` is the one that has to move.
+
 ## Quay.io Bulk Image Discovery
 
 The `quay://` URI scheme enables discovering and fetching multiple images
@@ -13,7 +21,7 @@ from a quay.io organization by tag. Unlike all other input sources (which
 produce exactly one image), `quay://` is a **multi-image** input that
 resolves to zero or many images.
 
-## Architecture
+### Resolver architecture
 
 The `quay://` scheme is not implemented as an `ImageInput` subclass.
 Instead, it is a **resolver** that expands a single URI into a list of
@@ -40,7 +48,7 @@ build a standard registry.Image input and run
 through the existing pipeline
 ```
 
-## Module: `occystrap/quay.py`
+### Module: `occystrap/quay.py`
 
 - `QuayClient` - Wraps the quay.io proprietary REST API v1
   (`/api/v1/`), providing `list_repositories()` (paginated, opaque
@@ -52,7 +60,7 @@ through the existing pipeline
 - `_check_one_repo()` - Per-repo tag check helper, designed to run in
   the thread pool. Handles tag existence and since-date filtering.
 
-## Command Integration
+### Command integration
 
 The `info` and `process` commands in `main.py` detect the `quay` scheme
 before calling `PipelineBuilder`. A helper `_resolve_quay_images()`
@@ -100,9 +108,8 @@ Layers are still buffered until `manifest.json` arrives for ordering.
 When inspect data is unavailable or the pre-computed manifest differs from
 the actual `manifest.json`, occystrap falls back to buffered processing.
 
-See [docs/docker-tarball-formats.md](docker-tarball-formats.md) for
-detailed documentation on tarball formats, entry ordering, and the inspect
-API.
+See [docker-tarball-formats.md](docker-tarball-formats.md) for detailed
+documentation on tarball formats, entry ordering, and the inspect API.
 
 ### Streaming Pipeline
 
@@ -468,7 +475,7 @@ Media type constants in `constants.py` define Docker and OCI layer types:
 Registry HTTP communication uses httpx (`util.py`), providing connection pooling,
 HTTP/2 support, and structured retry/rate-limiting.
 
-## httpx and Connection Pooling
+### httpx and Connection Pooling
 
 All registry-facing HTTP requests go through `util.request_url()`, which uses
 httpx instead of requests. Since `httpx.Client` is not thread-safe, each
@@ -506,7 +513,7 @@ and closed after the request — this is the fallback for one-off calls.
 access, since httpx does not natively support Unix sockets. This code is not
 affected by the httpx migration.
 
-## HTTP/2
+### HTTP/2
 
 httpx negotiates HTTP/2 via ALPN during TLS handshake. If the registry
 supports HTTP/2, it is used automatically; otherwise, httpx falls back to
@@ -514,7 +521,7 @@ HTTP/1.1. HTTP/2 provides multiplexed streams over a single connection, which
 can reduce latency when many requests are in flight (e.g., parallel layer
 downloads/uploads).
 
-## Retry Logic
+### Retry Logic
 
 `request_url()` retries on transient failures with exponential backoff
 (base 2 seconds):
@@ -528,7 +535,7 @@ downloads/uploads).
 The retry count defaults to 3 and is configurable via the `--retries` CLI
 flag or `OCCYSTRAP_RETRIES` environment variable.
 
-## Rate Limiting
+### Rate Limiting
 
 The `RateLimiter` class in `util.py` implements a simple token-bucket algorithm
 that enforces a maximum request rate (requests per second). It is thread-safe,
@@ -539,7 +546,7 @@ Rate limiting is enabled via the `--rate-limit` CLI flag or
 `request_url()` calls `rate_limiter.acquire()` before making the HTTP request,
 blocking if needed to maintain the configured rate.
 
-## CLI Integration
+### CLI integration for retries and rate limiting
 
 The `--retries` and `--rate-limit` global CLI options are stored in the Click
 context and passed through `PipelineBuilder` to `Image`, `RegistryWriter`, and

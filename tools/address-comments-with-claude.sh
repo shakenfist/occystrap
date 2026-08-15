@@ -420,6 +420,10 @@ You are addressing a specific review comment on PR #${pr_number} for the Shaken 
 ## Context
 
 First, read AGENTS.md and ARCHITECTURE.md to understand the project structure.
+ARCHITECTURE.md is a summary and an index into docs/ -- for detail, read
+docs/pipeline.md (pipeline structure, element types, input/filter/output
+interfaces) and docs/internals.md (Docker, Quay, proxy, parallelism, caching,
+HTTP). docs/index.md lists the rest.
 
 ## The Review Item to Address
 

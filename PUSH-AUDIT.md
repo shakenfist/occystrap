@@ -41,8 +41,15 @@ before I push:
  * Has `docs/` been updated to reflect any new or changed
    commands? In particular, has `docs/command-reference.md` been
    updated?
- * Has `ARCHITECTURE.md` been updated if this change adds or
+ * Has the detail in `docs/` been updated if this change adds or
    modifies modules, commands, or pipeline components?
+   `docs/pipeline.md` for pipeline structure and interfaces,
+   `docs/internals.md` for the Docker, Quay, proxy, parallelism and
+   HTTP internals.
+ * Has `ARCHITECTURE.md` been updated if this change alters the
+   *shape* of the system — the module inventory or the directory
+   structure? It is a summary and an index, so most changes should
+   not touch it.
 <!-- shared-block: readme-discipline v1 -->
 README discipline (shared block; do not edit -- the canonical
 copy lives in shakenfist/development at

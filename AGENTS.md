@@ -11,16 +11,17 @@ various output formats.
 
 ## Where the documentation lives
 
-| Question | Document |
-|----------|----------|
-| How is it put together? | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| How does the pipeline work? | [docs/pipeline.md](docs/pipeline.md) |
-| What are the commands and URIs? | [docs/command-reference.md](docs/command-reference.md) |
-| How do the Docker, Quay, proxy, parallelism and HTTP internals work? | [docs/internals.md](docs/internals.md) |
-| How do I tune it? | [docs/performance.md](docs/performance.md) |
-| How do I build, test and release it? | [docs/development.md](docs/development.md) |
+Three documents cover most of what an agent needs:
 
-[docs/index.md](docs/index.md) is the full index. New user-visible
+- [ARCHITECTURE.md](ARCHITECTURE.md) — the module inventory and directory
+  structure, plus an index into the rest.
+- [docs/pipeline.md](docs/pipeline.md) — the pipeline, element types, and
+  the input, filter and output interface contracts.
+- [docs/internals.md](docs/internals.md) — Quay discovery, the Docker
+  integrations, the proxy, parallelism, caching and the HTTP layer.
+
+[docs/index.md](docs/index.md) is the full index; go there for anything
+else rather than looking for a second list in this file. New user-visible
 documentation belongs in `docs/`; this file and `ARCHITECTURE.md` are a
 summary and an index into it.
 

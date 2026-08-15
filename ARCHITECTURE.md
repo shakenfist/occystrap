@@ -128,6 +128,7 @@ to pick is [docs/tar-format-selection.md](docs/tar-format-selection.md).
 | Docker tarball format details | [docs/docker-tarball-formats.md](docs/docker-tarball-formats.md) |
 | Choosing a tar format | [docs/tar-format-selection.md](docs/tar-format-selection.md) |
 | What people use it for | [docs/use-cases.md](docs/use-cases.md) |
+| Installing it | [docs/installation.md](docs/installation.md) |
 | Building and testing | [docs/development.md](docs/development.md) |
 
 [docs/index.md](docs/index.md) is the full index.
