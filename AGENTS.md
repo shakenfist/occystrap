@@ -243,14 +243,17 @@ and falls back to periodic log messages in non-TTY environments.
 
 The `tools/` directory contains scripts for automated PR workflows:
 
-- **review-pr-with-claude.sh**: Generates structured JSON code reviews using
-  Claude Code
-- **render-review.py**: Converts review JSON to formatted markdown
-- **create-review-issues.py**: Creates GitHub issues for actionable review items
 - **address-comments-with-claude.sh**: Processes review items and creates
-  commits for fixes
+  commits for fixes. Called by `pr-address-comments.yml`
+- **render-review.py**: Converts review JSON to formatted markdown, and
+  validates it against **review-schema.json** in `--validate` mode
 
-These scripts are used by GitHub Actions workflows in `.github/workflows/`:
+Generating the review is not done here. `pr-re-review.yml` and the
+automated reviewer in CI both call the shared action
+`shakenfist/actions/review-pr-with-claude@main`, and the per-project
+copies of that script were deleted once they had no callers left.
+
+The bot-triggered workflows in `.github/workflows/`:
 
 - `pr-retest.yml` - Re-run tests via `@shakenfist-bot please retest`
 - `pr-fix-tests.yml` - Fix test failures via `@shakenfist-bot please attempt to fix`
