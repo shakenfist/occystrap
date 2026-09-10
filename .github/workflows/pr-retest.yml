@@ -1,10 +1,12 @@
-name: PR Retest
-
 # Triggers a re-run of functional tests when an authorized user comments
 # "@shakenfist-bot please retest"
 #
 # This is useful after bot commits (which don't trigger CI) or when you
 # want to re-run checks without pushing a new commit.
+#
+# Template source: shakenfist/development/templates/ci-review-automation/
+
+name: PR Retest
 
 on:
   issue_comment:
@@ -20,12 +22,21 @@ jobs:
   trigger-retest:
     name: "Trigger retest"
     # Only run on PR comments (not issue comments)
+    # Never on a comment the bot itself posted. The automated review
+    # is model-generated text posted to the pull request, and a review
+    # quoting a trigger phrase would re-fire the lane -- contains()
+    # does not care that the phrase sits inside a quote.
     if: |
       github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
       contains(github.event.comment.body, '@shakenfist-bot please retest')
     runs-on: [self-hosted, static]
     # Just a few gh API calls, so anything beyond this is a hang.
     timeout-minutes: 10
+    outputs:
+      authorized: ${{ steps.trigger.outputs.authorized }}
+      pr_ref: ${{ steps.trigger.outputs.pr-ref }}
+      pr_number: ${{ github.event.issue.number }}
 
     steps:
       - name: Handle trigger
@@ -35,28 +46,75 @@ jobs:
           trigger-phrase: 'please retest'
           reaction: 'rocket'
 
+  retest:
+    name: "Retest PR"
+    needs: trigger-retest
+    if: needs.trigger-retest.outputs.authorized == 'true'
+    runs-on: [self-hosted, static]
+    # A dispatch and a comment, so anything beyond this is a hang.
+    timeout-minutes: 10
+    # Someone commenting the phrase twice should not dispatch the test
+    # suite twice. The dispatched workflow's own concurrency groups
+    # limit the damage downstream, but they cancel a run that has
+    # already started work; not starting it is cheaper. The last
+    # request wins, which is why cancel-in-progress is true: a
+    # cancelled trigger may have dispatched already, and the request
+    # that cancelled it posts its own confirmation.
+    #
+    # The group is on this job rather than on trigger-retest, which is
+    # why the dispatch and the confirmation live here at all.
+    # trigger-retest runs for any non-bot comment carrying the phrase
+    # and decides authorisation inside itself, so a group there would
+    # let an unauthorised commenter cancel an authorised run in flight
+    # -- leaving a dispatched test suite whose only trace on the pull
+    # request is a refusal. This job is entered only once
+    # pr-bot-trigger has said yes, so the group holds authorised
+    # requests against each other and nothing else. pr-re-review.yml
+    # has the same shape for the same reason.
+    concurrency:
+      group: pr-retest-${{ github.event.issue.number }}
+      cancel-in-progress: true
+
+    steps:
       - name: Trigger functional tests
-        if: steps.trigger.outputs.authorized == 'true'
+        id: dispatch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_REF: ${{ steps.trigger.outputs.pr-ref }}
+          PR_REF: ${{ needs.trigger-retest.outputs.pr_ref }}
+          REPO: ${{ github.repository }}
         run: |
           echo "Triggering functional tests on branch: ${PR_REF}"
 
-          gh workflow run functional-tests.yml \
-            --repo "${{ github.repository }}" \
-            --ref "${PR_REF}"
-
-          echo "Functional tests triggered successfully"
+          # Report a failed dispatch rather than claiming success.
+          # Fork pull requests no longer reach this step -- pr-bot-trigger
+          # refuses them and says why -- so what is left is a workflow
+          # file that is missing, renamed or disabled.
+          if gh workflow run functional-tests.yml \
+            --repo "${REPO}" \
+            --ref "${PR_REF}"; then
+            echo "dispatched=true" >> $GITHUB_OUTPUT
+            echo "Functional tests triggered successfully"
+          else
+            echo "dispatched=false" >> $GITHUB_OUTPUT
+            echo "Functional tests dispatch failed"
+          fi
 
       - name: Post confirmation
-        if: steps.trigger.outputs.authorized == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_REF: ${{ steps.trigger.outputs.pr-ref }}
+          PR_REF: ${{ needs.trigger-retest.outputs.pr_ref }}
+          PR_NUMBER: ${{ needs.trigger-retest.outputs.pr_number }}
+          REPO: ${{ github.repository }}
+          DISPATCHED: ${{ steps.dispatch.outputs.dispatched }}
         run: |
-          gh pr comment "${{ github.event.issue.number }}" \
-            --repo "${{ github.repository }}" \
-            --body "Triggered functional tests on branch \`${PR_REF}\`.
+          if [ "${DISPATCHED}" = "true" ]; then
+            gh pr comment "${PR_NUMBER}" \
+              --repo "${REPO}" \
+              --body "Triggered functional tests on branch \`${PR_REF}\`.
 
-          [View workflow runs](https://github.com/${{ github.repository }}/actions/workflows/functional-tests.yml)"
+          [View workflow runs](https://github.com/${REPO}/actions/workflows/functional-tests.yml)"
+          else
+            gh pr comment "${PR_NUMBER}" \
+              --repo "${REPO}" \
+              --body "Unable to trigger functional tests on \`${PR_REF}\`. Check that \`functional-tests.yml\` exists on the default branch, carries a \`workflow_dispatch\` trigger, and is not disabled -- or re-run the failed workflow from the Actions tab instead."
+          fi

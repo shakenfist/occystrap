@@ -254,22 +254,15 @@ and falls back to periodic log messages in non-TTY environments.
 
 ## CI/CD Automation Tools
 
-The `tools/` directory contains scripts for automated PR workflows:
+Nothing in `tools/` generates or applies a review. The bot workflows
+reach Claude Code through shared actions in `shakenfist/actions`, which
+is where a fix to any of this belongs -- a per-project copy is a copy
+that drifts, and every one of them here has been deleted once it had no
+caller left.
 
-- **address-comments-with-claude.sh**: Processes review items and creates
-  commits for fixes. Called by `pr-address-comments.yml`
-- **render-review.py**: Converts review JSON to formatted markdown, and
-  validates it against **review-schema.json** in `--validate` mode
-
-Generating the review is not done here. `pr-re-review.yml` and the
-automated reviewer in CI both call the shared action
-`shakenfist/actions/review-pr-with-claude@main`, and the per-project
-copies of that script were deleted once they had no callers left.
-
-The bot-triggered workflows in `.github/workflows/`:
+The bot-triggered workflows in `.github/workflows/`, each copied
+verbatim from `shakenfist/development`'s templates:
 
 - `pr-retest.yml` - Re-run tests via `@shakenfist-bot please retest`
 - `pr-fix-tests.yml` - Fix test failures via `@shakenfist-bot please attempt to fix`
 - `pr-re-review.yml` - Re-review PR via `@shakenfist-bot please re-review`
-- `pr-address-comments.yml` - Address review comments via
-  `@shakenfist-bot please address comments`

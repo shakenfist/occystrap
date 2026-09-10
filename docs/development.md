@@ -144,10 +144,15 @@ commands, comment on a pull request with one of the following:
 - `@shakenfist-bot please attempt to fix` - Have Claude Code attempt to fix
   test failures
 - `@shakenfist-bot please re-review` - Request another automated code review
-- `@shakenfist-bot please address comments` - Have Claude Code address the
-  automated review comments
 
-These commands are only available to repository collaborators with write access.
+These commands are only available to repository collaborators with write
+access, on pull requests from this repository rather than from a fork.
+
+There used to be a `please address comments` command, which had Claude
+Code push fixes for the review's findings onto the branch. It is retired
+across the fleet: it held write access to the pull request branch for a
+feature nobody used, and applying a review is work for whoever wrote the
+change.
 
 ## Claude Code skills
 
