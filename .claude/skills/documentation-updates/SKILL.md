@@ -1,3 +1,8 @@
+---
+name: documentation-updates
+description: "Work out which documentation an occystrap change must update, and update it. Use when adding or changing a CLI command, flag, filter, input source, output writer or pipeline behaviour, and before committing any user-visible change."
+---
+
 # Occystrap Documentation Updates
 
 ## Golden Rule

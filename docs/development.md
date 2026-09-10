@@ -76,3 +76,9 @@ These commands are only available to repository collaborators with write access.
 The `.claude/skills/` directory contains guidance for AI agents working on
 this codebase, covering documentation updates, testing discipline, and PR
 preparation.
+
+Each skill lives in its own directory as `.claude/skills/<name>/SKILL.md`,
+with `name` and `description` frontmatter. That layout is what an agent
+discovers -- a bare markdown file directly in `.claude/skills/` is never
+loaded, and is not linted by skillsaw either, so it looks like guidance
+while doing nothing.
