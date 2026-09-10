@@ -20,6 +20,8 @@ pre-commit install
 
 The hooks run:
 
+- `skillsaw` - Lints the agent context (`AGENTS.md`, `CLAUDE.md`, the
+  skills) for malformed frontmatter, smuggled unicode and pasted secrets
 - `actionlint` - GitHub Actions workflow validation
 - `shellcheck` - Shell script linting
 - `check-log-levels` - Enforces max LOG.info() calls per file
@@ -42,9 +44,15 @@ tox -epy3
 
 Functional tests are in `deploy/occystrap_ci/tests/` and are run in CI.
 
-## Credential scanning
+## Supply chain checks
 
-The `Supply chain` workflow scans every commit reachable from `HEAD` for
+The `Supply chain` workflow runs the two checks which look at the
+content of the repository itself rather than at the code it builds:
+credential scanning, and the agent context lint.
+
+### Credential scanning
+
+It scans every commit reachable from `HEAD` for
 leaked credentials with [gitleaks](https://github.com/gitleaks/gitleaks),
 on every pull request, on pushes to `develop`, and weekly. It is
 deliberately not path filtered: a credential pasted into a documentation
@@ -70,6 +78,15 @@ was trusted -- history cannot be rewritten to unpublish it. A recurring
 false positive (a documentation placeholder, a test fixture) is
 allowlisted by adding a `.gitleaks.toml` keyed on the text; there is no
 such file yet, because there has been nothing to forgive.
+
+### Agent context lint
+
+The `agent context` job runs the `skillsaw` pre-commit hook over the
+files an agent obeys. CI runs the hook rather than the linter, so
+`.pre-commit-config.yaml` stays the only place the skillsaw version is
+written down, and running it in both places is deliberate: a hook can be
+skipped with `--no-verify`, or by a clone which never ran `pre-commit
+install`.
 
 ## Releasing
 
