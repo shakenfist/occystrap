@@ -6,6 +6,7 @@ self-hosted-runner:
   labels:
     - vm
     - debian-12
+    - debian-13
     - xl
     - m
     - s

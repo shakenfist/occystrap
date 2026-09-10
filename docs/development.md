@@ -42,6 +42,35 @@ tox -epy3
 
 Functional tests are in `deploy/occystrap_ci/tests/` and are run in CI.
 
+## Credential scanning
+
+The `Supply chain` workflow scans every commit reachable from `HEAD` for
+leaked credentials with [gitleaks](https://github.com/gitleaks/gitleaks),
+on every pull request, on pushes to `develop`, and weekly. It is
+deliberately not path filtered: a credential pasted into a documentation
+code sample is still a credential.
+
+To run the same scan locally:
+
+```
+sudo apt-get install -y gitleaks    # Debian 13 or later
+tools/gitleaks-scan.sh
+```
+
+The script needs a full clone, not a shallow one -- a secret which was
+committed and later reverted is still in the history, and still needs
+rotating. Before it trusts a clean result it plants a GitHub token and
+an SSH private key in a scratch directory and fails if gitleaks does not
+report both, so a pass means "scanned and found nothing" rather than
+"the scanner is broken". Pass `--gitleaks PATH` to use a downloaded
+binary instead of the packaged one.
+
+If the scan reports something, the credential needs rotating wherever it
+was trusted -- history cannot be rewritten to unpublish it. A recurring
+false positive (a documentation placeholder, a test fixture) is
+allowlisted by adding a `.gitleaks.toml` keyed on the text; there is no
+such file yet, because there has been nothing to forgive.
+
 ## Releasing
 
 Releases are automated via GitHub Actions. Push a version tag to trigger the
