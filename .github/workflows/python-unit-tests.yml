@@ -13,7 +13,15 @@ on:
 
 jobs:
   lint:
-    runs-on: [self-hosted, vm, debian-12]
+    # s (two vCPU) rather than the xs a sizeless runs-on silently falls
+    # back to -- the conductor takes the size from the labels and
+    # otherwise uses the first entry in its CI_SIZES table, which is one
+    # vCPU and 2048 MB. This job dist-upgrades the image and then builds
+    # two tox environments before it lints anything, which is why it has
+    # been taking six to twelve minutes for work that is a few seconds
+    # of flake8 and a small unit suite. It needs a vm rather than a
+    # static runner because it installs packages.
+    runs-on: [self-hosted, vm, debian-12, s]
 
     steps:
       - name: Checkout code with two commits

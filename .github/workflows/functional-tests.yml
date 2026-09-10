@@ -14,7 +14,14 @@ permissions:
 
 jobs:
   functional:
-    runs-on: [self-hosted, vm, debian-12]
+    # m (four vCPU) rather than the xs a sizeless runs-on silently falls
+    # back to. This job installs docker, builds a test image, pulls
+    # three more through the local registry, and then runs the suite with
+    # stestr --concurrency=5 -- which on one vCPU is five processes
+    # taking turns, and on 2048 MB is five processes extracting image
+    # layers into the same memory. The concurrency setting has been
+    # asking for this all along.
+    runs-on: [self-hosted, vm, debian-12, m]
     timeout-minutes: 120
 
     # NOTE(mikal): git repos are checked out to /srv/github/_work/{repo}/{repo}
