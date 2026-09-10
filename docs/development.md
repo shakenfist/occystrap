@@ -96,6 +96,30 @@ written down, and running it in both places is deliberate: a hook can be
 skipped with `--no-verify`, or by a clone which never ran `pre-commit
 install`.
 
+## Diagrams
+
+Diagrams of structure or flow are written as fenced `mermaid` blocks
+rather than drawn in characters: GitHub renders them natively, and one
+source is then a picture everywhere rather than a picture nowhere.
+Character art that is not a diagram -- a file tree, an on-disk byte
+layout, captured terminal output -- stays in a plain code fence, because
+converting it would destroy the column alignment that carries its
+meaning.
+
+Mermaid fails at render time rather than at commit time, so a broken
+diagram commits cleanly and then shows an error box on the rendered
+page. The `Mermaid lint` workflow renders every tracked markdown file
+that contains a diagram and fails if any of them does not parse. To run
+it locally, with a docker daemon available:
+
+```
+tools/mermaid-lint.sh              # every tracked markdown file
+tools/mermaid-lint.sh docs/foo.md  # just this one
+```
+
+It is not in the `Supply chain` workflow because it needs a docker
+daemon and therefore a different runner image.
+
 ## Releasing
 
 Releases are automated via GitHub Actions. Push a version tag to trigger the
