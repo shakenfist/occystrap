@@ -25,6 +25,11 @@ else rather than looking for a second list in this file. New user-visible
 documentation belongs in `docs/`; this file and `ARCHITECTURE.md` are a
 summary and an index into it.
 
+[PUSH-AUDIT.md](PUSH-AUDIT.md) is the runbook to work through before a
+branch is pushed for review, and again over a whole plan's accumulated
+work in its final phase. Read it then rather than at the end, so the
+work is done the way the audit asks rather than corrected afterwards.
+
 ## Key Patterns
 
 ### Adding a New Filter
