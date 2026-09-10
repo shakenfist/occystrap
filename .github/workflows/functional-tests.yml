@@ -1,13 +1,39 @@
+# Documentation-only changes do not need an ephemeral VM. Nothing in
+# this workflow reads docs/ or the markdown at the top of the tree, and
+# a run here costs tens of minutes of a pool the whole fleet shares, so
+# both triggers ignore those paths.
+#
+# Trigger-level filtering rather than a dorny/paths-filter job because
+# this workflow backs no required status check and there is no merge
+# queue on develop. A required check inside a paths-ignore'd workflow
+# would never report on a filtered pull request, and a check that never
+# reports blocks the merge forever -- that is the case which needs a
+# filter job instead, as kerbside's check_paths jobs do. If develop
+# gains required checks, this has to become one.
+#
+# The content scanners in supply-chain.yml are deliberately left
+# unfiltered: a credential, or an instruction smuggled into text an
+# agent loads, arrives in documentation as easily as in code.
+
 name: Functional tests
 
 on:
+  # Path filters do not apply to workflow_dispatch, which is how
+  # pr-retest.yml re-runs this lane, so a docs-only pull request can
+  # still be tested by hand when someone wants to.
   workflow_dispatch:
   push:
     branches:
       - develop
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   pull_request:
     branches:
       - develop
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
 
 permissions:
   contents: read

@@ -44,6 +44,14 @@ tox -epy3
 
 Functional tests are in `deploy/occystrap_ci/tests/` and are run in CI.
 
+Both CI lanes -- `Sanity checks` and `Functional tests` -- run on
+ephemeral VM runners and skip changes that touch only `docs/**` or
+markdown at the top of the tree, because nothing they run reads those
+files. To test a documentation-only branch anyway, run the functional
+workflow by hand (`workflow_dispatch`, which path filters do not apply
+to) or comment `@shakenfist-bot please retest` on the pull request. The
+`Supply chain` lane is deliberately not filtered.
+
 ## Supply chain checks
 
 The `Supply chain` workflow runs the two checks which look at the
