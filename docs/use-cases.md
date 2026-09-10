@@ -455,6 +455,12 @@ occystrap --debug process registry://docker.io/library/busybox:latest \
     tar://busybox.tar
 ```
 
+Occystrap's own lines are printed as before. Library records are named
+by the logger which emitted them -- `urllib3.connectionpool`, for
+instance -- because a record from a dependency is only useful once you
+know which dependency produced it, and they go to stderr so that they
+cannot corrupt the output of a command asked for JSON.
+
 When running in a terminal, registry downloads and uploads display
 interactive progress bars. In non-TTY environments (CI, pipes),
 periodic log messages are emitted instead.

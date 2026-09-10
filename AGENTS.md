@@ -225,6 +225,14 @@ All modules use `shakenfist_utilities.logs.setup_console(__name__)`
 for logger initialization. The returned `ConsoleAdapter` supports
 `with_fields()` for structured key-value output.
 
+`main.py` is the entry point, so it also configures the root logger --
+see `configure_logging()`. Without that, records from anything which
+does not call `setup_console()` itself (urllib3, the docker client)
+reach a root logger with no handler and are dropped. Because every
+occystrap module has a console handler of its own, `configure_logging()`
+turns off propagation for the `occystrap` package as well, or every one
+of those lines would be printed twice.
+
 **Log level policy:**
 - **INFO**: Milestones only -- pipeline start/end, summary statistics,
   layer counts. Each file should have at most 10 `LOG.info()` calls
