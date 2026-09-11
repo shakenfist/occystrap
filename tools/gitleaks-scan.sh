@@ -60,7 +60,35 @@ if ! command -v "$GITLEAKS" >/dev/null 2>&1 && [ ! -x "$GITLEAKS" ]; then
     exit 1
 fi
 
-echo "Using $("$GITLEAKS" version) from $GITLEAKS"
+# The positive control needs both of these. Say so here rather than
+# letting the control die of "command not found" half way through, which
+# reads like a broken script instead of a missing package.
+for tool in ssh-keygen python3; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "$tool not found, and the positive control needs it."
+        echo "Install it (openssh-client, python3)."
+        exit 1
+    fi
+done
+
+version=$("$GITLEAKS" version)
+echo "Using $version from $GITLEAKS"
+
+# The command line below is gitleaks 8's. "detect" is deprecated from
+# 8.19 in favour of "git" and "dir", and a major release will remove it,
+# so refuse a version this script was not written against rather than
+# failing later with a bare usage error on an unrelated pull request.
+# Debian 13 ships 8.16.0, which is what this is tested against.
+case "${version#v}" in
+    8.*) ;;
+    *)
+        echo "This script drives gitleaks 8's command line, and speaks to"
+        echo "$version. Port it to the 'gitleaks git' and 'gitleaks dir'"
+        echo "subcommands which replaced 'detect', and retest the positive"
+        echo "control, rather than trusting a scan it may not have run."
+        exit 1
+        ;;
+esac
 
 if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
     echo "This is a shallow clone, so most of history cannot be scanned."
@@ -89,6 +117,17 @@ set +e
     --report-path "$CONTROL/report.json" --report-format json
 control_status=$?
 set -e
+
+# gitleaks writes the report before exiting non-zero on a finding, so a
+# missing file means it did not get as far as scanning. Say that, rather
+# than letting the parse below raise FileNotFoundError at a reader who
+# would reasonably read a traceback as a bug in this script.
+if [ ! -f "$CONTROL/report.json" ]; then
+    echo
+    echo "gitleaks produced no report, so the positive control cannot be"
+    echo "verified. It exited $control_status; treat the scan as not run."
+    exit 1
+fi
 
 found=$(python3 -c "
 import json

@@ -15,6 +15,11 @@
 #
 # audit-ok: no-path-filter -- a content scanner has to see documentation
 # changes too, so path filtering would defeat the job.
+#
+# Both jobs check out the pull request's tree and run a script from it,
+# as every other lane here does. What contains that is the runner, not
+# this file: `vm` is an ephemeral virtual machine discarded after the
+# job. See docs/development.md for the whole of that reasoning.
 
 name: Supply chain
 
@@ -51,10 +56,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      # openssh-client and python3 are for the positive control, which
+      # generates an SSH key to be found and reads back the JSON report.
+      # The script checks for all three and says which is missing, but
+      # installing them is cheaper than discovering that here.
       - name: Install gitleaks
         run: |
           sudo apt-get update
-          sudo apt-get install -y -q gitleaks
+          sudo apt-get install -y -q gitleaks openssh-client python3
 
       # The script scans history and, before trusting a clean result,
       # plants two credentials in a scratch directory and fails if

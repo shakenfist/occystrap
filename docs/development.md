@@ -52,6 +52,18 @@ workflow by hand (`workflow_dispatch`, which path filters do not apply
 to) or comment `@shakenfist-bot please retest` on the pull request. The
 `Supply chain` lane is deliberately not filtered.
 
+Every lane that runs on a pull request checks out the pull request's own
+tree and runs scripts from it, so a pull request can change what CI
+executes -- `tools/gitleaks-scan.sh` and `tools/mermaid-lint.sh` as much
+as the test suite. That is contained by the runner rather than by the
+workflow: the `vm` label means an ephemeral virtual machine which is
+discarded after the job, and the `debian-12-docker` image the mermaid
+lane needs has its docker daemon inside that VM. Fork pull requests
+additionally need a maintainer to approve the run before any of it
+starts, which is a repository setting rather than something these files
+can assert. A lane which needed more than that would have to run from
+the base branch's copy of the script instead.
+
 ## Supply chain checks
 
 The `Supply chain` workflow runs the two checks which look at the
