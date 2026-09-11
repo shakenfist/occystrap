@@ -1,25 +1,46 @@
-name: Fix test failures with Claude Code
-
+# Fix test failures with Claude Code
+#
 # SECURITY CONSIDERATIONS:
 # This workflow can be triggered in two ways:
 #
-# 1. workflow_dispatch (manual): Safe - only users with write access can trigger
-# 2. workflow_call (from pr-fix-tests.yml): Requires careful consideration
+# 1. workflow_dispatch (manual): Safe - only users with write access
+#    can trigger
+# 2. workflow_call (from pr-fix-tests.yml): Requires careful
+#    consideration
 #
 # When called from issue_comment-triggered workflows:
 # - Code from the PR is checked out and tests are executed
 # - This intentionally runs untrusted code in a privileged context
 # - Security is enforced by:
 #   a) Authorization check in the calling workflow (pr-fix-tests.yml)
-#      Only repository maintainers can trigger via shakenfist/actions/pr-bot-trigger
+#      Only repository maintainers can trigger via
+#      shakenfist/actions/pr-bot-trigger
 #   b) Self-hosted runners provide isolation from production systems
 #   c) GITHUB_TOKEN scope is limited to this repository
-#   d) The runner is ephemeral/disposable
+#   d) The job runs on the shared claude-code pool, which is
+#      pre-provisioned and long-lived rather than a throwaway VM, so
+#      the hooks setting below is made repository-local rather than
+#      --global, and scratch files are written to runner.temp. The
+#      bot commit identity is the exception: it is set --global, as
+#      it is in every other workflow in the fleet, and does outlive
+#      the job on the pool
 #
-# Risk acceptance: The benefit of automated test fixes outweighs the risk
-# because only trusted maintainers can trigger execution.
+# Risk acceptance: The benefit of automated test fixes outweighs the
+# risk because only trusted maintainers can trigger execution.
 #
 # See: https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+#
+# - Scratch files (prompts, logs, captured output) live in
+#   runner.temp, never the workspace: the workspace is the repo
+#   checkout, and anything written there is swept into the commit by
+#   "git add -A" and counted against the size cap.
+#
+# Template source: shakenfist/development/templates/test-drift-fix/,
+# customised for occystrap where the template asks for it: the
+# dependency install, the test command and the Claude prompt. The rest
+# is the template's and is kept diffable against it.
+
+name: Fix test failures with Claude Code
 
 # audit-ok: merge-group-cancellation -- this workflow is reusable, but
 # its only caller is pr-fix-tests.yml on issue_comment, so it can never
@@ -80,7 +101,7 @@ jobs:
             echo "DATEPRETTY=$(date '+%-d %B %Y')"
           } >> $GITHUB_ENV
 
-      - name: Checkout occystrap
+      - name: Checkout repository
         uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || '' }}
@@ -90,6 +111,16 @@ jobs:
         run: |
           git config --global user.name "shakenfist-bot"
           git config --global user.email "bot@shakenfist.com"
+          # The checkout above may be a pull request's head branch, and
+          # the steps below run the project's tests and Claude Code over
+          # it. Hooks are not tracked in a checkout, so this is defence
+          # in depth -- but the security model claims the control for
+          # these workflows, so it is set rather than merely documented.
+          # Repository-local, not --global: this job runs on the shared
+          # claude-code pool, and a global setting would change state
+          # every other repository's jobs on that machine inherit. See
+          # https://github.com/shakenfist/development/blob/main/docs/ci-review-automation.md
+          git config core.hooksPath /dev/null
 
       - name: Create working branch
         if: env.IS_PR_RUN != 'true'
@@ -97,61 +128,34 @@ jobs:
           git branch -D test-drift-fix-${DATESTAMP} 2>/dev/null || true
           git checkout -b test-drift-fix-${DATESTAMP}
 
-      - name: Get rid of sudo error messages
-        run: |
-          hostname=$(cat /etc/hostname)
-          sudo chmod ugo+rw /etc/hosts
-          echo "127.0.1.1 $hostname" >> /etc/hosts
-
+      # The claude-code pool ships python3, python3-venv and docker
+      # (the runner is in the docker group) and grants passwordless
+      # sudo for nothing but its own cleanup script, so system packages
+      # belong in the runner image (mach33labs/33fl) rather than here.
+      # tox and pre-commit are the two things the steps below need that
+      # the image does not carry, and both install into a venv.
+      #
+      # The venv goes in runner.temp, not $HOME: this pool is
+      # long-lived and shared with every other repository's jobs, so a
+      # venv in $HOME would be found again by an unrelated run.
       - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-dev python3-pip python3-wheel \
-            apparmor docker.io runc
-          sudo systemctl restart apparmor
-          sudo chown $(whoami) /var/run/docker.sock
-
-      - name: Build and install occystrap
-        run: |
-          python3 -mvenv ~/occystrap-venv
-          ~/occystrap-venv/bin/pip3 install build
-          ~/occystrap-venv/bin/python3 -m build
-          ~/occystrap-venv/bin/pip3 install dist/occystrap*.whl
-
-      - name: Setup test registry
-        run: |
-          docker run -d -p 5000:5000 --restart=always --name registry \
-            mirror.gcr.io/registry:2 || true
-
-          cd deploy/occystrap_ci/testdata
-          start_dir=$(pwd)
-
-          for img in deletion_layers; do
-            cd $img
-            docker build -t localhost:5000/occystrap_$img:latest .
-            docker push localhost:5000/occystrap_$img:latest
-            cd ${start_dir}
-          done
-
-          for img in busybox hello-world ubuntu; do
-            docker pull mirror.gcr.io/library/$img:latest || true
-            docker tag mirror.gcr.io/library/$img:latest \
-              localhost:5000/library/$img:latest
-            docker push localhost:5000/library/$img:latest || true
-          done
+          python3 -mvenv ${{ runner.temp }}/venv
+          ${{ runner.temp }}/venv/bin/pip3 install -q tox pre-commit
 
       - name: Run initial tests
         id: initial_test
         continue-on-error: true
         run: |
-          cd deploy
-          . ~/occystrap-venv/bin/activate
-          pip3 install -r requirements.txt
-          pip3 install -r test-requirements.txt
-
+          # The unit suite, which needs no root. The functional
+          # suite in deploy/occystrap_ci/ mounts overlays and runs
+          # runc, so it needs both root and a test registry and stays
+          # on the vm runners in functional-tests.yml -- this pool has
+          # neither. A functional failure is therefore not something
+          # this lane can reproduce, let alone fix.
           set +e
-          sudo ~/occystrap-venv/bin/stestr run --concurrency=5 \
-            2>&1 | tee ${{ github.workspace }}/test-output.txt
+          ${{ runner.temp }}/venv/bin/tox -epy3 \
+            2>&1 | tee ${{ runner.temp }}/test-output.txt
           test_exit_code=${PIPESTATUS[0]}
           set -e
 
@@ -179,49 +183,53 @@ jobs:
       - name: Prepare Claude prompt
         if: steps.initial_test.outputs.tests_passed == 'false'
         run: |
-          cat > ${{ github.workspace }}/claude-prompt.txt << 'PROMPT_EOF'
-          The occystrap test suite has failures. Please analyze and fix them.
+          cat > ${{ runner.temp }}/claude-prompt.txt << 'PROMPT_EOF'
+          The occystrap unit test suite has failures. Please analyze
+          and fix them.
 
           ## Context
 
-          occystrap is a Docker/OCI container image processing tool. Read
-          AGENTS.md and ARCHITECTURE.md to understand the project structure.
-          ARCHITECTURE.md is a summary and an index into docs/ -- for detail,
-          read docs/pipeline.md and docs/internals.md.
+          occystrap is a Docker/OCI container image processing tool.
+          Read AGENTS.md and ARCHITECTURE.md to understand the project
+          structure. ARCHITECTURE.md is a summary and an index into
+          docs/ -- for detail, read docs/pipeline.md and
+          docs/internals.md.
 
           ## Test Failures
 
-          The following tests failed. Analyze the output and fix the issues:
+          The following tests failed. Analyze the output and fix the
+          issues:
 
           PROMPT_EOF
 
-          cat ${{ github.workspace }}/test-output.txt \
-            >> ${{ github.workspace }}/claude-prompt.txt
+          cat ${{ runner.temp }}/test-output.txt \
+            >> ${{ runner.temp }}/claude-prompt.txt
 
-          cat >> ${{ github.workspace }}/claude-prompt.txt << 'PROMPT_EOF'
+          cat >> ${{ runner.temp }}/claude-prompt.txt << 'PROMPT_EOF'
 
           ## Your Task
 
           1. Diagnose what's causing the test failures
           2. Fix the occystrap code if needed (in occystrap/)
-          3. Run `pre-commit run --all-files` to check formatting
+          3. Check formatting:
+             ```bash
+             ${{ runner.temp }}/venv/bin/pre-commit run --all-files
+             ```
           4. Run the tests again to verify fixes:
              ```bash
-             cd deploy
-             . ~/occystrap-venv/bin/activate
-             sudo ~/occystrap-venv/bin/stestr run --concurrency=5
+             ${{ runner.temp }}/venv/bin/tox -epy3
              ```
           5. Stage all changes with git add (do NOT commit)
           6. Output a commit summary (see below)
 
           ## REQUIRED: Commit Summary Output
 
-          After completing your work and staging changes, you MUST output a commit
-          summary in the following exact format:
+          After completing your work and staging changes, you MUST
+          output a commit summary in the following exact format:
 
           ```
           COMMIT_SUMMARY_START
-          <First line: 50 chars max, imperative mood, ends with period>
+          <First line: 50 chars max, imperative mood, ends with period.>
 
           <Body: Wrap at 72 chars. Explain WHAT changed and WHY.>
           COMMIT_SUMMARY_END
@@ -231,13 +239,16 @@ jobs:
 
           - This is a Python project using tox for testing
           - Unit tests are in occystrap/tests/
-          - Functional tests are in deploy/occystrap_ci/tests/
-          - Use `pre-commit run --all-files` before committing
-          - Do NOT modify test expectations unless the old behavior was wrong
+          - The functional tests in deploy/occystrap_ci/ cannot run
+            here: they need root and a local registry, and this runner
+            has neither. Do not try to run them, and do not change
+            them to work around their absence
+          - Do NOT modify test expectations unless the old behavior
+            was genuinely wrong
           PROMPT_EOF
 
           echo "Prompt prepared:"
-          cat ${{ github.workspace }}/claude-prompt.txt
+          cat ${{ runner.temp }}/claude-prompt.txt
 
       - name: Run Claude Code to fix issues
         id: claude_fix
@@ -254,39 +265,48 @@ jobs:
 
           start_time=$(date +%s)
 
-          claude -p "$(cat ${{ github.workspace }}/claude-prompt.txt)" \
+          claude -p "$(cat ${{ runner.temp }}/claude-prompt.txt)" \
             --dangerously-skip-permissions \
             --max-turns ${{ inputs.max_turns || '50' }} \
             --output-format text \
-            2>&1 | tee ${{ github.workspace }}/claude-output.txt || true
+            2>&1 | tee ${{ runner.temp }}/claude-output.txt \
+            || true
 
-          mkdir -p ${{ github.workspace }}/claude-logs
-          find ~/.claude/projects -name "*.jsonl" -newermt "@${start_time}" \
-            -exec cp {} ${{ github.workspace }}/claude-logs/ \; 2>/dev/null || true
+          mkdir -p ${{ runner.temp }}/claude-logs
+          find ~/.claude/projects -name "*.jsonl" \
+            -newermt "@${start_time}" \
+            -exec cp {} ${{ runner.temp }}/claude-logs/ \; \
+            2>/dev/null || true
 
-          echo "=== Git Status ===" > ${{ github.workspace }}/claude-changes.txt
-          git status >> ${{ github.workspace }}/claude-changes.txt 2>&1
-          echo "" >> ${{ github.workspace }}/claude-changes.txt
-          echo "=== Staged Changes ===" >> ${{ github.workspace }}/claude-changes.txt
-          git diff --cached >> ${{ github.workspace }}/claude-changes.txt 2>&1
+          echo "=== Git Status ===" \
+            > ${{ runner.temp }}/claude-changes.txt
+          git status \
+            >> ${{ runner.temp }}/claude-changes.txt 2>&1
+          echo "" >> ${{ runner.temp }}/claude-changes.txt
+          echo "=== Staged Changes ===" \
+            >> ${{ runner.temp }}/claude-changes.txt
+          git diff --cached \
+            >> ${{ runner.temp }}/claude-changes.txt 2>&1
 
       - name: Extract commit summary
         id: extract_summary
         if: steps.claude_fix.outputs.claude_available == 'true'
         run: |
-          if grep -q "COMMIT_SUMMARY_START" ${{ github.workspace }}/claude-output.txt
+          if grep -q "COMMIT_SUMMARY_START" \
+              ${{ runner.temp }}/claude-output.txt
           then
             sed -n '/COMMIT_SUMMARY_START/,/COMMIT_SUMMARY_END/p' \
-              ${{ github.workspace }}/claude-output.txt | \
+              ${{ runner.temp }}/claude-output.txt | \
               grep -v "COMMIT_SUMMARY_START" | \
               grep -v "COMMIT_SUMMARY_END" | \
               sed 's/^```$//' | \
-              sed '/^$/N;/^\n$/d' > ${{ github.workspace }}/commit-summary.txt
+              sed '/^$/N;/^\n$/d' \
+              > ${{ runner.temp }}/commit-summary.txt
 
-            if [ -s ${{ github.workspace }}/commit-summary.txt ]; then
+            if [ -s ${{ runner.temp }}/commit-summary.txt ]; then
               echo "summary_found=true" >> $GITHUB_OUTPUT
               echo "Extracted commit summary:"
-              cat ${{ github.workspace }}/commit-summary.txt
+              cat ${{ runner.temp }}/commit-summary.txt
             else
               echo "summary_found=false" >> $GITHUB_OUTPUT
             fi
@@ -299,12 +319,10 @@ jobs:
         if: steps.claude_fix.outputs.claude_available == 'true'
         continue-on-error: true
         run: |
-          cd deploy
-          . ~/occystrap-venv/bin/activate
-
+          # The same command as the initial test step above.
           set +e
-          sudo ~/occystrap-venv/bin/stestr run --concurrency=5 \
-            2>&1 | tee ${{ github.workspace }}/verify-output.txt
+          ${{ runner.temp }}/venv/bin/tox -epy3 \
+            2>&1 | tee ${{ runner.temp }}/verify-output.txt
           verify_exit_code=${PIPESTATUS[0]}
           set -e
 
@@ -325,9 +343,9 @@ jobs:
             git add -A
 
             if [ "${{ steps.extract_summary.outputs.summary_found }}" == "true" ] && \
-               [ -s ${{ github.workspace }}/commit-summary.txt ]; then
+               [ -s ${{ runner.temp }}/commit-summary.txt ]; then
               {
-                cat ${{ github.workspace }}/commit-summary.txt
+                cat ${{ runner.temp }}/commit-summary.txt
                 echo ""
                 if [ "${IS_PR_RUN}" == "true" ]; then
                   echo "Triggered-By: @shakenfist-bot please attempt to fix on PR #${PR_NUMBER}"
@@ -336,9 +354,9 @@ jobs:
                 echo "Signed-off-by: Michael Still <mikal@stillhq.com>"
                 echo "Assisted-By: Claude Code"
                 echo "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
-              } > ${{ github.workspace }}/commit-message.txt
+              } > ${{ runner.temp }}/commit-message.txt
 
-              git commit -F ${{ github.workspace }}/commit-message.txt
+              git commit -F ${{ runner.temp }}/commit-message.txt
             else
               if [ "${IS_PR_RUN}" == "true" ]; then
                 git commit -m "$(cat <<EOF
@@ -395,10 +413,12 @@ jobs:
           sleep 5
 
           if [ "${{ steps.extract_summary.outputs.summary_found }}" == "true" ] && \
-             [ -s ${{ github.workspace }}/commit-summary.txt ]; then
-            PR_TITLE=$(head -1 ${{ github.workspace }}/commit-summary.txt | \
+             [ -s ${{ runner.temp }}/commit-summary.txt ]; then
+            PR_TITLE=$(head -1 \
+              ${{ runner.temp }}/commit-summary.txt | \
               sed 's/\.$//')
-            COMMIT_BODY=$(tail -n +3 ${{ github.workspace }}/commit-summary.txt)
+            COMMIT_BODY=$(tail -n +3 \
+              ${{ runner.temp }}/commit-summary.txt)
           else
             PR_TITLE="Fix test suite drift (${DATESTAMP})"
             COMMIT_BODY="Claude Code automatically fixed test failures."
@@ -436,7 +456,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TEST_OUTPUT=$(tail -c 2000 ${{ github.workspace }}/test-output.txt \
+          TEST_OUTPUT=$(tail -c 2000 \
+            ${{ runner.temp }}/test-output.txt \
             2>/dev/null || echo "See workflow logs for details.")
 
           gh pr comment ${PR_NUMBER} \
@@ -456,12 +477,12 @@ jobs:
         with:
           name: ${{ inputs.pr_number != '' && format('pr-fix-logs-{0}', inputs.pr_number) || format('test-drift-fix-logs-{0}', github.run_id) }}
           path: |
-            ${{ github.workspace }}/test-output.txt
-            ${{ github.workspace }}/verify-output.txt
-            ${{ github.workspace }}/claude-output.txt
-            ${{ github.workspace }}/claude-prompt.txt
-            ${{ github.workspace }}/claude-changes.txt
-            ${{ github.workspace }}/commit-summary.txt
-            ${{ github.workspace }}/commit-message.txt
-            ${{ github.workspace }}/claude-logs/
+            ${{ runner.temp }}/test-output.txt
+            ${{ runner.temp }}/verify-output.txt
+            ${{ runner.temp }}/claude-output.txt
+            ${{ runner.temp }}/claude-prompt.txt
+            ${{ runner.temp }}/claude-changes.txt
+            ${{ runner.temp }}/commit-summary.txt
+            ${{ runner.temp }}/commit-message.txt
+            ${{ runner.temp }}/claude-logs/
           retention-days: 14

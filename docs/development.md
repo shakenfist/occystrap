@@ -153,12 +153,19 @@ This project supports automated CI helpers via PR comments. To use these
 commands, comment on a pull request with one of the following:
 
 - `@shakenfist-bot please retest` - Re-run the functional test suite
-- `@shakenfist-bot please attempt to fix` - Have Claude Code attempt to fix
-  test failures
+- `@shakenfist-bot please attempt to fix` - Have Claude Code attempt to
+  fix unit test failures
 - `@shakenfist-bot please re-review` - Request another automated code review
 
 These commands are only available to repository collaborators with write
 access, on pull requests from this repository rather than from a fork.
+
+`please attempt to fix` runs `tox -epy3`, and only that. It lands on
+the shared `claude-code` runner pool, which has docker but no root, so
+the functional suite in `deploy/occystrap_ci/` -- which mounts overlays
+and drives runc against a local registry -- cannot run there at all. A
+functional failure needs a person, or `please retest` if it looked like
+a flake.
 
 There used to be a `please address comments` command, which had Claude
 Code push fixes for the review's findings onto the branch. It is retired
@@ -168,14 +175,15 @@ change.
 
 ## Workflows taken from the fleet templates
 
-Four files here are copies of templates in
+Five files here are byte-identical copies of templates in
 [shakenfist/development](https://github.com/shakenfist/development),
-kept byte-identical so that drift is a `diff` rather than a judgement:
+kept that way so that drift is a `diff` rather than a judgement:
 
 | This repository | Template | Taken at |
 |-----------------|----------|----------|
 | `.github/workflows/pr-re-review.yml` | `templates/ci-review-automation/pr-re-review.yml` | `c6f3a88` |
 | `.github/workflows/pr-retest.yml` | `templates/ci-review-automation/pr-retest.yml` | `c6f3a88` |
+| `.github/workflows/pr-fix-tests.yml` | `templates/test-drift-fix/pr-fix-tests.yml` | `aec16db` |
 | `.github/workflows/mermaid-lint.yml` | `templates/mermaid-lint/mermaid-lint.yml` | `ff991f8` |
 | `tools/mermaid-lint.sh` | `templates/mermaid-lint/mermaid-lint.sh` | `b83f1f9` |
 
@@ -186,12 +194,13 @@ diverged from the shared action's fork handling. Anything genuinely
 occystrap-specific belongs in this file instead, which is why the note
 about runner containment above is here and not in a workflow header.
 
-`pr-fix-tests.yml` and `test-drift-fix.yml` come from
-`templates/test-drift-fix/` but are behind it -- the template's comments
-have since been corrected about which runner pool the fix job lands on.
-They are named here so that the gap is written down rather than
-implied; re-copying them is a change to how that lane runs and belongs
-in its own review.
+`test-drift-fix.yml` is the one copy that cannot be byte-identical:
+the template ships `{{PLACEHOLDER}}` markers for the dependency
+install, the test command and the Claude prompt, because those are the
+project's to write. It tracks
+`templates/test-drift-fix/test-drift-fix.yml` at `4cb0c43` and differs
+only at those three points, each marked in the file, so a diff against
+the template still reads cleanly.
 
 ## Claude Code skills
 
