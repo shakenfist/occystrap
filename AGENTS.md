@@ -263,11 +263,11 @@ caller left.
 
 The bot-triggered workflows in `.github/workflows/` are copies of
 `shakenfist/development`'s templates, so fix them there and re-copy
-rather than editing them here. Which file came from which template, at
-which commit, and which copies are currently behind their template, is
-recorded in
-[docs/development.md](docs/development.md#workflows-taken-from-the-fleet-templates):
+rather than editing them here. Which file came from which template and
+at which commit is recorded in
+[docs/development.md](docs/development.md#workflows-taken-from-the-fleet-templates),
+including the one copy that is deliberately not byte-identical:
 
 - `pr-retest.yml` - Re-run tests via `@shakenfist-bot please retest`
-- `pr-fix-tests.yml` - Fix test failures via `@shakenfist-bot please attempt to fix`
+- `pr-fix-tests.yml` - Fix unit test failures via `@shakenfist-bot please attempt to fix`
 - `pr-re-review.yml` - Re-review PR via `@shakenfist-bot please re-review`

@@ -1,7 +1,11 @@
-name: PR Fix Tests
+# Triggers Claude Code to fix test failures when an authorized user
+# comments "@shakenfist-bot please attempt to fix"
+#
+# Delegates to test-drift-fix.yml for the actual fix logic.
+#
+# Template source: shakenfist/development/templates/ci-review-automation/
 
-# Triggers Claude Code to fix test failures when an authorized user comments
-# "@shakenfist-bot please attempt to fix"
+name: PR Fix Tests
 
 on:
   issue_comment:
