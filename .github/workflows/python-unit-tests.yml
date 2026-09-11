@@ -1,3 +1,20 @@
+# Documentation-only changes do not need an ephemeral VM. Nothing in
+# this workflow reads docs/ or the markdown at the top of the tree, and
+# a run here costs tens of minutes of a pool the whole fleet shares, so
+# both triggers ignore those paths.
+#
+# Trigger-level filtering rather than a dorny/paths-filter job because
+# this workflow backs no required status check and there is no merge
+# queue on develop. A required check inside a paths-ignore'd workflow
+# would never report on a filtered pull request, and a check that never
+# reports blocks the merge forever -- that is the case which needs a
+# filter job instead, as kerbside's check_paths jobs do. If develop
+# gains required checks, this has to become one.
+#
+# The content scanners in supply-chain.yml are deliberately left
+# unfiltered: a credential, or an instruction smuggled into text an
+# agent loads, arrives in documentation as easily as in code.
+
 name: Sanity checks
 
 permissions:
@@ -7,13 +24,27 @@ on:
   push:
     branches:
       - develop
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   pull_request:
     branches:
       - develop
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
 
 jobs:
   lint:
-    runs-on: [self-hosted, vm, debian-12]
+    # s (two vCPU) rather than the xs a sizeless runs-on silently falls
+    # back to -- the conductor takes the size from the labels and
+    # otherwise uses the first entry in its CI_SIZES table, which is one
+    # vCPU and 2048 MB. This job dist-upgrades the image and then builds
+    # two tox environments before it lints anything, which is why it has
+    # been taking six to twelve minutes for work that is a few seconds
+    # of flake8 and a small unit suite. It needs a vm rather than a
+    # static runner because it installs packages.
+    runs-on: [self-hosted, vm, debian-12, s]
 
     steps:
       - name: Checkout code with two commits

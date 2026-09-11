@@ -1,3 +1,8 @@
+---
+name: pr-preparation
+description: "Verify an occystrap branch is shippable before pushing: pre-commit, unit tests, documentation and the plan file. Use before creating or updating a pull request."
+---
+
 # Occystrap PR Preparation
 
 ## PR Readiness Checklist

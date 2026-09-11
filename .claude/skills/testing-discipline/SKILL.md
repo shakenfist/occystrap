@@ -1,3 +1,8 @@
+---
+name: testing-discipline
+description: "Run and write occystrap tests the way this repository expects: stestr through tox, testtools and CliRunner conventions, and the log level limits. Use when adding tests, when tests fail, or before committing changes to tested code."
+---
+
 # Occystrap Testing Discipline
 
 ## Golden Rule

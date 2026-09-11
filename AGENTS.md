@@ -25,6 +25,11 @@ else rather than looking for a second list in this file. New user-visible
 documentation belongs in `docs/`; this file and `ARCHITECTURE.md` are a
 summary and an index into it.
 
+[PUSH-AUDIT.md](PUSH-AUDIT.md) is the runbook to work through before a
+branch is pushed for review, and again over a whole plan's accumulated
+work in its final phase. Read it then rather than at the end, so the
+work is done the way the audit asks rather than corrected afterwards.
+
 ## Key Patterns
 
 ### Adding a New Filter
@@ -130,10 +135,11 @@ under `[project.dependencies]` and `[project.optional-dependencies.test]`.
 
 ### Pre-commit Hooks
 
-The project uses pre-commit hooks for `actionlint` (GitHub Actions
-validation), `shellcheck` (shell script linting), `check-log-levels`
-(enforces max LOG.info() calls per file), `tox -eflake8` (linting),
-and `tox -epy3` (unit tests). Install with `pre-commit install`.
+Install with `pre-commit install`, and run them with `pre-commit run
+--all-files` before proposing a commit. Which hooks run, and what each
+one is for, is listed once in
+[docs/development.md](docs/development.md#pre-commit-hooks) -- the list
+changes, and a second copy here would be the one that went stale.
 
 ## Common Tasks
 
@@ -225,6 +231,14 @@ All modules use `shakenfist_utilities.logs.setup_console(__name__)`
 for logger initialization. The returned `ConsoleAdapter` supports
 `with_fields()` for structured key-value output.
 
+`main.py` is the entry point, so it also configures the root logger --
+see `configure_logging()`. Without that, records from anything which
+does not call `setup_console()` itself (urllib3, the docker client)
+reach a root logger with no handler and are dropped. Because every
+occystrap module has a console handler of its own, `configure_logging()`
+turns off propagation for the `occystrap` package as well, or every one
+of those lines would be printed twice.
+
 **Log level policy:**
 - **INFO**: Milestones only -- pipeline start/end, summary statistics,
   layer counts. Each file should have at most 10 `LOG.info()` calls
@@ -241,22 +255,19 @@ and falls back to periodic log messages in non-TTY environments.
 
 ## CI/CD Automation Tools
 
-The `tools/` directory contains scripts for automated PR workflows:
+Nothing in `tools/` generates or applies a review. The bot workflows
+reach Claude Code through shared actions in `shakenfist/actions`, which
+is where a fix to any of this belongs -- a per-project copy is a copy
+that drifts, and every one of them here has been deleted once it had no
+caller left.
 
-- **address-comments-with-claude.sh**: Processes review items and creates
-  commits for fixes. Called by `pr-address-comments.yml`
-- **render-review.py**: Converts review JSON to formatted markdown, and
-  validates it against **review-schema.json** in `--validate` mode
-
-Generating the review is not done here. `pr-re-review.yml` and the
-automated reviewer in CI both call the shared action
-`shakenfist/actions/review-pr-with-claude@main`, and the per-project
-copies of that script were deleted once they had no callers left.
-
-The bot-triggered workflows in `.github/workflows/`:
+The bot-triggered workflows in `.github/workflows/` are copies of
+`shakenfist/development`'s templates, so fix them there and re-copy
+rather than editing them here. Which file came from which template, at
+which commit, and which copies are currently behind their template, is
+recorded in
+[docs/development.md](docs/development.md#workflows-taken-from-the-fleet-templates):
 
 - `pr-retest.yml` - Re-run tests via `@shakenfist-bot please retest`
 - `pr-fix-tests.yml` - Fix test failures via `@shakenfist-bot please attempt to fix`
 - `pr-re-review.yml` - Re-review PR via `@shakenfist-bot please re-review`
-- `pr-address-comments.yml` - Address review comments via
-  `@shakenfist-bot please address comments`

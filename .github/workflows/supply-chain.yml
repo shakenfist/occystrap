@@ -1,0 +1,101 @@
+# Checks on the content of the repository itself: credentials in its
+# history, and smuggled instructions in the agent context.
+#
+# Runs on every pull request to develop and on pushes to develop, plus a
+# weekly cron to catch drift as the rule sets move. gitleaks-action@v2
+# refuses to run on organization repositories without a paid licence, so
+# we invoke the upstream gitleaks binary directly, which has no such
+# restriction. gitleaks is only packaged from Debian 13 (trixie) onward
+# -- bookworm has no package -- so this job runs on debian-13.
+#
+# Deliberately not path filtered, unlike functional-tests.yml and
+# python-unit-tests.yml. Every other lane can skip a documentation-only
+# change; this one cannot, because a credential pasted into a code
+# sample is still a credential.
+#
+# audit-ok: no-path-filter -- a content scanner has to see documentation
+# changes too, so path filtering would defeat the job.
+#
+# Both jobs check out the pull request's tree and run a script from it,
+# as every other lane here does. What contains that is the runner, not
+# this file: `vm` is an ephemeral virtual machine discarded after the
+# job. See docs/development.md for the whole of that reasoning.
+
+name: Supply chain
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+  schedule:
+    # Weekly at 09:00 UTC on Monday.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: [self-hosted, vm, debian-13, s]
+    # An apt install and a scan of three hundred commits.
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-gitleaks
+      cancel-in-progress: true
+
+    steps:
+      # fetch-depth: 0 because a secret which was committed and then
+      # reverted is still in the history and still needs rotating. A
+      # shallow clone reports a clean history it never looked at, which
+      # is worse than not running -- so tools/gitleaks-scan.sh refuses
+      # to run in one rather than passing.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # openssh-client and python3 are for the positive control, which
+      # generates an SSH key to be found and reads back the JSON report.
+      # The script checks for all three and says which is missing, but
+      # installing them is cheaper than discovering that here.
+      - name: Install gitleaks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y -q gitleaks openssh-client python3
+
+      # The script scans history and, before trusting a clean result,
+      # plants two credentials in a scratch directory and fails if
+      # gitleaks does not report both of them.
+      - name: Scan for leaked credentials
+        run: tools/gitleaks-scan.sh
+
+  agent-context:
+    name: agent context
+    runs-on: [self-hosted, vm, debian-12, s]
+    # A venv, a pre-commit install, and a lint over a handful of
+    # markdown files. This is the backstop for the install.
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-agent-context
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Runs the pre-commit hook rather than invoking skillsaw
+      # directly, so .pre-commit-config.yaml's rev is the only place the
+      # version is written down. skillsaw's rule set moves between
+      # releases and renovate's pre-commit manager bumps the hook on its
+      # own, so a second pin here would drift without anyone choosing
+      # it. Running it in CI as well as in pre-commit is the point: a
+      # hook can be skipped with --no-verify, or by a clone which never
+      # ran `pre-commit install`.
+      - name: Lint agent context
+        timeout-minutes: 5
+        run: |
+          python3 -mvenv /tmp/venv-skillsaw
+          . /tmp/venv-skillsaw/bin/activate
+          pip3 install pre-commit
+          pre-commit run skillsaw --all-files

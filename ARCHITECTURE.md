@@ -67,8 +67,8 @@ docs/                        # All user-facing documentation
 pyproject.toml               # Build config (setuptools + setuptools_scm)
 tox.ini                      # Test runner configuration
 
-tools/                       # Benchmarking, pre-commit helpers, and the
-                             # PR review/automation scripts
+tools/                       # Benchmarking, pre-commit helpers, and CI
+                             # check scripts
 
 .github/
     workflows/               # CI, release, CodeQL, and the PR bot workflows

@@ -33,6 +33,65 @@ from occystrap.util import format_size
 LOG = logs.setup_console(__name__)
 
 
+def configure_logging():
+    """Give the root logger a handler, without printing anything twice.
+
+    setup_console() raises the root logger's level to INFO but attaches
+    its handler to the logger it was given. Every occystrap module calls
+    it, so occystrap's own lines are printed by their own handlers -- but
+    a record from anything else, urllib3 and the docker client included,
+    propagates up to a root logger with no handler on it and is dropped.
+    So occystrap printed its own INFO lines and nothing else, and
+    --debug's "all modules" meant occystrap's modules.
+
+    basicConfig() gives root a handler. Once root has one, a record which
+    propagates reaches both it and the handler setup_console() installed,
+    and is printed twice -- which is what turning off propagation
+    prevents. The line for this module is the entry point stating its own
+    case; the one for the occystrap package is what stops the other
+    twenty-three modules doubling, because logging stops walking towards
+    root at the first ancestor which says not to.
+
+    Root is left at WARNING and the level occystrap logs at is set on the
+    occystrap package instead. A dependency's idea of INFO is not
+    occystrap's: httpx logs a line per HTTP request at INFO, so a root
+    level of INFO narrates every manifest, token and blob fetch of an
+    ordinary run, and a multi-layer image emits hundreds of them. That is
+    the traffic --debug asks for, so that is where it lives; AGENTS.md
+    says the same thing in general terms, that INFO is milestones and
+    per-request detail is DEBUG. The occystrap package has to name its
+    level explicitly because setup_console() leaves every occystrap.*
+    logger at NOTSET, so lowering root alone would silence occystrap's
+    own milestones along with the noise.
+
+    A dependency's warnings and errors still print: they clear WARNING,
+    and propagation from a non-occystrap logger was never turned off.
+
+    Root keeps basicConfig's stderr rather than the stdout that
+    ConsoleLoggingHandler print()s to, so a urllib3 warning cannot
+    corrupt the output of a command asked for JSON. The format is matched
+    by hand so the two streams do not read as two different programs; the
+    logger name is kept on this one because a record from a dependency is
+    only useful once you know which dependency emitted it.
+
+    Called from cli() rather than at import: this reconfigures logging
+    for the whole process, which is occystrap's business when it is the
+    program being run and nobody else's when a test or an embedding
+    program merely imports this module.
+    """
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='%(asctime)s %(levelname)s: %(name)s: %(message)s')
+    # basicConfig() puts its setLevel() inside "if root has no handlers",
+    # so if anything imported before us already gave root one, the level
+    # above is silently discarded. Set it ourselves; by the time cli()
+    # runs, occystrap is the program and the root level is its call.
+    logging.root.setLevel(logging.WARNING)
+    logging.getLogger('occystrap').setLevel(logging.INFO)
+    logging.getLogger(__name__).propagate = False
+    logging.getLogger('occystrap').propagate = False
+
+
 @click.group()
 @click.option('--verbose', is_flag=True,
               help='Enable debug logging for occystrap')
@@ -88,14 +147,23 @@ def cli(ctx, verbose=None, debug=None, os=None,
         retries=None, rate_limit=None,
         image_parallel=None, verify=None,
         verify_full=None):
+    configure_logging()
+
     if debug:
         # Enable debug for all loggers (occystrap +
-        # libraries like requests, urllib3, etc.)
-        # Setting root level + handler levels is
-        # sufficient since child loggers propagate.
+        # libraries like httpx, requests, urllib3).
+        # Root's level reaches every dependency, since
+        # a logger which sets no level of its own
+        # inherits it -- which is a separate mechanism
+        # from the propagation configure_logging()
+        # turns off. The occystrap package does set a
+        # level of its own, so it has to be lowered by
+        # name or occystrap would be the one thing
+        # --debug did not apply to.
         logging.root.setLevel(logging.DEBUG)
         for handler in logging.root.handlers:
             handler.setLevel(logging.DEBUG)
+        logging.getLogger('occystrap').setLevel(logging.DEBUG)
         LOG.setLevel(logging.DEBUG)
     elif verbose:
         # Enable debug for occystrap loggers only
