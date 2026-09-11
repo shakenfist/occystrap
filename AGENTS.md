@@ -135,10 +135,11 @@ under `[project.dependencies]` and `[project.optional-dependencies.test]`.
 
 ### Pre-commit Hooks
 
-The project uses pre-commit hooks for `actionlint` (GitHub Actions
-validation), `shellcheck` (shell script linting), `check-log-levels`
-(enforces max LOG.info() calls per file), `tox -eflake8` (linting),
-and `tox -epy3` (unit tests). Install with `pre-commit install`.
+Install with `pre-commit install`, and run them with `pre-commit run
+--all-files` before proposing a commit. Which hooks run, and what each
+one is for, is listed once in
+[docs/development.md](docs/development.md#pre-commit-hooks) -- the list
+changes, and a second copy here would be the one that went stale.
 
 ## Common Tasks
 
@@ -260,8 +261,12 @@ is where a fix to any of this belongs -- a per-project copy is a copy
 that drifts, and every one of them here has been deleted once it had no
 caller left.
 
-The bot-triggered workflows in `.github/workflows/`, each copied
-verbatim from `shakenfist/development`'s templates:
+The bot-triggered workflows in `.github/workflows/` are copies of
+`shakenfist/development`'s templates, so fix them there and re-copy
+rather than editing them here. Which file came from which template, at
+which commit, and which copies are currently behind their template, is
+recorded in
+[docs/development.md](docs/development.md#workflows-taken-from-the-fleet-templates):
 
 - `pr-retest.yml` - Re-run tests via `@shakenfist-bot please retest`
 - `pr-fix-tests.yml` - Fix test failures via `@shakenfist-bot please attempt to fix`

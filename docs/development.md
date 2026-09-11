@@ -166,6 +166,33 @@ across the fleet: it held write access to the pull request branch for a
 feature nobody used, and applying a review is work for whoever wrote the
 change.
 
+## Workflows taken from the fleet templates
+
+Four files here are copies of templates in
+[shakenfist/development](https://github.com/shakenfist/development),
+kept byte-identical so that drift is a `diff` rather than a judgement:
+
+| This repository | Template | Taken at |
+|-----------------|----------|----------|
+| `.github/workflows/pr-re-review.yml` | `templates/ci-review-automation/pr-re-review.yml` | `c6f3a88` |
+| `.github/workflows/pr-retest.yml` | `templates/ci-review-automation/pr-retest.yml` | `c6f3a88` |
+| `.github/workflows/mermaid-lint.yml` | `templates/mermaid-lint/mermaid-lint.yml` | `ff991f8` |
+| `tools/mermaid-lint.sh` | `templates/mermaid-lint/mermaid-lint.sh` | `b83f1f9` |
+
+Fix them upstream and re-copy, rather than editing them here: the
+comments they carry are the template's, and the reason the bot trigger
+was rewritten was that the previous hand-rolled copy had quietly
+diverged from the shared action's fork handling. Anything genuinely
+occystrap-specific belongs in this file instead, which is why the note
+about runner containment above is here and not in a workflow header.
+
+`pr-fix-tests.yml` and `test-drift-fix.yml` come from
+`templates/test-drift-fix/` but are behind it -- the template's comments
+have since been corrected about which runner pool the fix job lands on.
+They are named here so that the gap is written down rather than
+implied; re-copying them is a change to how that lane runs and belongs
+in its own review.
+
 ## Claude Code skills
 
 The `.claude/skills/` directory contains guidance for AI agents working on
