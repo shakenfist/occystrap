@@ -71,24 +71,26 @@ for tool in ssh-keygen python3; do
     fi
 done
 
-version=$("$GITLEAKS" version)
-echo "Using $version from $GITLEAKS"
+echo "Using $("$GITLEAKS" version) from $GITLEAKS"
 
-# The command line below is gitleaks 8's. "detect" is deprecated from
-# 8.19 in favour of "git" and "dir", and a major release will remove it,
-# so refuse a version this script was not written against rather than
+# The command line below is gitleaks 8's: "detect" is deprecated from
+# 8.19 in favour of "git" and "dir", and a major release will remove
+# it. So check that this binary still has the subcommand rather than
 # failing later with a bare usage error on an unrelated pull request.
-# Debian 13 ships 8.16.0, which is what this is tested against.
-case "${version#v}" in
-    8.*) ;;
-    *)
-        echo "This script drives gitleaks 8's command line, and speaks to"
-        echo "$version. Port it to the 'gitleaks git' and 'gitleaks dir'"
-        echo "subcommands which replaced 'detect', and retest the positive"
-        echo "control, rather than trusting a scan it may not have run."
-        exit 1
-        ;;
-esac
+#
+# A check on the version string would have been the obvious thing and
+# does not work: Debian builds gitleaks without the ldflags upstream
+# uses to stamp it, so "gitleaks version" on the packaged binary this
+# lane installs prints "version is set by build process" rather than
+# 8.16.0. Asking what the binary can do is the question we actually
+# have anyway.
+if ! "$GITLEAKS" detect --help >/dev/null 2>&1; then
+    echo "This gitleaks does not understand 'detect', which this script"
+    echo "drives. Port it to the 'gitleaks git' and 'gitleaks dir'"
+    echo "subcommands which replaced it, and retest the positive"
+    echo "control, rather than trusting a scan it may not have run."
+    exit 1
+fi
 
 if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
     echo "This is a shallow clone, so most of history cannot be scanned."
