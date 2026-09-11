@@ -14,7 +14,9 @@ FLAKE_COMMAND="flake8 --max-line-length=120"
 
 if test "$1" = "-HEAD" ; then
     shift
-    files=$(git diff --name-only HEAD~1 | grep -v _pb2 | grep -E ".py$")
+    # The dot is escaped so the pattern matches a .py suffix rather than
+    # any character followed by "py".
+    files=$(git diff --name-only HEAD~1 | grep -E '\.py$')
     if [ -z "${files}" ]; then
         echo "No python files in change."
         exit 0
@@ -26,7 +28,11 @@ if test "$1" = "-HEAD" ; then
     filtered_files=""
     for file in $files; do
         if [ -e "$file" ]; then
-            filtered_files="${filtered_files} ${file}"
+            if [ -z "${filtered_files}" ]; then
+                filtered_files="${file}"
+            else
+                filtered_files="${filtered_files} ${file}"
+            fi
         else
             echo "$file does not exist in the end state, skipping."
         fi
@@ -42,10 +48,15 @@ if test "$1" = "-HEAD" ; then
     fi
 
     echo "Running flake8 on ${filtered_files}"
+    # flake8 is given the paths as arguments. The diff which used to be
+    # piped in here was for "flake8 --diff", which flake8 6 removed;
+    # flake8 ignores stdin once it has file operands, so the diff was
+    # generated, thrown away, and on a large change left to take SIGPIPE.
+    #
     # The word splitting is deliberate: filtered_files is a list of
     # paths, and quoting it would make the whole list one filename.
     # shellcheck disable=SC2086
-    diff -u --from-file /dev/null ${filtered_files} | $FLAKE_COMMAND ${filtered_files}
+    $FLAKE_COMMAND ${filtered_files}
 else
     echo "Running flake8 on all files"
     exec $FLAKE_COMMAND "$@"
