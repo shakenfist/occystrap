@@ -17,7 +17,8 @@ def write_container_config(container_config_filename, runtime_config_filename,
     container_conf = json.loads(container_template)
 
     container_conf['process']['terminal'] = True
-    cwd = image_conf['config']['WorkingDir']
+    # Newer Docker releases omit WorkingDir entirely when it is unset
+    cwd = image_conf['config'].get('WorkingDir', '')
     if cwd == '':
         cwd = '/'
     container_conf['process']['cwd'] = cwd
