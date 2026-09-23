@@ -8,10 +8,40 @@ from occystrap import constants
 from occystrap import util
 from occystrap.outputs.base import ImageOutput
 from occystrap.util import safe_path_join
+from oslo_concurrency import processutils
 from shakenfist_utilities import logs
 
 
 LOG = logs.setup_console(__name__)
+
+
+def mount_overlay(layer_dirs, upper_path, working_path, rootfs_path):
+    """Mount an overlay filesystem from a list of layer directories.
+
+    layer_dirs is ordered newest layer first. Each layer is passed as its own
+    lowerdir+ option because util-linux 2.39 and later use the new mount API,
+    where the kernel caps each fsconfig() string value at 256 bytes. A single
+    colon-joined lowerdir exceeds that for all but the smallest images. Kernels
+    older than 6.8 do not understand lowerdir+, so on failure we fall back to a
+    single colon-joined lowerdir. That is limited to one page when util-linux
+    uses mount(2), but still to 256 bytes on an old kernel paired with a new
+    util-linux, where there is no better option.
+    """
+    mount = ('mount -t overlay overlay -o %(lower)s,upperdir=%(upper)s,'
+             'workdir=%(working)s %(rootfs)s')
+    values = {
+        'upper': upper_path,
+        'working': working_path,
+        'rootfs': rootfs_path
+    }
+
+    try:
+        util.execute(mount % dict(
+            values, lower=','.join('lowerdir+=%s' % d for d in layer_dirs)))
+    except processutils.ProcessExecutionError as e:
+        LOG.debug('Overlay mount with lowerdir+ failed, retrying with a '
+                  'single lowerdir: %s' % e)
+        util.execute(mount % dict(values, lower='lowerdir=%s' % ':'.join(layer_dirs)))
 
 
 class MountWriter(ImageOutput):
@@ -201,14 +231,7 @@ class MountWriter(ImageOutput):
                 layer.replace('.tar', '')))
 
         # Extract the rootfs as overlay mounts
-        util.execute('mount -t overlay overlay -o lowerdir=%(layers)s,'
-                     'upperdir=%(upper)s,workdir=%(working)s %(rootfs)s'
-                     % {
-                         'layers': ':'.join(layer_dirs),
-                         'upper': delta_path,
-                         'working': working_path,
-                         'rootfs': rootfs_path
-                     })
+        mount_overlay(layer_dirs, delta_path, working_path, rootfs_path)
 
         # Rename the container configuration to a well known location. This is
         # not part of the OCI specification, but is convenient for now.
