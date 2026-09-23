@@ -47,7 +47,7 @@ jobs:
     # taking turns, and on 2048 MB is five processes extracting image
     # layers into the same memory. The concurrency setting has been
     # asking for this all along.
-    runs-on: [self-hosted, vm, debian-12, m]
+    runs-on: [self-hosted, vm, debian-13, m]
     timeout-minutes: 120
 
     # NOTE(mikal): git repos are checked out to /srv/github/_work/{repo}/{repo}
