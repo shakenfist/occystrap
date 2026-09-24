@@ -47,7 +47,7 @@ jobs:
     # taking turns, and on 2048 MB is five processes extracting image
     # layers into the same memory. The concurrency setting has been
     # asking for this all along.
-    runs-on: [self-hosted, vm, debian-12, m]
+    runs-on: [self-hosted, vm, debian-13, m]
     timeout-minutes: 120
 
     # NOTE(mikal): git repos are checked out to /srv/github/_work/{repo}/{repo}
@@ -66,11 +66,14 @@ jobs:
           sudo chmod ugo+rw /etc/hosts
           echo "127.0.1.1 $hostname" >> /etc/hosts
 
+      # docker-cli is named explicitly because on trixie the client was
+      # split out of docker.io, which only Recommends it, and the runner
+      # images do not install Recommends.
       - name: Install minimum dependencies
         run: |
           sudo apt-get update
           sudo apt-get dist-upgrade -y
-          sudo apt-get install -y python3 python3-dev python3-pip python3-wheel apparmor docker.io runc
+          sudo apt-get install -y python3 python3-dev python3-pip python3-wheel apparmor docker.io docker-cli runc
           sudo systemctl restart apparmor
 
       - name: Log docker setup
