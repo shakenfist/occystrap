@@ -66,6 +66,9 @@ jobs:
           sudo chmod ugo+rw /etc/hosts
           echo "127.0.1.1 $hostname" >> /etc/hosts
 
+      # docker-cli is named explicitly because on trixie the client was
+      # split out of docker.io, which only Recommends it, and the runner
+      # images do not install Recommends.
       - name: Install minimum dependencies
         run: |
           sudo apt-get update

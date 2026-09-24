@@ -5,8 +5,8 @@
 # weekly cron to catch drift as the rule sets move. gitleaks-action@v2
 # refuses to run on organization repositories without a paid licence, so
 # we invoke the upstream gitleaks binary directly, which has no such
-# restriction. gitleaks is only packaged from Debian 13 (trixie) onward
-# -- bookworm has no package -- so this job runs on debian-13.
+# restriction. gitleaks is packaged from Debian 13 (trixie) onward, which
+# is what the runner pool provides.
 #
 # Deliberately not path filtered, unlike functional-tests.yml and
 # python-unit-tests.yml. Every other lane can skip a documentation-only
