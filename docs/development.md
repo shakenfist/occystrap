@@ -181,8 +181,8 @@ kept that way so that drift is a `diff` rather than a judgement:
 
 | This repository | Template | Taken at |
 |-----------------|----------|----------|
-| `.github/workflows/pr-re-review.yml` | `templates/ci-review-automation/pr-re-review.yml` | `c6f3a88` |
-| `.github/workflows/pr-retest.yml` | `templates/ci-review-automation/pr-retest.yml` | `c6f3a88` |
+| `.github/workflows/pr-re-review.yml` | `templates/ci-review-automation/pr-re-review.yml` | `3b5142c` |
+| `.github/workflows/pr-retest.yml` | `templates/ci-review-automation/pr-retest.yml` | `5e9a4b3` |
 | `.github/workflows/pr-fix-tests.yml` | `templates/test-drift-fix/pr-fix-tests.yml` | `aec16db` |
 | `.github/workflows/mermaid-lint.yml` | `templates/mermaid-lint/mermaid-lint.yml` | `ff991f8` |
 | `tools/mermaid-lint.sh` | `templates/mermaid-lint/mermaid-lint.sh` | `b83f1f9` |
@@ -193,6 +193,12 @@ was rewritten was that the previous hand-rolled copy had quietly
 diverged from the shared action's fork handling. Anything genuinely
 occystrap-specific belongs in this file instead, which is why the note
 about runner containment above is here and not in a workflow header.
+
+`pr-retest.yml` dispatches the workflow named by the `RETEST_WORKFLOW`
+repository variable, or `functional-tests.yml` when it is unset.
+occystrap leaves it unset: `functional-tests.yml` is the suite a retest
+is for, and it carries the `workflow_dispatch` trigger the dispatch
+needs.
 
 `test-drift-fix.yml` is the one copy that cannot be byte-identical:
 the template ships `{{PLACEHOLDER}}` markers for the dependency
