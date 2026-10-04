@@ -105,7 +105,7 @@ canonical copy lives in shakenfist/development at
 
 ## Style conformance
 
- * Does the code follow the project conventions in `CLAUDE.md`?
+ * Does the code follow the project conventions in `AGENTS.md`?
    Check in particular:
    - Python conventions (error handling, module layout, logging).
    - CLI conventions (Click commands, global options like

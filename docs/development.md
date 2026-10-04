@@ -20,8 +20,8 @@ pre-commit install
 
 The hooks run:
 
-- `skillsaw` - Lints the agent context (`AGENTS.md`, `CLAUDE.md`, the
-  skills) for malformed frontmatter, smuggled unicode and pasted secrets
+- `skillsaw` - Lints the agent context (`AGENTS.md` and the skills) for
+  malformed frontmatter, smuggled unicode and pasted secrets
 - `actionlint` - GitHub Actions workflow validation
 - `shellcheck` - Shell script linting
 - `check-log-levels` - Enforces max LOG.info() calls per file
@@ -42,7 +42,24 @@ Unit tests are in `occystrap/tests/` and can be run with:
 tox -epy3
 ```
 
-Functional tests are in `deploy/occystrap_ci/tests/` and are run in CI.
+Arguments after `--` are passed to `stestr run` as a test filter, so a
+single test or module runs with:
+
+```
+tox -epy3 -- occystrap.tests.test_quay
+```
+
+`tox -eflake8` lints only the Python files changed in the most recent
+commit (it runs `tools/flake8wrap.sh -HEAD`), and the pre-commit hook
+inherits that scope. To lint the whole tree:
+
+```
+flake8 --max-line-length=120 occystrap/
+```
+
+Functional tests are in `deploy/occystrap_ci/tests/` and are run in CI,
+against a local registry at `localhost:5000` that the workflow populates
+with test images.
 
 Both CI lanes -- `Sanity checks` and `Functional tests` -- run on
 ephemeral VM runners and skip changes that touch only `docs/**` or

@@ -18,8 +18,8 @@ and the input/filter/output interfaces, and `docs/internals.md` for
 cross-cutting concerns (layer caching, parallel downloads,
 compression, the proxy, the HTTP layer). `ARCHITECTURE.md` is a
 summary and an index into `docs/`, and `docs/index.md` is the full
-index. Consult `CLAUDE.md` for build commands and project
-conventions.
+index. Consult `AGENTS.md` for project conventions and
+`docs/development.md` for build and test commands.
 
 <!-- shared-block: plan-file-conventions v1 -->
 Plan file conventions (shared block; do not edit -- the canonical
