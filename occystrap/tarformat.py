@@ -45,6 +45,12 @@ PAX_FIELD_RECORDS = frozenset(
 PAX_ENCODING_RECORDS = frozenset(['hdrcharset'])
 PAX_ENCODING_RECORD_PREFIXES = ('GNU.sparse.',)
 
+# The version of the layer rewriting rules in this module. Layer caches
+# include it in their key, so that layers rewritten by older rules (which,
+# before issue #151 was fixed, stripped file capabilities) are not reused.
+# Increment it whenever a change here alters the bytes a filter writes.
+LAYER_REWRITE_VERSION = 2
+
 
 def prepare_member_for_rewrite(member):
     """
@@ -53,6 +59,11 @@ def prepare_member_for_rewrite(member):
     Everything left in member.pax_headers afterwards is metadata which only
     PAX can represent, such as SCHILY.xattr.* records (file capabilities,
     SELinux labels and user xattrs), ACLs and atime / ctime.
+
+    Old-style GNU sparse members (type 'S') become regular files, for the
+    same reason the GNU.sparse.* records are dropped: the data written is
+    the expanded data, and an 'S' header without its sparse map would be
+    read back as an empty file.
 
     Args:
         member: A TarInfo object read from a source layer. It is modified
@@ -67,10 +78,14 @@ def prepare_member_for_rewrite(member):
             k not in PAX_ENCODING_RECORDS and
             not k.startswith(PAX_ENCODING_RECORD_PREFIXES))
     }
+    if member.type == tarfile.GNUTYPE_SPARSE:
+        member.type = tarfile.REGTYPE
+    member.sparse = None
     return member
 
 
-def needs_pax_format(member):
+def needs_pax_format(member, encoding=tarfile.ENCODING,
+                     errors='surrogateescape'):
     """
     Check if a TarInfo member requires PAX format.
 
@@ -85,6 +100,9 @@ def needs_pax_format(member):
 
     Args:
         member: A TarInfo object to check.
+        encoding: The encoding the member will be written with. Pass the
+                  writing TarFile's encoding, as add_member() does.
+        errors: The encoding error handler, likewise.
 
     Returns:
         bool: True if PAX format is required, False if USTAR suffices.
@@ -117,8 +135,7 @@ def needs_pax_format(member):
     # device numbers) is a hard limit which tarfile enforces by raising
     # ValueError. Ask it rather than restating its rules.
     try:
-        member.tobuf(tarfile.USTAR_FORMAT, tarfile.ENCODING,
-                     'surrogateescape')
+        member.tobuf(tarfile.USTAR_FORMAT, encoding, errors)
     except ValueError:
         return True
 
@@ -142,7 +159,7 @@ def add_member(tar, member, fileobj=None):
         fileobj: File-like object with the member's data, for regular files.
     """
     prepare_member_for_rewrite(member)
-    if needs_pax_format(member):
+    if needs_pax_format(member, tar.encoding, tar.errors):
         tar.format = tarfile.PAX_FORMAT
     else:
         tar.format = tarfile.USTAR_FORMAT

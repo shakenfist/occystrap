@@ -301,6 +301,23 @@ class TestAddMember(unittest.TestCase):
         self.assertTrue(rewritten[0].isdir())
         self.assertEqual(rewritten[1].mtime, -1)
 
+    def test_old_gnu_sparse_becomes_regular_file(self):
+        """An old-style GNU sparse member keeps its expanded data."""
+        sparse = tarfile.TarInfo('sparse')
+        sparse.type = tarfile.GNUTYPE_SPARSE
+        sparse.size = 6
+        sparse.sparse = [(0, 6)]
+        prepare_member_for_rewrite(sparse)
+
+        dst = io.BytesIO()
+        with tarfile.open(fileobj=dst, mode='w') as out:
+            add_member(out, sparse, io.BytesIO(b'sparse'))
+        dst.seek(0)
+        with tarfile.open(fileobj=dst, mode='r') as tar:
+            member = tar.getmembers()[0]
+            self.assertTrue(member.isreg())
+            self.assertEqual(tar.extractfile(member).read(), b'sparse')
+
     def test_plain_members_unchanged_size(self):
         """Members without extended needs are written as plain USTAR."""
         _, rewritten = self._rewrite([

@@ -99,7 +99,8 @@ drops:
   from the fields when a member needs them.
 - Records which describe how the source archive was encoded (`hdrcharset` and
   `GNU.sparse.*`). The data written is the decoded data, so these would no
-  longer describe it and would corrupt the output.
+  longer describe it and would corrupt the output. For the same reason, old
+  GNU sparse members (type `S`) are written as regular files.
 
 The `normalize-timestamps` filter additionally drops `atime`, `ctime` and
 `LIBARCHIVE.creationtime` records, so that they cannot vary between builds.
@@ -169,3 +170,9 @@ PAX for some other reason, produce different bytes (and so different digests)
 than older occystrap releases did, because records are now kept and long
 names in those layers now use USTAR headers. Layers which never needed PAX are
 written exactly as before.
+
+Layer cache entries made with filters by older releases are not reused,
+since they may hold layers with their file capabilities stripped. The cache
+key includes a version of the rewriting rules
+(`tarformat.LAYER_REWRITE_VERSION`), so the first push with filters after
+upgrading rewrites and uploads those layers again.

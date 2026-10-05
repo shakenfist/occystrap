@@ -669,8 +669,9 @@ normalize-timestamps:ts=TIMESTAMP
 
 When timestamps are normalized, layer SHA256 hashes are recalculated and the
 manifest is updated. Access, change and creation times (the `atime`, `ctime`
-and `LIBARCHIVE.creationtime` PAX records) are removed. Other per-file metadata, such as the extended
-attributes which carry file capabilities and SELinux labels, is preserved; see
+and `LIBARCHIVE.creationtime` PAX records) are removed. Other per-file
+metadata, such as the extended attributes which carry file capabilities and
+SELinux labels, is preserved; see
 [Choosing a Tar Format](tar-format-selection.md#preserving-extended-records).
 
 **Examples:**
