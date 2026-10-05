@@ -5,10 +5,35 @@ import tarfile
 import unittest
 
 from occystrap.tarformat import (
+    add_member,
     needs_pax_format,
-    select_tar_format_for_layer,
+    prepare_member_for_rewrite,
     USTAR_MAX_ID,
 )
+
+
+# A v2 security.capability xattr granting cap_net_raw (bit 13) and
+# cap_sys_admin (bit 21), effective and permitted. The 0x80 byte is not
+# valid UTF-8, which exercises tarfile's binary PAX value handling.
+CAPABILITY = bytes([
+    0x01, 0x00, 0x00, 0x02,
+    0x80, 0x20, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+])
+CAPABILITY_KEY = 'SCHILY.xattr.security.capability'
+
+
+def capability_header():
+    """Return CAPABILITY as tarfile represents a PAX value."""
+    return CAPABILITY.decode('utf-8', 'surrogateescape')
+
+
+def read_capability(member):
+    """Return the raw security.capability bytes of a member, or None."""
+    value = member.pax_headers.get(CAPABILITY_KEY)
+    if value is None:
+        return None
+    return value.encode('utf-8', 'surrogateescape')
 
 
 class TestNeedsPaxFormat(unittest.TestCase):
@@ -99,100 +124,175 @@ class TestNeedsPaxFormat(unittest.TestCase):
         self.assertFalse(needs_pax_format(member))
 
 
-class TestSelectTarFormatForLayer(unittest.TestCase):
-    """Tests for select_tar_format_for_layer function."""
+class TestNeedsPaxFormatExtended(unittest.TestCase):
+    """Tests for needs_pax_format checks beyond names and sizes."""
 
-    def _create_tar(self, members):
-        """Create a tar archive with given members.
+    def test_xattr_requires_pax(self):
+        """Members with xattr records need PAX, USTAR would drop them."""
+        member = tarfile.TarInfo('bin/ping')
+        member.pax_headers = {CAPABILITY_KEY: capability_header()}
+        self.assertTrue(needs_pax_format(member))
+
+    def test_any_extended_record_requires_pax(self):
+        """Any remaining extended record needs PAX."""
+        member = tarfile.TarInfo('file')
+        member.pax_headers = {'atime': '1700000000.5'}
+        self.assertTrue(needs_pax_format(member))
+
+    def test_fractional_mtime_requires_pax(self):
+        """Sub-second mtimes cannot be stored in USTAR."""
+        member = tarfile.TarInfo('file')
+        member.mtime = 1700000000.25
+        self.assertTrue(needs_pax_format(member))
+
+    def test_whole_float_mtime_uses_ustar(self):
+        """A float mtime with no fractional part fits USTAR."""
+        member = tarfile.TarInfo('file')
+        member.mtime = 1700000000.0
+        self.assertFalse(needs_pax_format(member))
+
+    def test_long_uname_requires_pax(self):
+        """Owner names over 32 chars should require PAX."""
+        member = tarfile.TarInfo('file')
+        member.uname = 'u' * 33
+        self.assertTrue(needs_pax_format(member))
+
+    def test_non_ascii_gname_requires_pax(self):
+        """Non-ASCII group names should require PAX."""
+        member = tarfile.TarInfo('file')
+        member.gname = 'grüppe'
+        self.assertTrue(needs_pax_format(member))
+
+
+class TestPrepareMemberForRewrite(unittest.TestCase):
+    """Tests for prepare_member_for_rewrite function."""
+
+    def test_keeps_metadata_records(self):
+        """xattrs, ACLs and times without a TarInfo field are kept."""
+        member = tarfile.TarInfo('file')
+        member.pax_headers = {
+            CAPABILITY_KEY: capability_header(),
+            'SCHILY.xattr.security.selinux': 'system_u:object_r:bin_t:s0',
+            'SCHILY.acl.access': 'user::rw-',
+            'atime': '1700000000.5',
+            'ctime': '1700000000.5',
+        }
+        prepare_member_for_rewrite(member)
+        self.assertEqual(
+            sorted(member.pax_headers),
+            sorted([CAPABILITY_KEY, 'SCHILY.xattr.security.selinux',
+                    'SCHILY.acl.access', 'atime', 'ctime']))
+
+    def test_drops_field_records(self):
+        """Records mirroring TarInfo fields are dropped."""
+        member = tarfile.TarInfo('file')
+        member.pax_headers = {
+            'path': 'file', 'linkpath': 'other', 'size': '10',
+            'uid': '1', 'gid': '1', 'uname': 'u', 'gname': 'g',
+            'mtime': '1700000000.5',
+        }
+        prepare_member_for_rewrite(member)
+        self.assertEqual(member.pax_headers, {})
+
+    def test_drops_encoding_records(self):
+        """Records describing the source archive's encoding are dropped."""
+        member = tarfile.TarInfo('file')
+        member.pax_headers = {
+            'hdrcharset': 'BINARY',
+            'GNU.sparse.major': '1',
+            'GNU.sparse.minor': '0',
+            'GNU.sparse.name': 'file',
+            'GNU.sparse.realsize': '1048579',
+        }
+        prepare_member_for_rewrite(member)
+        self.assertEqual(member.pax_headers, {})
+
+
+class TestAddMember(unittest.TestCase):
+    """Tests for add_member function."""
+
+    def _rewrite(self, members):
+        """Write members to a PAX archive, then rewrite it with add_member.
 
         Args:
-            members: List of (name, content) or (name, content, kwargs) tuples.
+            members: List of (TarInfo, content bytes) tuples.
 
         Returns:
-            BytesIO containing the tar archive.
+            Tuple of (raw rewritten bytes, list of rewritten TarInfos).
         """
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode='w', format=tarfile.PAX_FORMAT) as tar:
-            for item in members:
-                if len(item) == 2:
-                    name, content = item
-                    kwargs = {}
-                else:
-                    name, content, kwargs = item
+        src = io.BytesIO()
+        with tarfile.open(fileobj=src, mode='w',
+                          format=tarfile.PAX_FORMAT) as tar:
+            for member, content in members:
+                member.size = len(content)
+                tar.addfile(member, io.BytesIO(content))
+        src.seek(0)
 
-                data = content.encode() if isinstance(content, str) else content
-                ti = tarfile.TarInfo(name=name)
-                ti.size = len(data)
-                for k, v in kwargs.items():
-                    setattr(ti, k, v)
-                tar.addfile(ti, io.BytesIO(data))
-        buf.seek(0)
-        return buf
+        dst = io.BytesIO()
+        with tarfile.open(fileobj=dst, mode='w') as out:
+            with tarfile.open(fileobj=src, mode='r') as tar:
+                for member in tar:
+                    add_member(out, member, tar.extractfile(member))
 
-    def test_normal_files_select_ustar(self):
-        """Normal files should select USTAR format."""
-        layer = self._create_tar([
-            ('file1.txt', 'content1'),
-            ('dir/file2.txt', 'content2'),
+        dst.seek(0)
+        with tarfile.open(fileobj=dst, mode='r') as tar:
+            rewritten = tar.getmembers()
+        return dst.getvalue(), rewritten
+
+    def test_capability_preserved(self):
+        """security.capability xattrs survive a rewrite byte for byte."""
+        member = tarfile.TarInfo('usr/bin/nsenter')
+        member.mode = 0o755
+        member.pax_headers = {CAPABILITY_KEY: capability_header()}
+        _, rewritten = self._rewrite([(member, b'binary')])
+        self.assertEqual(read_capability(rewritten[0]), CAPABILITY)
+
+    def test_long_names_stay_ustar_beside_xattrs(self):
+        """A capability on one member does not force PAX on the others."""
+        cap = tarfile.TarInfo('bin/ping')
+        cap.pax_headers = {CAPABILITY_KEY: capability_header()}
+        members = [(cap, b'ping')]
+        for i in range(10):
+            name = 'd' * 150 + '/' + 'f%03d' % i + 'x' * 90
+            members.append((tarfile.TarInfo(name), b'content'))
+        raw, rewritten = self._rewrite(members)
+
+        # Only the capability member gets an extended header
+        self.assertEqual(raw.count(b'SCHILY.xattr'), 1)
+        self.assertEqual(raw.count(b' path='), 0)
+        self.assertEqual(read_capability(rewritten[0]), CAPABILITY)
+        self.assertEqual(len(rewritten), 11)
+        self.assertEqual(rewritten[5].name, members[5][0].name)
+
+    def test_modified_mtime_not_overridden(self):
+        """A stale mtime record must not undo a changed mtime."""
+        src = io.BytesIO()
+        with tarfile.open(fileobj=src, mode='w',
+                          format=tarfile.PAX_FORMAT) as tar:
+            member = tarfile.TarInfo('file')
+            member.mtime = 1700000000.5
+            tar.addfile(member)
+        src.seek(0)
+
+        dst = io.BytesIO()
+        with tarfile.open(fileobj=dst, mode='w') as out:
+            with tarfile.open(fileobj=src, mode='r') as tar:
+                for member in tar:
+                    member.mtime = 0
+                    add_member(out, member)
+
+        dst.seek(0)
+        with tarfile.open(fileobj=dst, mode='r') as tar:
+            self.assertEqual(tar.getmembers()[0].mtime, 0)
+
+    def test_plain_members_unchanged_size(self):
+        """Members without extended needs are written as plain USTAR."""
+        _, rewritten = self._rewrite([
+            (tarfile.TarInfo('file1.txt'), b'content1'),
+            (tarfile.TarInfo('dir/file2.txt'), b'content2'),
         ])
-        fmt = select_tar_format_for_layer(layer)
-        self.assertEqual(fmt, tarfile.USTAR_FORMAT)
-
-    def test_long_path_selects_pax(self):
-        """Layer with long path should select PAX format."""
-        long_path = 'a' * 200 + '/' + 'b' * 57  # 258 chars
-        layer = self._create_tar([
-            ('short.txt', 'content'),
-            (long_path, 'content'),
-        ])
-        fmt = select_tar_format_for_layer(layer)
-        self.assertEqual(fmt, tarfile.PAX_FORMAT)
-
-    def test_non_ascii_selects_pax(self):
-        """Layer with non-ASCII filename should select PAX format."""
-        layer = self._create_tar([
-            ('normal.txt', 'content'),
-            ('Főtanúsítvány.pem', 'certificate'),
-        ])
-        fmt = select_tar_format_for_layer(layer)
-        self.assertEqual(fmt, tarfile.PAX_FORMAT)
-
-    def test_transform_fn_applied(self):
-        """Transform function should be applied before format check."""
-        layer = self._create_tar([
-            ('file.txt', 'content'),
-        ])
-
-        def make_long_name(member):
-            member.name = 'x' * 257
-            return member
-
-        fmt = select_tar_format_for_layer(layer, transform_fn=make_long_name)
-        self.assertEqual(fmt, tarfile.PAX_FORMAT)
-
-    def test_skip_fn_excludes_members(self):
-        """Skip function should exclude members from format check."""
-        long_path = 'a' * 257
-        layer = self._create_tar([
-            ('keep.txt', 'content'),
-            (long_path, 'content'),
-        ])
-
-        # Skip the long path, should select USTAR
-        fmt = select_tar_format_for_layer(
-            layer,
-            skip_fn=lambda m: len(m.name) > 256
-        )
-        self.assertEqual(fmt, tarfile.USTAR_FORMAT)
-
-    def test_fileobj_reset_after_scan(self):
-        """File object should be reset to beginning after scan."""
-        layer = self._create_tar([
-            ('file.txt', 'content'),
-        ])
-        initial_pos = layer.tell()
-        select_tar_format_for_layer(layer)
-        self.assertEqual(layer.tell(), initial_pos)
+        for member in rewritten:
+            self.assertEqual(member.pax_headers, {})
 
 
 if __name__ == '__main__':

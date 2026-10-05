@@ -5,7 +5,7 @@ import tempfile
 
 from occystrap import constants
 from occystrap.filters.base import ImageFilter
-from occystrap.tarformat import select_tar_format_for_layer
+from occystrap import tarformat
 from shakenfist_utilities import logs
 
 
@@ -50,8 +50,9 @@ class TimestampNormalizer(ImageFilter):
         Creates a new tarball with all timestamps set to self.timestamp,
         calculates the new SHA256 hash, and returns both.
 
-        Uses USTAR format when possible (smaller output), falls back to
-        PAX format when layer contents require it. See tarformat.py.
+        Each member is written as USTAR when possible (smaller output),
+        and as PAX when it requires it, for example to keep the xattrs
+        which carry file capabilities. See tarformat.py.
 
         Args:
             layer_data: File-like object containing the original layer.
@@ -59,32 +60,29 @@ class TimestampNormalizer(ImageFilter):
         Returns:
             Tuple of (normalized_file_handle, new_sha256_hex)
         """
-        # Determine optimal tar format based on transformed members
-        def transform(member):
-            member.mtime = self.timestamp
-            return member
-
-        tar_format = select_tar_format_for_layer(layer_data, transform)
-
         with tempfile.NamedTemporaryFile(
                 delete=False, dir=self.temp_dir) as normalized_tf:
             try:
                 # Create a new tarball with normalized timestamps
-                with tarfile.open(fileobj=normalized_tf, mode='w',
-                                  format=tar_format) as normalized_tar:
+                with tarfile.open(fileobj=normalized_tf, mode='w') as \
+                        normalized_tar:
                     layer_data.seek(0)
                     with tarfile.open(fileobj=layer_data, mode='r') as \
                             layer_tar:
                         for member in layer_tar:
-                            # Normalize all timestamp fields
+                            # Normalize all timestamp fields. atime and
+                            # ctime only exist as PAX records, so drop them
+                            # rather than let them vary between builds.
                             member.mtime = self.timestamp
+                            member.pax_headers.pop('atime', None)
+                            member.pax_headers.pop('ctime', None)
 
                             # Extract the file data if it's a regular file
+                            fileobj = None
                             if member.isfile():
                                 fileobj = layer_tar.extractfile(member)
-                                normalized_tar.addfile(member, fileobj)
-                            else:
-                                normalized_tar.addfile(member)
+                            tarformat.add_member(
+                                normalized_tar, member, fileobj)
 
                 # Calculate SHA256 of the normalized tarball
                 normalized_tf.flush()
