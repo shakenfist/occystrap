@@ -133,6 +133,10 @@ under `[project.dependencies]` and `[project.optional-dependencies.test]`.
 - **Unit tests**: Located in `occystrap/tests/`. Run with `tox -epy3`.
 - **Functional tests**: Located in `deploy/occystrap_ci/tests/`. Run in CI.
 
+`tox -eflake8`, and so the pre-commit hook, lints only the files changed
+in the last commit; how to lint the whole tree or run a single test is in
+[docs/development.md](docs/development.md#running-tests).
+
 ### Pre-commit Hooks
 
 Install with `pre-commit install`, and run them with `pre-commit run

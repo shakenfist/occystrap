@@ -1,5 +1,5 @@
 repos:
-  # Lints the agent context -- AGENTS.md, CLAUDE.md and the skills --
+  # Lints the agent context -- AGENTS.md and the skills --
   # for malformed frontmatter, smuggled unicode and pasted secrets. The
   # Supply chain workflow runs this same hook, so this rev is the only
   # place the version is written down.
