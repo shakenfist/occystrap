@@ -22,6 +22,7 @@ from occystrap.outputs import tarfile as output_tarfile
 from occystrap.filters import (
     ExcludeFilter, InspectFilter, TimestampNormalizer, SearchFilter
 )
+from occystrap import tarformat
 from occystrap import uri
 from occystrap import util
 
@@ -313,6 +314,10 @@ class PipelineBuilder:
         significant (e.g., exclude before normalize-timestamps
         produces different output than the reverse).
 
+        When there are filters, the version of the layer
+        rewriting rules is included too, so that layers
+        rewritten by an older occystrap are not reused.
+
         Args:
             filter_strs: List of filter specification strings.
             compression_type: Compression format ('gzip',
@@ -330,6 +335,8 @@ class PipelineBuilder:
             'compression': effective_compression,
             'filters': filter_strs or [],
         }
+        if filter_strs:
+            config['layer_rewrite'] = tarformat.LAYER_REWRITE_VERSION
         canonical = json.dumps(
             config, separators=(',', ':'), sort_keys=True)
         return hashlib.sha256(

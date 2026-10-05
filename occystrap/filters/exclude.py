@@ -6,7 +6,7 @@ import tempfile
 
 from occystrap import constants
 from occystrap.filters.base import ImageFilter
-from occystrap.tarformat import select_tar_format_for_layer
+from occystrap import tarformat
 from shakenfist_utilities import logs
 
 
@@ -63,8 +63,9 @@ class ExcludeFilter(ImageFilter):
         Creates a new tarball with entries that don't match exclusion
         patterns, calculates the new SHA256 hash, and returns both.
 
-        Uses USTAR format when possible (smaller output), falls back to
-        PAX format when layer contents require it. See tarformat.py.
+        Each member is written as USTAR when possible (smaller output),
+        and as PAX when it requires it, for example to keep the xattrs
+        which carry file capabilities. See tarformat.py.
 
         Args:
             layer_data: File-like object containing the original layer.
@@ -72,19 +73,13 @@ class ExcludeFilter(ImageFilter):
         Returns:
             Tuple of (filtered_file_handle, new_sha256_hex)
         """
-        # Determine optimal tar format, skipping excluded members
-        tar_format = select_tar_format_for_layer(
-            layer_data,
-            skip_fn=lambda m: self._matches_exclusion(m.name)
-        )
-
         excluded_count = 0
 
         with tempfile.NamedTemporaryFile(
                 delete=False, dir=self.temp_dir) as filtered_tf:
             try:
-                with tarfile.open(fileobj=filtered_tf, mode='w',
-                                  format=tar_format) as filtered_tar:
+                with tarfile.open(fileobj=filtered_tf, mode='w') as \
+                        filtered_tar:
                     layer_data.seek(0)
                     with tarfile.open(fileobj=layer_data, mode='r') as layer_tar:
                         for member in layer_tar:
@@ -92,11 +87,11 @@ class ExcludeFilter(ImageFilter):
                                 excluded_count += 1
                                 continue
 
+                            fileobj = None
                             if member.isfile():
                                 fileobj = layer_tar.extractfile(member)
-                                filtered_tar.addfile(member, fileobj)
-                            else:
-                                filtered_tar.addfile(member)
+                            tarformat.add_member(
+                                filtered_tar, member, fileobj)
 
                 if excluded_count > 0:
                     LOG.info('Excluded %d entries from layer' % excluded_count)
