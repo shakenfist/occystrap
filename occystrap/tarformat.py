@@ -8,28 +8,26 @@
 #
 # See docs/tar-format-selection.md for detailed explanation.
 
-import os
 import tarfile
 
 
 # USTAR format limits (POSIX.1-1988)
 #
-# USTAR stores paths using two fields:
-#   - name: 100 bytes for the filename
-#   - prefix: 155 bytes for the directory path
+# USTAR stores paths in two fields, a 100 byte name and a 155 byte prefix,
+# and numbers (size, uid, gid, mtime, device numbers) in fixed width octal
+# fields. Rather than restate those limits here, needs_pax_format() asks
+# tarfile to encode a USTAR header and falls back to PAX if it cannot, so
+# the check is exactly the one the writer applies. That includes details
+# such as the trailing '/' tarfile adds to directory names when writing.
 #
-# Combined, this allows paths up to 256 characters (prefix + '/' + name)
-# without requiring extended headers.
+# Some things do not fit USTAR but tarfile writes anyway, silently losing
+# information. Those are checked explicitly below. The only limit of that
+# kind needing a constant is the 32 byte uname and gname fields, which
+# tarfile truncates.
 #
 # PAX format (POSIX.1-2001) adds extended header blocks for metadata that
 # doesn't fit in the USTAR header. Each extended header adds ~1KB overhead.
-USTAR_MAX_PATH = 256
-USTAR_MAX_NAME = 100
-USTAR_MAX_PREFIX = 155
-USTAR_MAX_LINKNAME = 100
-USTAR_MAX_SIZE = 8 * 1024 * 1024 * 1024 - 1  # 8 GiB - 1 byte
-USTAR_MAX_ID = 0o7777777  # 2097151 (max value in 8-byte octal field)
-USTAR_MAX_OWNER_NAME = 32  # uname and gname fields
+USTAR_MAX_OWNER_NAME = 32
 
 # PAX records which mirror a TarInfo field. tarfile applies these to the
 # TarInfo when reading, but also leaves them in pax_headers where they take
@@ -95,38 +93,13 @@ def needs_pax_format(member):
     if member.pax_headers:
         return True
 
-    # Check total path length
-    if len(member.name) > USTAR_MAX_PATH:
-        return True
-
-    # Check if path can be split into prefix + name for USTAR
-    # The path must be splittable at a '/' boundary where:
-    #   - basename (after last '/') <= 100 chars
-    #   - dirname (before last '/') <= 155 chars
-    if len(member.name) > USTAR_MAX_NAME:
-        basename = os.path.basename(member.name)
-        dirname = os.path.dirname(member.name)
-        if len(basename) > USTAR_MAX_NAME or len(dirname) > USTAR_MAX_PREFIX:
-            return True
-
-    # Check symlink/hardlink target length
-    if member.linkname and len(member.linkname) > USTAR_MAX_LINKNAME:
-        return True
-
-    # Check file size (USTAR uses 12-byte octal, max ~8 GiB)
-    if member.size > USTAR_MAX_SIZE:
-        return True
-
-    # Check UID/GID (USTAR uses 8-byte octal fields)
-    if member.uid > USTAR_MAX_ID or member.gid > USTAR_MAX_ID:
-        return True
-
-    # Check owner names (USTAR uses 32-byte fields)
+    # Check owner names (USTAR uses 32-byte fields, which tarfile truncates)
     if (len(member.uname) > USTAR_MAX_OWNER_NAME or
             len(member.gname) > USTAR_MAX_OWNER_NAME):
         return True
 
-    # Check for sub-second modification times (USTAR stores whole seconds)
+    # Check for sub-second modification times (USTAR stores whole seconds,
+    # and tarfile truncates)
     if member.mtime != int(member.mtime):
         return True
 
@@ -138,6 +111,15 @@ def needs_pax_format(member):
         member.uname.encode('ascii')
         member.gname.encode('ascii')
     except UnicodeEncodeError:
+        return True
+
+    # Everything else (path and link lengths, size, ids, mtime range and
+    # device numbers) is a hard limit which tarfile enforces by raising
+    # ValueError. Ask it rather than restating its rules.
+    try:
+        member.tobuf(tarfile.USTAR_FORMAT, tarfile.ENCODING,
+                     'surrogateescape')
+    except ValueError:
         return True
 
     return False

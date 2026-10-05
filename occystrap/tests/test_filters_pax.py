@@ -9,7 +9,7 @@ import testtools
 
 from occystrap.filters.exclude import ExcludeFilter
 from occystrap.filters.normalize_timestamps import TimestampNormalizer
-from occystrap.tests.test_tarformat import (
+from occystrap.tests.pax_fixtures import (
     CAPABILITY,
     CAPABILITY_KEY,
     capability_header,
@@ -35,6 +35,7 @@ def make_layer():
             CAPABILITY_KEY: capability_header(),
             'atime': '1700000001.5',
             'ctime': '1700000002.5',
+            'LIBARCHIVE.creationtime': '1700000003',
         }
         tar.addfile(ti, io.BytesIO(content))
 
@@ -71,12 +72,12 @@ class TestTimestampNormalizerPax(testtools.TestCase):
             read_capability(members['usr/bin/nsenter']), CAPABILITY)
 
     def test_all_timestamps_normalized(self):
-        """mtime, atime and ctime records do not survive normalization."""
+        """No timestamp record survives normalization."""
         f = TimestampNormalizer(None, timestamp=42, temp_dir=self.temp_dir)
         rewritten, _ = f._normalize_layer(make_layer())
         member = read_members(rewritten)['usr/bin/nsenter']
         self.assertEqual(member.mtime, 42)
-        for record in ('mtime', 'atime', 'ctime'):
+        for record in ('mtime', 'atime', 'ctime', 'LIBARCHIVE.creationtime'):
             self.assertNotIn(record, member.pax_headers)
 
     def test_reproducible(self):
@@ -108,4 +109,3 @@ class TestExcludeFilterPax(testtools.TestCase):
         self.assertEqual(member.mtime, 1700000000.5)
         self.assertEqual(member.pax_headers['atime'], '1700000001.5')
         self.assertEqual(member.pax_headers['ctime'], '1700000002.5')
-

@@ -8,32 +8,16 @@ from occystrap.tarformat import (
     add_member,
     needs_pax_format,
     prepare_member_for_rewrite,
-    USTAR_MAX_ID,
+)
+from occystrap.tests.pax_fixtures import (
+    CAPABILITY,
+    CAPABILITY_KEY,
+    capability_header,
+    read_capability,
 )
 
-
-# A v2 security.capability xattr granting cap_net_raw (bit 13) and
-# cap_sys_admin (bit 21), effective and permitted. The 0x80 byte is not
-# valid UTF-8, which exercises tarfile's binary PAX value handling.
-CAPABILITY = bytes([
-    0x01, 0x00, 0x00, 0x02,
-    0x80, 0x20, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-])
-CAPABILITY_KEY = 'SCHILY.xattr.security.capability'
-
-
-def capability_header():
-    """Return CAPABILITY as tarfile represents a PAX value."""
-    return CAPABILITY.decode('utf-8', 'surrogateescape')
-
-
-def read_capability(member):
-    """Return the raw security.capability bytes of a member, or None."""
-    value = member.pax_headers.get(CAPABILITY_KEY)
-    if value is None:
-        return None
-    return value.encode('utf-8', 'surrogateescape')
+# The largest value an 8 byte USTAR octal field (uid, gid) can hold
+USTAR_MAX_ID = 0o7777777
 
 
 class TestNeedsPaxFormat(unittest.TestCase):
@@ -150,6 +134,27 @@ class TestNeedsPaxFormatExtended(unittest.TestCase):
         member = tarfile.TarInfo('file')
         member.mtime = 1700000000.0
         self.assertFalse(needs_pax_format(member))
+
+    def test_directory_at_name_limit_requires_pax(self):
+        """tarfile adds a '/' to directory names, which can overflow USTAR."""
+        for name in ('c' * 99 + '/' + 'd' * 100,
+                     'a' * 155 + '/' + 'b' * 100):
+            member = tarfile.TarInfo(name)
+            member.type = tarfile.DIRTYPE
+            self.assertTrue(needs_pax_format(member), name)
+
+    def test_file_at_name_limit_uses_ustar(self):
+        """The same names as regular files still fit USTAR."""
+        for name in ('c' * 99 + '/' + 'd' * 100,
+                     'a' * 155 + '/' + 'b' * 100):
+            self.assertFalse(needs_pax_format(tarfile.TarInfo(name)), name)
+
+    def test_out_of_range_mtime_requires_pax(self):
+        """Negative or very large mtimes overflow the USTAR field."""
+        for mtime in (-1, 8 ** 11):
+            member = tarfile.TarInfo('file')
+            member.mtime = mtime
+            self.assertTrue(needs_pax_format(member), mtime)
 
     def test_long_uname_requires_pax(self):
         """Owner names over 32 chars should require PAX."""
@@ -284,6 +289,17 @@ class TestAddMember(unittest.TestCase):
         dst.seek(0)
         with tarfile.open(fileobj=dst, mode='r') as tar:
             self.assertEqual(tar.getmembers()[0].mtime, 0)
+
+    def test_unusual_members_rewritten(self):
+        """Members only PAX can hold are rewritten rather than raising."""
+        directory = tarfile.TarInfo('c' * 99 + '/' + 'd' * 100)
+        directory.type = tarfile.DIRTYPE
+        old = tarfile.TarInfo('old')
+        old.mtime = -1
+        _, rewritten = self._rewrite([(directory, b''), (old, b'')])
+        self.assertEqual(rewritten[0].name, directory.name)
+        self.assertTrue(rewritten[0].isdir())
+        self.assertEqual(rewritten[1].mtime, -1)
 
     def test_plain_members_unchanged_size(self):
         """Members without extended needs are written as plain USTAR."""

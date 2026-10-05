@@ -60,11 +60,12 @@ The following conditions trigger automatic fallback to PAX format:
 
 | Limit | USTAR Maximum | Notes |
 |-------|---------------|-------|
-| Path length | 256 characters | prefix (155) + '/' + name (100) |
+| Path length | 256 characters | prefix (155) + '/' + name (100), counting the '/' added to directory names |
 | Basename | 100 characters | Filename portion after last '/' |
 | Symlink target | 100 characters | The path the symlink points to |
 | File size | 8 GiB - 1 byte | Octal representation limit |
 | UID/GID | 2,097,151 | Octal value 7777777 |
+| Modification time range | 0 to 8,589,934,591 | Octal; negative mtimes require PAX |
 | Owner names | 32 characters | uname and gname |
 | Modification time | Whole seconds | Sub-second mtimes require PAX |
 | Character encoding | ASCII only | Non-ASCII names or owners require PAX |
@@ -100,8 +101,8 @@ drops:
   `GNU.sparse.*`). The data written is the decoded data, so these would no
   longer describe it and would corrupt the output.
 
-The `normalize-timestamps` filter additionally drops `atime` and `ctime`
-records, so that they cannot vary between builds.
+The `normalize-timestamps` filter additionally drops `atime`, `ctime` and
+`LIBARCHIVE.creationtime` records, so that they cannot vary between builds.
 
 ## Implementation
 
@@ -121,8 +122,10 @@ with tarfile.open(fileobj=dest, mode='w') as out:
 
 1. Drops extended records which must not be copied forward
    (`prepare_member_for_rewrite()`)
-2. Checks the member against USTAR limits and for remaining extended records
-   (`needs_pax_format()`)
+2. Checks the member for remaining extended records and for information
+   USTAR would silently lose, then asks Python's tarfile to encode a USTAR
+   header for it, so that the hard limits are exactly the ones the writer
+   enforces (`needs_pax_format()`)
 3. Writes the member as USTAR or PAX accordingly
 
 No separate scan of the layer is needed, so each layer is read only once.

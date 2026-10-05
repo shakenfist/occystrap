@@ -11,6 +11,10 @@ from shakenfist_utilities import logs
 
 LOG = logs.setup_console(__name__)
 
+# PAX records holding a timestamp other than the mtime. POSIX defines atime
+# and ctime; libarchive (bsdtar) also writes the file's creation time.
+PAX_TIME_RECORDS = ('atime', 'ctime', 'LIBARCHIVE.creationtime')
+
 
 class TimestampNormalizer(ImageFilter):
     """Normalizes timestamps in image layers for reproducible builds.
@@ -70,12 +74,12 @@ class TimestampNormalizer(ImageFilter):
                     with tarfile.open(fileobj=layer_data, mode='r') as \
                             layer_tar:
                         for member in layer_tar:
-                            # Normalize all timestamp fields. atime and
-                            # ctime only exist as PAX records, so drop them
+                            # Normalize all timestamp fields. The others
+                            # only exist as PAX records, so drop them
                             # rather than let them vary between builds.
                             member.mtime = self.timestamp
-                            member.pax_headers.pop('atime', None)
-                            member.pax_headers.pop('ctime', None)
+                            for record in PAX_TIME_RECORDS:
+                                member.pax_headers.pop(record, None)
 
                             # Extract the file data if it's a regular file
                             fileobj = None
