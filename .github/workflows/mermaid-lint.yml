@@ -43,6 +43,7 @@ on:
       - '**.md'
       - '.github/workflows/mermaid-lint.yml'
       - 'tools/mermaid-lint.sh'
+      - 'tools/mermaid-lint-exclude'
       - '!REVIEWS.md'
   pull_request:
     # Markdown can break a diagram, and so can the checker itself: a
@@ -61,10 +62,18 @@ on:
     # and the two must stay in step: the script lints the whole tree
     # every run, so a file excluded here but linted there fails
     # somebody else's pull request over a diagram they did not write.
+    #
+    # A repository that excludes a tree of its own names it in
+    # tools/mermaid-lint-exclude and adds the matching '!path/**'
+    # here, in both lists, last. GitHub Actions cannot read that file,
+    # so that pair of edits is the one divergence from this template a
+    # repository is expected to carry. The file is named above so that
+    # changing an exclusion runs the lane that acts on it.
     paths:
       - '**.md'
       - '.github/workflows/mermaid-lint.yml'
       - 'tools/mermaid-lint.sh'
+      - 'tools/mermaid-lint-exclude'
       - '!REVIEWS.md'
   workflow_dispatch:
 
