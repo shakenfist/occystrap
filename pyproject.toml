@@ -54,13 +54,21 @@ test = [
     "flake8",       # mit
 ]
 
+# occystrap.tests is deliberately absent: the unit tests run from the
+# checkout (tox, .stestr.conf), and the functional tests in
+# deploy/occystrap_ci/ run from the checkout against the installed wheel
+# without importing them. include-package-data defaults to true under
+# pyproject.toml, and setuptools_scm's file finder offers every git-tracked
+# file as package data, so leaving the package out of this list is not
+# enough on its own: the tests would come back as data of "occystrap".
+# Nothing in this package reads a data file at runtime.
 [tool.setuptools]
+include-package-data = false
 packages = [
     "occystrap",
     "occystrap.inputs",
     "occystrap.outputs",
     "occystrap.filters",
-    "occystrap.tests",
 ]
 
 [tool.setuptools_scm]
