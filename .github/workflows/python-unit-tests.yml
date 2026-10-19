@@ -149,7 +149,11 @@ jobs:
     needs:
       - check_paths
       - lint
-    if: ${{ !cancelled() && github.event_name != 'merge_group' }}
+    # always(), not !cancelled(): if the run is cancelled as a
+    # whole, this must still run and fail on the cancelled needs.
+    # A skipped check satisfies a required one, so a skip here
+    # would let an untested commit through.
+    if: ${{ always() && github.event_name != 'merge_group' }}
     # The steps read only the needs context, so the token needs nothing.
     permissions: {}
     runs-on: [self-hosted, static]
@@ -171,7 +175,11 @@ jobs:
     needs:
       - check_paths
       - lint
-    if: ${{ !cancelled() && github.event_name == 'merge_group' }}
+    # always(), not !cancelled(): if the run is cancelled as a
+    # whole, this must still run and fail on the cancelled needs.
+    # A skipped check satisfies a required one, so a skip here
+    # would let an untested commit through.
+    if: ${{ always() && github.event_name == 'merge_group' }}
     # The steps read only the needs context, so the token needs nothing.
     permissions: {}
     runs-on: [self-hosted, static]
