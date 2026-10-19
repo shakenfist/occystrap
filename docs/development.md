@@ -187,8 +187,13 @@ Pushing a `v*` tag triggers `release.yml`. Its jobs, in order:
 1. `ci-gate` checks that `python-unit-tests.yml` and
    `functional-tests.yml` both succeeded on the tagged commit, in their
    merge queue runs. A run started by hand, as `pr-retest.yml` does
-   with `workflow_dispatch`, does not count, so to recover from a
-   flaky queue run, use "Re-run jobs" on that merge queue run itself.
+   with `workflow_dispatch`, does not count. A queue run that fails,
+   flaky or not, ejects its entry, so the commit it built never reaches
+   `develop` and re-running that run cannot make any tag pass: re-queue
+   the pull request and tag the commit that merges. Re-running a queue
+   run helps only when the tagged commit's run was re-run after it
+   merged and that later attempt failed, because the gate judges each
+   run at its latest attempt; then use "Re-run jobs" on it.
    How the gate decides is documented with the action, as
    [`require-ci-success`](https://github.com/shakenfist/actions/blob/main/docs/actions.md#require-ci-success).
    It has no override.

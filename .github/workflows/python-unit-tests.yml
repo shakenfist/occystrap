@@ -95,12 +95,12 @@ jobs:
     # (max_entries_to_build: 1): any other first attempt of a
     # merge_group run has already been abandoned. A re-run is not a
     # queue build, though. It keeps its original event, so with the
-    # base-branch key a "Re-run jobs" on an old queue run, the release
-    # recovery in docs/development.md, would cancel the live queue entry
-    # or be cancelled by it. Re-runs therefore keep their own queue
-    # branch's group. The merge_group- prefix matches functional-tests.yml,
-    # where it keeps a queue run out of a workflow_dispatch run's group
-    # on develop; this workflow has no such trigger.
+    # base-branch key a "Re-run jobs" on an old queue run would cancel
+    # the live queue entry or be cancelled by it. Re-runs therefore keep
+    # their own queue branch's group. The merge_group- prefix matches
+    # functional-tests.yml, where it keeps a queue run out of a
+    # workflow_dispatch run's group on develop; this workflow has no
+    # such trigger.
     concurrency:
       group: >-
         ${{ github.workflow }}-lint-${{
