@@ -82,7 +82,10 @@ This prevents unauthorized users from creating release tags.
 The release gate counts a CI run only from the merge queue, or from a
 push to the default branch, which is `develop` here, so `develop`
 needs a queue. Add it only once the CI workflows' aggregator jobs are
-on `develop`, or the queue waits for checks that never report.
+on `develop`, or the queue waits for checks that never report, and add
+it as soon as they are: the CI workflows no longer run on a push to
+`develop`, so until the queue exists a merge gets no CI run and the
+release gate rejects a tag on it.
 
 1. Go to **Settings** > **Rules** > **Rulesets** > **New ruleset** >
    **New branch ruleset**

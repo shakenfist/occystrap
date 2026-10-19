@@ -27,8 +27,9 @@ on:
   # develop is the commit a merge_group run tested, even when its base
   # moved after the pull request run. That run is the one release.yml's
   # CI gate counts, which is why there is no push trigger: it would
-  # only test the same commit a second time. "Can enqueue" and "Can
-  # merge" below are the checks the queue's ruleset requires.
+  # only test the exact commit its merge queue run already tested.
+  # "Can enqueue" and "Can merge" below are the checks the queue's
+  # ruleset requires.
   merge_group:
   pull_request:
     branches:
@@ -52,6 +53,12 @@ jobs:
     name: "Check paths"
     runs-on: [self-hosted, static]
     timeout-minutes: 10
+    # paths-filter reads the changed-file list from pulls.listFiles
+    # rather than from the working tree, and the top-level permissions
+    # block sets every scope it does not name to none.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       code_changed: ${{ steps.filter.outputs.code || 'true' }}
     steps:
@@ -197,6 +204,9 @@ jobs:
     # lives in the shared workflow so it stays in step with the
     # rest of the fleet.
     needs: [functional]
+    # There is no pull request to review on merge_group or
+    # workflow_dispatch events.
+    if: github.event_name == 'pull_request'
     # A cross-repository reusable workflow cannot grant itself more
     # token scope than its caller has, so the permissions go here.
     permissions:
@@ -211,9 +221,8 @@ jobs:
   # "Can enqueue" reports on pull requests and "Can merge" on merge
   # queue entries; each is skipped, which GitHub treats as success, on
   # the other event. python-unit-tests.yml has a suffixed pair of its
-  # own,
-  # because release.yml's CI gate counts both workflows and a job's
-  # needs cannot reach across them: the queue requires all four.
+  # own, because release.yml's CI gate counts both workflows and a
+  # job's needs cannot reach across them: the queue requires all four.
   #
   # "Can enqueue" counts functional as passed when it was skipped,
   # which is what a pull request that changes only docs/ or markdown

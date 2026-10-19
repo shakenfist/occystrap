@@ -26,8 +26,9 @@ on:
   # develop is the commit a merge_group run tested, even when its base
   # moved after the pull request run. That run is the one release.yml's
   # CI gate counts, which is why there is no push trigger: it would
-  # only test the same commit a second time. "Can enqueue: unit" and
-  # "Can merge: unit" below are the checks the queue's ruleset requires.
+  # only test the exact commit its merge queue run already tested.
+  # "Can enqueue: unit" and "Can merge: unit" below are the checks the
+  # queue's ruleset requires.
   merge_group:
   pull_request:
     branches:
@@ -36,9 +37,11 @@ on:
 jobs:
   # Detect changes touching only docs/ and markdown, so that a pull
   # request which changes nothing else skips the lint and unit tests.
-  # The filter runs on pull requests only: on a merge group, and on
-  # workflow_dispatch, code_changed defaults to true, so those always
-  # test. On pull requests the base is the pull request's base branch.
+  # The filter runs on pull requests only: on a merge group
+  # code_changed defaults to true, so a queue run always tests. On pull
+  # requests the base is the pull request's base branch. Unlike
+  # functional-tests.yml this workflow has no workflow_dispatch
+  # trigger, so a docs-only pull request cannot run this lane by hand.
   #
   # By default a file matches if it matches ANY listed pattern, which
   # makes '**' match everything and silently defeats the exclusions.
@@ -48,6 +51,12 @@ jobs:
     name: "Check paths"
     runs-on: [self-hosted, static]
     timeout-minutes: 10
+    # paths-filter reads the changed-file list from pulls.listFiles
+    # rather than from the working tree, and the top-level permissions
+    # block sets every scope it does not name to none.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       code_changed: ${{ steps.filter.outputs.code || 'true' }}
     steps:
@@ -89,9 +98,9 @@ jobs:
     # base-branch key a "Re-run jobs" on an old queue run, the release
     # recovery in docs/development.md, would cancel the live queue entry
     # or be cancelled by it. Re-runs therefore keep their own queue
-    # branch's group. The merge_group- prefix keeps a queue run out of a
-    # workflow_dispatch run's group on develop, whose github.ref is the
-    # same string.
+    # branch's group. The merge_group- prefix matches functional-tests.yml,
+    # where it keeps a queue run out of a workflow_dispatch run's group
+    # on develop; this workflow has no such trigger.
     concurrency:
       group: >-
         ${{ github.workflow }}-lint-${{
@@ -134,10 +143,7 @@ jobs:
   # "Can enqueue: unit" counts lint as passed when it was skipped,
   # which is what a pull request that changes only docs/ or markdown
   # gets. "Can merge: unit" does not: on a merge queue entry every job
-  # runs, and must succeed, since this run is the one the CI gate
-  # counts.
-  # The automated reviewer is advisory and deliberately not in needs:
-  # it must not be able to block a merge on an API hiccup.
+  # runs, and must succeed, since this run is the one the CI gate counts.
   can-enqueue-unit:
     name: "Can enqueue: unit"
     needs:
