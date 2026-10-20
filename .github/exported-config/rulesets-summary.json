@@ -1,6 +1,12 @@
 [
     {
         "enforcement": "active",
+        "id": 25443422,
+        "name": "Develop branch",
+        "target": "branch"
+    },
+    {
+        "enforcement": "active",
         "id": 12461172,
         "name": "Release tags",
         "target": "tag"
