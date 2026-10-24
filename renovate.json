@@ -1,5 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "customManagers:githubActionsVersions"
+  ],
   "gitAuthor": "shakenfist-bot <bot@shakenfist.com>",
   "dependencyDashboard": true,
   "assignees": [
@@ -27,13 +30,32 @@
       "rangeStrategy": "widen"
     },
     {
-      "description": "Automatically merge minor and patch-level updates",
+      "description": "Minor, patch and digest updates are not merged automatically: every update needs review",
       "matchUpdateTypes": [
         "minor",
         "patch",
         "digest"
       ],
       "automerge": false
+    },
+    {
+      "description": "A Renovate major can raise engines.node past the node-version that .github/workflows/renovate.yml sets up, leaving every hourly run on a Node that Renovate does not support. This note reaches the reviewer of the bump.",
+      "matchDepNames": [
+        "renovate"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "prBodyNotes": [
+        ":warning: Before merging, check this version's `engines.node` (`npm view renovate@<version> engines`) against `node-version` in `.github/workflows/renovate.yml`. If it no longer accepts that Node major, raise `node-version` in the same pull request, and in shakenfist/development's `templates/renovate/renovate.yml`, which every repository copies verbatim."
+      ]
+    },
+    {
+      "description": "shellcheck-py tags a fourth packaging component -- v0.11.0.1 is shellcheck 0.11.0, packaging revision 1 -- which is not semver, so without this the github-tags lookup behind the pre-commit hook fails with \"Can't find version matching\" on the dependency dashboard and no update is ever proposed. The fourth group is named build rather than revision: Renovate's regex versioning only compares revision when a build group matched too, so naming it revision would make v0.11.0.2 compare equal to v0.11.0.1 and hide packaging-only releases. The anchor to exactly four numeric components ignores re-tags such as v0.11.0.1-1. Harmless in a repository that does not use the hook. See templates/renovate/README.md in shakenfist/development.",
+      "matchPackageNames": [
+        "shellcheck-py/shellcheck-py"
+      ],
+      "versioning": "regex:^v?(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)\\.(?<build>\\d+)$"
     }
   ],
   "minimumReleaseAge": "3 days",
