@@ -17,18 +17,6 @@
         },
         {
             "parameters": {
-                "check_response_timeout_minutes": 360,
-                "grouping_strategy": "ALLGREEN",
-                "max_entries_to_build": 1,
-                "max_entries_to_merge": 5,
-                "merge_method": "MERGE",
-                "min_entries_to_merge": 1,
-                "min_entries_to_merge_wait_minutes": 5
-            },
-            "type": "merge_queue"
-        },
-        {
-            "parameters": {
                 "allowed_merge_methods": [
                     "merge",
                     "squash",
@@ -57,15 +45,7 @@
                         "integration_id": 15368
                     },
                     {
-                        "context": "Can merge",
-                        "integration_id": 15368
-                    },
-                    {
                         "context": "Can enqueue: unit",
-                        "integration_id": 15368
-                    },
-                    {
-                        "context": "Can merge: unit",
                         "integration_id": 15368
                     }
                 ],
