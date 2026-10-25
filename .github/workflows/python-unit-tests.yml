@@ -8,9 +8,9 @@
 # in a paths-ignore'd workflow never reports on a filtered pull
 # request, and a required check that never reports blocks the merge
 # forever, while a skipped one satisfies it. The filter only runs on
-# pull requests. A merge queue entry always tests in full, since that
-# run is the one release.yml's CI gate counts, so a docs-only commit
-# that went through the queue can be released.
+# pull requests. A push to develop, and a merge queue entry when the
+# queue is enabled, always test in full, since those runs are the ones
+# release.yml's CI gate counts, so a docs-only commit can be released.
 #
 # The content scanners in supply-chain.yml are deliberately left
 # unfiltered: a credential, or an instruction smuggled into text an
@@ -22,14 +22,16 @@ permissions:
   contents: read
 
 on:
-  # Merges go through a merge queue, so every commit that lands on
-  # develop is the commit a merge_group run tested, even when its base
-  # moved after the pull request run. That run is the one release.yml's
-  # CI gate counts, which is why there is no push trigger: it would
-  # only test the exact commit its merge queue run already tested.
-  # "Can enqueue: unit" and "Can merge: unit" below are the checks the
-  # queue's ruleset requires.
+  # The merge queue is disabled while occystrap#169 is open (its queue
+  # never built a merge group), so pull requests merge to develop
+  # directly once "Can enqueue: unit" passes, and the push run on
+  # develop is the one release.yml's CI gate counts. The merge_group
+  # trigger and "Can merge: unit" stay, so that turning the queue back
+  # on is only a ruleset change; see "Merging" in docs/development.md.
   merge_group:
+  push:
+    branches:
+      - develop
   pull_request:
     branches:
       - develop
@@ -37,9 +39,9 @@ on:
 jobs:
   # Detect changes touching only docs/ and markdown, so that a pull
   # request which changes nothing else skips the lint and unit tests.
-  # The filter runs on pull requests only: on a merge group
-  # code_changed defaults to true, so a queue run always tests. On pull
-  # requests the base is the pull request's base branch. Unlike
+  # The filter runs on pull requests only: on a push and on a merge
+  # group code_changed defaults to true, so those runs always test. On
+  # pull requests the base is the pull request's base branch. Unlike
   # functional-tests.yml this workflow has no workflow_dispatch
   # trigger, so a docs-only pull request cannot run this lane by hand.
   #
@@ -89,6 +91,11 @@ jobs:
     # of flake8 and a small unit suite. It needs a vm rather than a
     # static runner because it installs packages.
     runs-on: [self-hosted, vm, debian-13, s]
+    # On a push, key on the commit: every push to develop has the same
+    # github.ref, and a group keyed on it would cancel or drop (a group
+    # holds one pending run, whatever cancel-in-progress says) the run
+    # release.yml's CI gate needs for an earlier commit.
+    #
     # On a merge group, key on the base branch rather than github.ref,
     # which is a new queue branch on every rebuild, so a superseded run
     # is cancelled. That is safe because the queue is serial
@@ -104,7 +111,8 @@ jobs:
     concurrency:
       group: >-
         ${{ github.workflow }}-lint-${{
-        github.event_name == 'merge_group' && github.run_attempt == '1'
+        github.event_name == 'push' && format('push-{0}', github.sha)
+        || github.event_name == 'merge_group' && github.run_attempt == '1'
         && format('merge_group-{0}', github.event.merge_group.base_ref)
         || github.ref }}
       cancel-in-progress: true
@@ -129,16 +137,21 @@ jobs:
         run: |
           tox -epy3
 
-  # The two checks the merge queue's ruleset requires, collecting this
-  # workflow's jobs into one result each, in the shape described at
+  # Two aggregator checks, collecting this workflow's jobs into one
+  # result each, in the shape described at
   # https://boinkor.net/2023/11/neat-github-actions-patterns-for-github-merge-queues/
-  # "Can enqueue: unit" reports on pull requests and "Can merge: unit"
-  # on merge queue entries; each is skipped, which GitHub treats as
-  # success, on the other event. The names are suffixed because
-  # release.yml's CI gate counts both this workflow and
-  # functional-tests.yml, and a job's needs cannot reach across them:
-  # functional-tests.yml has a pair of its own, and the queue requires
-  # all four.
+  # "Can enqueue: unit" reports on pull requests and pushes, and is what
+  # the develop ruleset requires while the merge queue is disabled
+  # (occystrap#169). "Can merge: unit" reports on merge queue entries,
+  # and is kept for when the queue is re-enabled; each is skipped, which
+  # GitHub treats as success, on the other events. On a push lint
+  # always runs, since check_paths defaults code_changed to true, so the
+  # skip "Can enqueue: unit" tolerates cannot arise there. The names
+  # are suffixed because release.yml's CI gate counts both this
+  # workflow and functional-tests.yml, and a job's needs cannot reach
+  # across them: functional-tests.yml has a pair of its own, and the
+  # ruleset requires both "Can enqueue" checks (and, with the queue on,
+  # all four).
   #
   # "Can enqueue: unit" counts lint as passed when it was skipped,
   # which is what a pull request that changes only docs/ or markdown

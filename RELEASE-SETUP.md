@@ -80,12 +80,15 @@ This prevents unauthorized users from creating release tags.
 ### 4. Configure the Merge Queue
 
 The release gate counts a CI run only from the merge queue, or from a
-push to the default branch, which is `develop` here, so `develop`
-needs a queue. Add it only once the CI workflows' aggregator jobs are
-on `develop`, or the queue waits for checks that never report, and add
-it as soon as they are: the CI workflows no longer run on a push to
-`develop`, so until the queue exists a merge gets no CI run and the
-release gate rejects a tag on it.
+push to the default branch, which is `develop` here. The queue is
+disabled while
+[occystrap#169](https://github.com/shakenfist/occystrap/issues/169) is
+open, because it never built a merge group. Until then the ruleset
+has steps 1 to 3, step 5 requires only "Can enqueue" and "Can
+enqueue: unit", pull requests merge directly, and the CI workflows'
+push run on `develop` is the one the gate counts. To re-enable the
+queue, add step 4 and the two "Can merge" checks in step 5; the
+workflows keep their `merge_group` trigger, so nothing else changes.
 
 1. Go to **Settings** > **Rules** > **Rulesets** > **New ruleset** >
    **New branch ruleset**
@@ -94,17 +97,19 @@ release gate rejects a tag on it.
 3. Enable **Restrict deletions**, **Block force pushes**, and
    **Require a pull request before merging**
 4. Enable **Require merge queue**, with merge method **Merge**,
-   **Build concurrency** 1 and **Minimum group size** 1. A serial
-   queue is what the consistency audit's `merge-queue-config`
-   criterion accepts, and the workflows' concurrency groups depend
-   on it
-5. Enable **Require status checks to pass**, and add "Can enqueue",
-   "Can merge", "Can enqueue: unit" and "Can merge: unit", with
-   **GitHub Actions** as the source. Each of the two workflows the
+   **Build concurrency** 1, **Minimum group size** 1, **Maximum group
+   size** 5, **Wait time** 5 minutes, **Require all queue entries to
+   pass required checks** (`ALLGREEN`) and a **Status check timeout**
+   of 360 minutes. A serial queue is what the consistency audit's
+   `merge-queue-config` criterion accepts, and the workflows'
+   concurrency groups depend on it
+5. Enable **Require status checks to pass**, and add "Can enqueue"
+   and "Can enqueue: unit", plus "Can merge" and "Can merge: unit"
+   while the queue is enabled, with **GitHub Actions** as the source. Each of the two workflows the
    release gate counts has a pair of its own
-6. Keep the bypass list short. A merge that bypasses the queue gets
-   no CI run, so it cannot be released until a later commit has gone
-   through the queue
+6. Keep the bypass list short. A merge that bypasses the required
+   checks still gets a push run on `develop`, but that run is what the
+   release gate judges, so a broken bypass merge cannot be released
 
 ### 5. Verify Sigstore/Rekor Access
 
