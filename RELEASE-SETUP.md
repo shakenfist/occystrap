@@ -96,7 +96,9 @@ workflows keep their `merge_group` trigger, so nothing else changes.
    **Active**, and target the default branch (`develop`)
 3. Enable **Restrict deletions**, **Block force pushes**, and
    **Require a pull request before merging**
-4. Enable **Require merge queue**, with merge method **Merge**,
+4. Only when re-enabling the queue, and skipped while
+   [occystrap#169](https://github.com/shakenfist/occystrap/issues/169)
+   is open: enable **Require merge queue**, with merge method **Merge**,
    **Build concurrency** 1, **Minimum group size** 1, **Maximum group
    size** 5, **Wait time** 5 minutes, **Require all queue entries to
    pass required checks** (`ALLGREEN`) and a **Status check timeout**

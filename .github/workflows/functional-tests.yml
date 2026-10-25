@@ -4,9 +4,9 @@
 # a pull request which changes only those paths skips it.
 #
 # A filter job rather than trigger-level paths-ignore, because "Can
-# enqueue" and "Can merge" are required status checks: a required check
-# in a paths-ignore'd workflow never reports on a filtered pull
-# request, and a required check that never reports blocks the merge
+# enqueue" is a required status check, and so is "Can merge" while the
+# merge queue is enabled: a required check in a paths-ignore'd workflow
+# never reports on a filtered pull request, and a required check that never reports blocks the merge
 # forever, while a skipped one satisfies it. The filter only runs on
 # pull requests. A push to develop, and a merge queue entry when the
 # queue is enabled, always test in full, since those runs are the ones
@@ -113,9 +113,10 @@ jobs:
     # Everything else keys on github.ref: a pull request's merge ref, or
     # the branch a workflow_dispatch ran on. So a newer run of the same
     # pull request or branch cancels the one it supersedes, and the job
-    # needs no separate cancelling step. One that matched runs by branch
-    # name would also match develop's push runs from a fork branch
-    # called develop.
+    # needs no separate cancelling step. A key built from the branch
+    # name (github.head_ref || github.ref_name) would not do: a fork's
+    # pull request from a branch called develop would then share a group
+    # with, and could cancel, the push runs on develop the gate needs.
     concurrency:
       group: >-
         ${{ github.workflow }}-functional-${{

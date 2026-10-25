@@ -166,6 +166,13 @@ aggregator of its own, because a job's `needs:` cannot reach across
 workflows. A push run is keyed by commit in each `concurrency` group,
 so a later merge never cancels or drops an earlier commit's run.
 
+Without the queue, a pull request's checks ran on its merge with
+`develop` as it was when they started. If `develop` has moved since,
+two pull requests that were each green can still break it together.
+The push run is what catches that, and the release gate will not
+accept a tag on the broken commit, so the fix is a follow-up pull
+request.
+
 The `merge_group` trigger and the "Can merge" and "Can merge: unit"
 jobs are kept, so re-enabling the queue is a ruleset change only: add
 a `merge_queue` rule with merge method `MERGE`,

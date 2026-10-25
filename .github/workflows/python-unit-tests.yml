@@ -4,9 +4,9 @@
 # a pull request which changes only those paths skips it.
 #
 # A filter job rather than trigger-level paths-ignore, because "Can
-# enqueue" and "Can merge" are required status checks: a required check
-# in a paths-ignore'd workflow never reports on a filtered pull
-# request, and a required check that never reports blocks the merge
+# enqueue: unit" is a required status check, and so is "Can merge:
+# unit" while the merge queue is enabled: a required check in a
+# paths-ignore'd workflow never reports on a filtered pull request, and a required check that never reports blocks the merge
 # forever, while a skipped one satisfies it. The filter only runs on
 # pull requests. A push to develop, and a merge queue entry when the
 # queue is enabled, always test in full, since those runs are the ones
