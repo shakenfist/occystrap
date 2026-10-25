@@ -4,13 +4,13 @@
 # a pull request which changes only those paths skips it.
 #
 # A filter job rather than trigger-level paths-ignore, because "Can
-# enqueue" and "Can merge" are required status checks: a required check
-# in a paths-ignore'd workflow never reports on a filtered pull
-# request, and a required check that never reports blocks the merge
+# enqueue" is a required status check, and so is "Can merge" while the
+# merge queue is enabled: a required check in a paths-ignore'd workflow
+# never reports on a filtered pull request, and a required check that never reports blocks the merge
 # forever, while a skipped one satisfies it. The filter only runs on
-# pull requests. A merge queue entry always tests in full, since that
-# run is the one release.yml's CI gate counts, so a docs-only commit
-# that went through the queue can be released.
+# pull requests. A push to develop, and a merge queue entry when the
+# queue is enabled, always test in full, since those runs are the ones
+# release.yml's CI gate counts, so a docs-only commit can be released.
 #
 # The content scanners in supply-chain.yml are deliberately left
 # unfiltered: a credential, or an instruction smuggled into text an
@@ -23,14 +23,16 @@ on:
   # pr-retest.yml re-runs this lane, so a docs-only pull request can
   # still be tested by hand when someone wants to.
   workflow_dispatch:
-  # Merges go through a merge queue, so every commit that lands on
-  # develop is the commit a merge_group run tested, even when its base
-  # moved after the pull request run. That run is the one release.yml's
-  # CI gate counts, which is why there is no push trigger: it would
-  # only test the exact commit its merge queue run already tested.
-  # "Can enqueue" and "Can merge" below are the checks the queue's
-  # ruleset requires.
+  # The merge queue is disabled while occystrap#169 is open (its queue
+  # never built a merge group), so pull requests merge to develop
+  # directly once "Can enqueue" passes, and the push run on develop is
+  # the one release.yml's CI gate counts. The merge_group trigger and
+  # "Can merge" stay, so that turning the queue back on is only a
+  # ruleset change; see "Merging" in docs/development.md.
   merge_group:
+  push:
+    branches:
+      - develop
   pull_request:
     branches:
       - develop
@@ -41,7 +43,7 @@ permissions:
 jobs:
   # Detect changes touching only docs/ and markdown, so that a pull
   # request which changes nothing else skips the functional tests.
-  # The filter runs on pull requests only: on a merge group, and on
+  # The filter runs on pull requests only: on a push, a merge group and
   # workflow_dispatch, code_changed defaults to true, so those always
   # test. On pull requests the base is the pull request's base branch.
   #
@@ -91,6 +93,11 @@ jobs:
     # asking for this all along.
     runs-on: [self-hosted, vm, debian-13, m]
     timeout-minutes: 120
+    # On a push, key on the commit: every push to develop has the same
+    # github.ref, and a group keyed on it would cancel or drop (a group
+    # holds one pending run, whatever cancel-in-progress says) the run
+    # release.yml's CI gate needs for an earlier commit.
+    #
     # On a merge group, key on the base branch rather than github.ref,
     # which is a new queue branch on every rebuild, so a superseded run
     # is cancelled. That is safe because the queue is serial
@@ -102,10 +109,19 @@ jobs:
     # their own queue branch's group. The merge_group- prefix keeps a
     # queue run out of a workflow_dispatch run's group on develop, whose
     # github.ref is the same string.
+    #
+    # Everything else keys on github.ref: a pull request's merge ref, or
+    # the branch a workflow_dispatch ran on. So a newer run of the same
+    # pull request or branch cancels the one it supersedes, and the job
+    # needs no separate cancelling step. A key built from the branch
+    # name (github.head_ref || github.ref_name) would not do: a fork's
+    # pull request from a branch called develop would then share a group
+    # with, and could cancel, the push runs on develop the gate needs.
     concurrency:
       group: >-
         ${{ github.workflow }}-functional-${{
-        github.event_name == 'merge_group' && github.run_attempt == '1'
+        github.event_name == 'push' && format('push-{0}', github.sha)
+        || github.event_name == 'merge_group' && github.run_attempt == '1'
         && format('merge_group-{0}', github.event.merge_group.base_ref)
         || github.ref }}
       cancel-in-progress: true
@@ -115,11 +131,6 @@ jobs:
     # variables at https://docs.github.com/en/actions/learn-github-actions/environment-variables
 
     steps:
-      - name: Remove previous unfinished runs
-        uses: n1hility/cancel-previous-runs@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Get rid of sudo error messages
         run: |
           hostname=$(cat /etc/hostname)
@@ -203,7 +214,7 @@ jobs:
     # lives in the shared workflow so it stays in step with the
     # rest of the fleet.
     needs: [functional]
-    # There is no pull request to review on merge_group or
+    # There is no pull request to review on push, merge_group or
     # workflow_dispatch events.
     if: github.event_name == 'pull_request'
     # A cross-repository reusable workflow cannot grant itself more
@@ -214,14 +225,19 @@ jobs:
       issues: write
     uses: shakenfist/actions/.github/workflows/pr-auto-review.yml@main
 
-  # The two checks the merge queue's ruleset requires, collecting this
-  # workflow's jobs into one result each, in the shape described at
+  # Two aggregator checks, collecting this workflow's jobs into one
+  # result each, in the shape described at
   # https://boinkor.net/2023/11/neat-github-actions-patterns-for-github-merge-queues/
-  # "Can enqueue" reports on pull requests and "Can merge" on merge
-  # queue entries; each is skipped, which GitHub treats as success, on
-  # the other event. python-unit-tests.yml has a suffixed pair of its
-  # own, because release.yml's CI gate counts both workflows and a
-  # job's needs cannot reach across them: the queue requires all four.
+  # "Can enqueue" reports on pull requests, pushes and workflow_dispatch,
+  # and is what the develop ruleset requires while the merge queue is
+  # disabled (occystrap#169). "Can merge" reports on merge queue
+  # entries, and is kept for when the queue is re-enabled; each is
+  # skipped, which GitHub treats as success, on the other events. On a
+  # push functional always runs, since check_paths defaults
+  # code_changed to true, so the skip "Can enqueue" tolerates cannot
+  # arise there. python-unit-tests.yml has a suffixed pair of its own,
+  # because release.yml's CI gate counts both workflows and a job's
+  # needs cannot reach across them.
   #
   # "Can enqueue" counts functional as passed when it was skipped,
   # which is what a pull request that changes only docs/ or markdown

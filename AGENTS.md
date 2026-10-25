@@ -133,11 +133,13 @@ under `[project.dependencies]` and `[project.optional-dependencies.test]`.
 - **Unit tests**: Located in `occystrap/tests/`. Run with `tox -epy3`.
 - **Functional tests**: Located in `deploy/occystrap_ci/tests/`. Run in CI.
 
-Changes merge to `develop` through the merge queue, never around it: a
-release tag is only accepted on a commit whose queue run passed. A new job
-in `python-unit-tests.yml` or `functional-tests.yml` goes in the `needs:` of
-that workflow's "Can enqueue" and "Can merge" jobs. See "Merging" in
-[docs/development.md](docs/development.md#merging).
+The merge queue is disabled pending occystrap#169: changes merge to
+`develop` directly once "Can enqueue" and "Can enqueue: unit" pass, and a
+release tag is only accepted on a commit whose push run on `develop`
+passed, so push runs must never share a ref-keyed concurrency group. A new
+job in `python-unit-tests.yml` or `functional-tests.yml` goes in the
+`needs:` of that workflow's "Can enqueue" and "Can merge" jobs. See
+"Merging" in [docs/development.md](docs/development.md#merging).
 
 `tox -eflake8`, and so the pre-commit hook, lints only the files changed
 in the last commit; how to lint the whole tree or run a single test is in
