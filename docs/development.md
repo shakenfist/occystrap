@@ -81,7 +81,9 @@ discarded after the job, and the `debian-13-docker` image the mermaid
 lane needs has its docker daemon inside that VM. Fork pull requests
 additionally need a maintainer to approve the run before any of it
 starts, which is a repository setting rather than something these files
-can assert. A lane which needed more than that would have to run from
+can assert. The mermaid lane also refuses a fork's pull request outright,
+as defence in depth, because its script runs on the VM outside the
+container it starts. A lane which needed more than that would have to run from
 the base branch's copy of the script instead.
 
 ## Supply chain checks
@@ -276,7 +278,7 @@ kept that way so that drift is a `diff` rather than a judgement:
 | `.github/workflows/pr-re-review.yml` | `templates/ci-review-automation/pr-re-review.yml` | `3b5142c` |
 | `.github/workflows/pr-retest.yml` | `templates/ci-review-automation/pr-retest.yml` | `5e9a4b3` |
 | `.github/workflows/pr-fix-tests.yml` | `templates/test-drift-fix/pr-fix-tests.yml` | `aec16db` |
-| `.github/workflows/mermaid-lint.yml` | `templates/mermaid-lint/mermaid-lint.yml` | `7cadf3e` |
+| `.github/workflows/mermaid-lint.yml` | `templates/mermaid-lint/mermaid-lint.yml` | `a0dcf84` |
 | `tools/mermaid-lint.sh` | `templates/mermaid-lint/mermaid-lint.sh` | `5279ac3` |
 
 Fix them upstream and re-copy, rather than editing them here: the
