@@ -216,8 +216,8 @@ Pushing a `v*` tag triggers `release.yml`. Its jobs, in order:
    attestations.
 
 So tag a commit that is on `develop`, and wait for both workflows'
-runs on it to finish first. A gate failure means nothing was signed or published, so every failure is
-recoverable: the template's
+runs on it to finish first. A gate failure means nothing was signed
+or published, so every failure is recoverable: the template's
 [recovery table](https://github.com/shakenfist/development/blob/main/templates/release-automation/README.md#recovering-from-a-gate-failure)
 says what to do for each cause, which is usually moving the tag or
 re-running CI and then the `ci-gate` job.

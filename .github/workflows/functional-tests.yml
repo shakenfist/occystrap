@@ -109,6 +109,13 @@ jobs:
     # their own queue branch's group. The merge_group- prefix keeps a
     # queue run out of a workflow_dispatch run's group on develop, whose
     # github.ref is the same string.
+    #
+    # Everything else keys on github.ref: a pull request's merge ref, or
+    # the branch a workflow_dispatch ran on. So a newer run of the same
+    # pull request or branch cancels the one it supersedes, and the job
+    # needs no separate cancelling step. One that matched runs by branch
+    # name would also match develop's push runs from a fork branch
+    # called develop.
     concurrency:
       group: >-
         ${{ github.workflow }}-functional-${{
@@ -123,15 +130,6 @@ jobs:
     # variables at https://docs.github.com/en/actions/learn-github-actions/environment-variables
 
     steps:
-      # Pull requests only. On a push this action cancels the earlier
-      # unfinished push runs on develop, which are the runs release.yml's
-      # CI gate needs for those commits.
-      - name: Remove previous unfinished runs
-        if: github.event_name == 'pull_request'
-        uses: n1hility/cancel-previous-runs@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Get rid of sudo error messages
         run: |
           hostname=$(cat /etc/hostname)
