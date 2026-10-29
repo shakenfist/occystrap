@@ -51,6 +51,22 @@
       ]
     },
     {
+      "description": "Renovate's github-actions manager proposes Node majors for setup-node, and .github/workflows/renovate.yml must stay on a Node that the pinned Renovate's engines.node accepts, or every hourly run fails with \"Unsupported node environment detected\". That Node is raised by hand, in the pull request for the Renovate major that needs it (see the rule above), never on its own. Node in other workflows is unaffected.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchFileNames": [
+        ".github/workflows/renovate.yml"
+      ],
+      "matchDepNames": [
+        "node"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "enabled": false
+    },
+    {
       "description": "shellcheck-py tags a fourth packaging component -- v0.11.0.1 is shellcheck 0.11.0, packaging revision 1 -- which is not semver, so without this the github-tags lookup behind the pre-commit hook fails with \"Can't find version matching\" on the dependency dashboard and no update is ever proposed. The fourth group is named build rather than revision: Renovate's regex versioning only compares revision when a build group matched too, so naming it revision would make v0.11.0.2 compare equal to v0.11.0.1 and hide packaging-only releases. The anchor to exactly four numeric components ignores re-tags such as v0.11.0.1-1. Harmless in a repository that does not use the hook. See templates/renovate/README.md in shakenfist/development.",
       "matchPackageNames": [
         "shellcheck-py/shellcheck-py"
