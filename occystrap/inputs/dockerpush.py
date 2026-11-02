@@ -968,6 +968,19 @@ class Image(ImageInput):
                         ' match layer count (%d)'
                         % (len(diff_ids), len(layers)))
 
+                # An image can list the same compressed
+                # blob at more than one position (two
+                # layers with byte-identical diffs, such
+                # as two empty layers). Docker uploads
+                # that blob only once, so each blob must
+                # stay on disk until its last reference
+                # has been consumed.
+                last_use = {}
+                for layer_idx, layer_meta in enumerate(
+                        layers):
+                    last_use[layer_meta['digest']] = \
+                        layer_idx
+
                 # Yield layers
                 layers_fetched = 0
                 layers_skipped = 0
@@ -1089,13 +1102,16 @@ class Image(ImageInput):
                         raise
 
                     # Delete compressed blob now that
-                    # we have the decompressed copy
-                    try:
-                        os.unlink(blob_path)
-                    except OSError:
-                        pass
-                    with state.lock:
-                        del state.blobs[compressed_hex]
+                    # we have the decompressed copy,
+                    # unless a later layer reuses it
+                    if last_use[compressed_digest] \
+                            == layer_idx:
+                        try:
+                            os.unlink(blob_path)
+                        except OSError:
+                            pass
+                        with state.lock:
+                            del state.blobs[compressed_hex]
 
                     LOG.debug(
                         '[%d/%d] Layer %s...'
