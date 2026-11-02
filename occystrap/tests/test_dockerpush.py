@@ -629,6 +629,102 @@ class TestImageFetch(unittest.TestCase):
     @mock.patch(
         'occystrap.inputs.dockerpush'
         '.requests_unixsocket.Session')
+    def test_fetch_duplicate_layer(self, mock_session_cls):
+        """An image which lists the same blob twice.
+
+        Two layers with byte-identical diffs share one
+        compressed blob, and Docker uploads it once. Both
+        positions must still yield the layer data rather
+        than the second failing with 'not received'.
+        """
+        shared = b'identical layer diff'
+        middle = b'middle layer data'
+        shared_comp, shared_hash, shared_diff = \
+            self._make_gzip_layer(shared)
+        middle_comp, middle_hash, middle_diff = \
+            self._make_gzip_layer(middle)
+
+        config_bytes, config_hash = self._make_config(
+            [shared_diff, middle_diff, shared_diff])
+        manifest = self._make_manifest(
+            config_hash, len(config_bytes),
+            [(shared_hash, len(shared_comp)),
+             (middle_hash, len(middle_comp)),
+             (shared_hash, len(shared_comp))])
+
+        mock_session = mock.MagicMock()
+
+        def mock_request(method, url, stream=False,
+                         headers=None, data=None):
+            resp = mock.MagicMock()
+            if method == 'POST' and '/tag' in url:
+                resp.status_code = 201
+            elif method == 'POST' and '/push' in url:
+                resp.status_code = 200
+                resp.iter_lines.return_value = []
+            elif method == 'DELETE':
+                resp.status_code = 200
+            else:
+                resp.status_code = 404
+            return resp
+
+        mock_session.request.side_effect = mock_request
+        mock_session_cls.return_value = mock_session
+
+        img = Image('test', tag='latest')
+        state = _RegistryState()
+        server = http.server.ThreadingHTTPServer(
+            ('127.0.0.1', 0), EmbeddedRegistryHandler)
+        server.registry_state = state
+        thread = threading.Thread(
+            target=server.serve_forever, daemon=True)
+        thread.start()
+        base = 'http://127.0.0.1:%d' \
+            % server.server_address[1]
+        sess = _no_proxy_session()
+
+        try:
+            # Each distinct blob is uploaded exactly
+            # once, as Docker does
+            self._upload_blob_to_server(
+                sess, base, config_bytes, config_hash)
+            self._upload_blob_to_server(
+                sess, base, shared_comp, shared_hash)
+            self._upload_blob_to_server(
+                sess, base, middle_comp, middle_hash)
+            sess.put(
+                '%s/v2/test/manifests/latest' % base,
+                data=manifest)
+
+            def fake_start(s):
+                server.registry_state = s
+                s.blobs.update(state.blobs)
+                s.manifest_data = state.manifest_data
+                s.manifest_event.set()
+                return server
+
+            img._start_server = fake_start
+            img._stop_server = lambda s: None
+
+            names = []
+            layer_data = []
+            for elem in img.fetch():
+                if elem.element_type == \
+                        constants.IMAGE_LAYER:
+                    names.append(elem.name)
+                    layer_data.append(elem.data.read())
+
+            self.assertEqual(
+                [shared_diff, middle_diff, shared_diff],
+                names)
+            self.assertEqual(
+                [shared, middle, shared], layer_data)
+        finally:
+            server.shutdown()
+
+    @mock.patch(
+        'occystrap.inputs.dockerpush'
+        '.requests_unixsocket.Session')
     def test_fetch_callback_skip(self, mock_session_cls):
         """Test that fetch_callback=False skips layers."""
         layer_content = b'layer data'
