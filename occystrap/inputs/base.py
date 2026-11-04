@@ -32,7 +32,8 @@ class ImageInput(ABC):
         pass
 
     @abstractmethod
-    def fetch(self, fetch_callback=None, ordered=True):
+    def fetch(self, fetch_callback=None, skip_probe=None,
+              ordered=True):
         """Fetch image elements (config files and layers).
 
         Args:
@@ -40,6 +41,12 @@ class ImageInput(ABC):
                 a layer digest and returns True if the
                 layer should be fetched, False to skip.
                 If None, all layers are fetched.
+            skip_probe: Optional side-effect-free callable
+                with the same contract as fetch_callback,
+                used by inputs that decide up front which
+                layers can be skipped before the transfer
+                starts. Inputs that do not pre-probe ignore
+                it. If None, no pre-fetch probing is done.
             ordered: If True, yield layers in manifest
                 order (default). If False, yield layers
                 as they become available and set

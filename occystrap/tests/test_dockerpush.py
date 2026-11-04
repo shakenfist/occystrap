@@ -886,11 +886,41 @@ class TestDigestMapping(unittest.TestCase):
         img._save_digest_mapping(
             {'docker_comp_hex': 'diff_abc'})
 
-        # Build skip digests. fetch_callback
-        # returns False (meaning output says "skip").
+        # Build skip digests. skip_probe returns False
+        # (meaning output says "skip").
         skip, mapping = img._build_skip_digests(
             lambda d: False)
         self.assertIn('docker_comp_hex', skip)
+
+    def test_build_skip_digests_none_probe_skips_nothing(
+            self):
+        """With no skip_probe the output cannot be probed, so
+        no layers are pre-skipped (issue #187 fallback path).
+
+        The mapping is still returned so future runs can record
+        it; only the HEAD upload optimization is skipped.
+        """
+        cache_path = os.path.join(
+            self.temp_dir, 'cache.json')
+        from occystrap.layer_cache import LayerCache
+        cache = LayerCache(cache_path)
+        cache.record(
+            'diff_abc', 'none',
+            'sha256:comp_xyz', 100,
+            'application/vnd.docker.image.'
+            'rootfs.diff.tar.gzip')
+
+        img = Image(
+            'test', tag='latest',
+            layer_cache=cache,
+            filters_hash='none')
+        img._save_digest_mapping(
+            {'docker_comp_hex': 'diff_abc'})
+
+        skip, mapping = img._build_skip_digests(None)
+        self.assertEqual(set(), skip)
+        self.assertEqual(
+            {'docker_comp_hex': 'diff_abc'}, mapping)
 
 
 class TestTLSContextGeneration(unittest.TestCase):

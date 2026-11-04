@@ -123,7 +123,7 @@ class MockInput(ImageInput):
     def tag(self):
         return self._tag
 
-    def fetch(self, fetch_callback=None,
+    def fetch(self, fetch_callback=None, skip_probe=None,
               ordered=True):
         pass
 

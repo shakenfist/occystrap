@@ -173,8 +173,13 @@ class _ProxyInput(ImageInput):
     def tag(self):
         return self._tag
 
-    def fetch(self, fetch_callback=None, ordered=True):
-        """Yield ImageElements from received blobs."""
+    def fetch(self, fetch_callback=None, skip_probe=None,
+              ordered=True):
+        """Yield ImageElements from received blobs.
+
+        skip_probe is unused: this input does not pre-probe
+        the output before transferring layers.
+        """
         from occystrap.inputs.base import always_fetch
         if fetch_callback is None:
             fetch_callback = always_fetch
@@ -824,6 +829,7 @@ class ProxyRegistryHandler(
         ordered = output.requires_ordered_layers
         for element in input_source.fetch(
                 fetch_callback=output.fetch_callback,
+                skip_probe=output.skip_probe,
                 ordered=ordered):
             output.process_image_element(element)
         output.finalize()

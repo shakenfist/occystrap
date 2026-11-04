@@ -96,6 +96,32 @@ class ImageOutput(ABC):
         """
         pass
 
+    def skip_probe(self, digest):
+        """Side-effect-free companion to fetch_callback.
+
+        Input sources that decide up front, before the
+        transfer starts, which layers can be skipped (the
+        dockerpush input does this to tell Docker not to
+        upload cached blobs) call this instead of
+        fetch_callback. It must return the same decision
+        without mutating any per-layer ordering state that
+        fetch_callback maintains for the real pass.
+
+        The default simply reuses fetch_callback, which is
+        correct for outputs whose fetch_callback has no such
+        side effects. Outputs that do keep ordering state
+        (RegistryWriter) override this with a side-effect-free
+        variant.
+
+        Args:
+            digest: The layer digest/identifier.
+
+        Returns:
+            True if the layer should be fetched, False
+            to skip.
+        """
+        return self.fetch_callback(digest)
+
     @abstractmethod
     def process_image_element(self, element):
         """Process a single image element (config or

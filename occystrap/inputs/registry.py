@@ -419,7 +419,9 @@ class Image(ImageInput, util.ThreadSafeClientMixin):
             'Layer download failed unexpectedly')
 
     def fetch(self, fetch_callback=always_fetch,
-              ordered=True):
+              skip_probe=None, ordered=True):
+        # skip_probe is unused: this input does not pre-probe
+        # the output before transferring layers.
         LOG.info('Fetching manifest')
         manifest = self.get_manifest()
         moniker = self._url_scheme()

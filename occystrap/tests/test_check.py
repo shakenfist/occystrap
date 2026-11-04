@@ -160,7 +160,7 @@ class MockCheckInput(ImageInput):
     def tag(self):
         return self._tag
 
-    def fetch(self, fetch_callback=None,
+    def fetch(self, fetch_callback=None, skip_probe=None,
               ordered=True):
         # Yield config element
         if self._config_bytes is not None:

@@ -220,6 +220,7 @@ def _fetch(img, output):
     with redirect_logging():
         for element in img.fetch(
                 fetch_callback=output.fetch_callback,
+                skip_probe=output.skip_probe,
                 ordered=ordered):
             output.process_image_element(element)
         output.finalize()
