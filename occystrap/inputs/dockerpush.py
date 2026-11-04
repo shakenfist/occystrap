@@ -786,7 +786,7 @@ class Image(ImageInput):
                 'Could not save digest mapping:'
                 ' %s' % e)
 
-    def _build_skip_digests(self, fetch_callback):
+    def _build_skip_digests(self, skip_probe):
         """Build the set of Docker compressed digests
         that should be skipped.
 
@@ -795,15 +795,25 @@ class Image(ImageInput):
         checks the layer cache to see which DiffIDs are
         cached.
 
-        The fetch_callback follows the convention from
+        The skip_probe follows the convention from
         ImageInput.fetch(): it returns True if the layer
         should be fetched, False if it can be skipped.
         For RegistryWriter, False means the remote
-        registry already has the blob. This method is
-        called before the push starts, but fetch_callback
-        is already usable at that point because it only
-        queries the layer cache and remote registry
-        (both initialized before fetch() is called).
+        registry already has the blob. It must be the
+        output's side-effect-free skip_probe, not its
+        fetch_callback: this runs before the push starts
+        and once per cached mapping entry, so using
+        fetch_callback would push spurious entries onto the
+        output's original-DiffID FIFO and misalign the
+        per-layer recovery done during the real pass.
+
+        This method is called before the push starts, but
+        skip_probe is already usable at that point because
+        it only queries the layer cache and remote registry
+        (both initialized before fetch() is called). When
+        skip_probe is None the output cannot be probed, so
+        no layers are pre-skipped (correct, just without the
+        HEAD upload optimization).
 
         Returns:
             Tuple of (skip_digests_set,
@@ -817,21 +827,21 @@ class Image(ImageInput):
             return set(), mapping
 
         skip = set()
-        for docker_hex, diffid_hex in mapping.items():
-            # Check if this layer is cached
-            entry = self.layer_cache.lookup(
-                diffid_hex, self.filters_hash)
-            if entry is not None:
-                # Also check fetch_callback to ensure
-                # the output agrees this layer can be
-                # skipped
-                if not fetch_callback(diffid_hex):
-                    skip.add(docker_hex)
-                    LOG.debug(
-                        'Will skip blob %s...'
-                        ' (cached as %s...)'
-                        % (docker_hex[:12],
-                           diffid_hex[:12]))
+        if skip_probe is not None:
+            for docker_hex, diffid_hex in mapping.items():
+                # Check if this layer is cached
+                entry = self.layer_cache.lookup(
+                    diffid_hex, self.filters_hash)
+                if entry is not None:
+                    # Also probe the output to ensure it
+                    # agrees this layer can be skipped
+                    if not skip_probe(diffid_hex):
+                        skip.add(docker_hex)
+                        LOG.debug(
+                            'Will skip blob %s...'
+                            ' (cached as %s...)'
+                            % (docker_hex[:12],
+                               diffid_hex[:12]))
 
         if skip:
             LOG.info(
@@ -841,7 +851,7 @@ class Image(ImageInput):
         return skip, mapping
 
     def fetch(self, fetch_callback=always_fetch,
-              ordered=True):
+              skip_probe=None, ordered=True):
         """Fetch image layers by pushing to an embedded
         registry.
 
@@ -866,9 +876,12 @@ class Image(ImageInput):
 
         state = _RegistryState(temp_dir=self.temp_dir)
 
-        # Build skip set from cache before starting
+        # Build skip set from cache before starting. Use the
+        # side-effect-free skip_probe, never fetch_callback,
+        # so probing cached layers here does not perturb the
+        # output's per-layer original-DiffID recovery.
         skip_set, digest_mapping = \
-            self._build_skip_digests(fetch_callback)
+            self._build_skip_digests(skip_probe)
         state.skip_digests = skip_set
 
         server = self._start_server(state)

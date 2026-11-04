@@ -96,6 +96,17 @@ class ImageFilter(ImageOutput, ABC):
             return True
         return self._wrapped.fetch_callback(digest)
 
+    def skip_probe(self, digest):
+        """Side-effect-free skip decision for pre-fetch probing.
+
+        Delegates to the wrapped output's side-effect-free
+        skip_probe so that probing a filtered pipeline does not
+        perturb the wrapped output's per-layer ordering state.
+        """
+        if self._wrapped is None:
+            return True
+        return self._wrapped.skip_probe(digest)
+
     @abstractmethod
     def process_image_element(self, element):
         """Process and optionally transform an image

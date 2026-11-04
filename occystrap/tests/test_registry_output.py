@@ -1007,6 +1007,148 @@ class RegistryWriterCacheTestCase(unittest.TestCase):
 
             self.assertEqual(1, w2._cache_hits)
 
+    def test_skip_probe_leaves_original_digests_untouched(
+            self):
+        """skip_probe must not push onto the FIFO (issue #187).
+
+        The dockerpush input probes cached layers before the
+        push to decide which blobs Docker can skip uploading.
+        That probe must make the same decision as fetch_callback
+        but must not perturb the _original_digests FIFO that
+        process_image_element pops to recover each layer's
+        original DiffID.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            cache = LayerCache(os.path.join(d, 'c.json'))
+            cache.record(
+                'diffcached', 'none',
+                'sha256:compcached', 100,
+                'application/vnd.docker.image.rootfs'
+                '.diff.tar.gzip')
+
+            mock_client = mock.MagicMock()
+            mock_response = mock.MagicMock()
+            mock_response.status_code = 200
+            mock_client.request.return_value = mock_response
+
+            writer = output_registry.RegistryWriter(
+                'ghcr.io', 'myuser/myimage', 'v1.0',
+                layer_cache=cache, filters_hash='none',
+                client=mock_client)
+
+            # Probe agrees the layer can be skipped ...
+            self.assertFalse(
+                writer.skip_probe('diffcached'))
+            # ... but leaves the FIFO empty.
+            self.assertEqual(
+                0, len(writer._original_digests))
+            # The cache hit is still noted (idempotent).
+            self.assertIn(
+                'diffcached', writer._cached_layers)
+
+            # fetch_callback makes the same decision but does
+            # record on the FIFO for process_image_element.
+            self.assertFalse(
+                writer.fetch_callback('diffcached'))
+            self.assertEqual(
+                1, len(writer._original_digests))
+
+    def test_probe_then_fetch_records_correct_diffids(self):
+        """Regression for #187: a pre-fetch probe must not shift
+        the DiffIDs that fetched layers are recorded under.
+
+        Simulates the dockerpush skip-digest probe followed by
+        the real per-layer pass: one cached layer (probed, then
+        skipped) and one new layer whose name a content-modifying
+        filter has rewritten. The new layer must be recorded in
+        the cache under its own DiffID, not the cached layer's.
+
+        With the probe routed through the side-effecting
+        fetch_callback (the bug), the probe left a stale entry on
+        the FIFO, so the new layer popped the cached layer's
+        DiffID and was recorded under the wrong key.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            cache = LayerCache(os.path.join(d, 'c.json'))
+            cache.record(
+                'diffcached', 'none',
+                'sha256:compcached', 100,
+                'application/vnd.docker.image.rootfs'
+                '.diff.tar.gzip')
+
+            def handler(method, url, **kwargs):
+                response = mock.MagicMock()
+                if method == 'HEAD':
+                    # Registry has the cached blob but not the
+                    # new layer's compressed blob.
+                    response.status_code = (
+                        200 if 'compcached' in url else 404)
+                elif method == 'POST':
+                    response.status_code = 202
+                    response.headers = {
+                        'Location': 'https://ghcr.io/v2/'
+                        'myuser/myimage/blobs/uploads/abc'}
+                elif (method == 'PUT'
+                      and '/manifests/' in url):
+                    response.status_code = 201
+                else:
+                    response.status_code = 201
+                return response
+
+            mock_client = mock.MagicMock()
+            mock_client.request.side_effect = handler
+
+            writer = output_registry.RegistryWriter(
+                'ghcr.io', 'myuser/myimage', 'v1.0',
+                max_workers=1, layer_cache=cache,
+                filters_hash='none', client=mock_client)
+
+            # 1. Pre-fetch probe of the cached layer, as
+            #    dockerpush does via _build_skip_digests.
+            self.assertFalse(
+                writer.skip_probe('diffcached'))
+
+            # 2. Real per-layer pass, in manifest order.
+            config_data = json.dumps(
+                {'architecture': 'amd64'}).encode()
+            writer.process_image_element(
+                self._elem(
+                    constants.CONFIG_FILE,
+                    'config.json',
+                    io.BytesIO(config_data)))
+
+            # Layer 0: cached -> skipped, data=None.
+            self.assertFalse(
+                writer.fetch_callback('diffcached'))
+            writer.process_image_element(
+                self._elem(
+                    constants.IMAGE_LAYER,
+                    'diffcached', None))
+
+            # Layer 1: new -> fetched; a filter rewrote the
+            # element name away from its DiffID.
+            self.assertTrue(
+                writer.fetch_callback('diffnew'))
+            writer.process_image_element(
+                self._elem(
+                    constants.IMAGE_LAYER,
+                    'rewrittenname',
+                    io.BytesIO(b'new layer data')))
+
+            writer.finalize()
+
+            # The new layer is recorded under its own DiffID ...
+            new_entry = cache.lookup('diffnew', 'none')
+            self.assertIsNotNone(
+                new_entry,
+                'New layer must be recorded under its own '
+                'DiffID, not a shifted one')
+            # ... and the cached layer's entry is untouched.
+            self.assertEqual(
+                'sha256:compcached',
+                cache.lookup(
+                    'diffcached', 'none')['compressed_digest'])
+
 
 class RegistryWriterOrderedTestCase(unittest.TestCase):
     """Tests for out-of-order layer delivery."""

@@ -266,9 +266,12 @@ class Image(ImageInput):
             pass
 
     def fetch(self, fetch_callback=always_fetch,
-              ordered=True):
+              skip_probe=None, ordered=True):
         """Fetch image layers from the local Docker
         daemon.
+
+        skip_probe is unused: this input does not pre-probe
+        the output before transferring layers.
 
         Uses the inspect API to pre-compute the manifest
         for Docker 25+ (OCI format), eliminating the need

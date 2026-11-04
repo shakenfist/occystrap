@@ -82,7 +82,9 @@ class Image(ImageInput):
                 config_file.read().decode('utf-8'))
 
     def fetch(self, fetch_callback=always_fetch,
-              ordered=True):
+              skip_probe=None, ordered=True):
+        # skip_probe is unused: this input does not pre-probe
+        # the output before transferring layers.
         # Note: ordered=False provides no throughput
         # benefit here since the tarball is read
         # sequentially. We still set layer_index so

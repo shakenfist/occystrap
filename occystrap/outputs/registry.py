@@ -306,20 +306,24 @@ class RegistryWriter(ImageOutput, util.ThreadSafeClientMixin):
             'digest': layer_digest
         }
 
-    def fetch_callback(self, digest):
-        """Determine whether a layer needs to be fetched.
+    def _should_fetch(self, digest):
+        """Decide whether a layer needs to be fetched.
 
         If a layer cache is configured and the layer has been
         previously processed with the same filters, check whether
-        the registry still has the compressed blob. If so, skip
-        fetching entirely.
+        the registry still has the compressed blob. If so, the
+        layer can be skipped.
 
-        The original digest is recorded so that
-        process_image_element can map filter-transformed names
-        back to the original input DiffID for cache recording.
+        This is free of layer-ordering side effects: it only
+        records the cache hit in _cached_layers, which is keyed
+        by digest and therefore idempotent, so it is safe to call
+        both during the pre-fetch probe (skip_probe) and the real
+        per-layer pass (fetch_callback).
+
+        Returns:
+            True if the layer must be fetched, False if the
+            registry already has the cached blob.
         """
-        self._original_digests.append(digest)
-
         if self._layer_cache is None:
             return True
 
@@ -341,6 +345,30 @@ class RegistryWriter(ImageOutput, util.ThreadSafeClientMixin):
             're-processing',
             digest[:19], entry['compressed_digest'][:19])
         return True
+
+    def fetch_callback(self, digest):
+        """Determine whether a layer needs to be fetched.
+
+        The original digest is recorded on the _original_digests
+        FIFO so that process_image_element can map
+        filter-transformed names back to the original input
+        DiffID for cache recording. This recording assumes one
+        call per yielded layer element, so pre-fetch probing must
+        use skip_probe instead (see below), never this method.
+        """
+        self._original_digests.append(digest)
+        return self._should_fetch(digest)
+
+    def skip_probe(self, digest):
+        """Side-effect-free skip decision for pre-fetch probing.
+
+        Returns the same True=fetch/False=skip answer as
+        fetch_callback but does not push onto the
+        _original_digests FIFO, so probing cached layers before
+        the push does not misalign the original-DiffID recovery
+        that process_image_element performs during the real pass.
+        """
+        return self._should_fetch(digest)
 
     def process_image_element(self, element):
         """Process an image element, uploading it to
