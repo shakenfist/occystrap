@@ -232,11 +232,23 @@ class ImageFilter(ImageOutput, ABC):
             self._wrapped.process_image_element(
                 self._buffered_config)
         else:
+            # Report only layers whose diff_id actually
+            # changed, not every layer we processed. A filter
+            # recomputes the diff_id of every layer it handles,
+            # but a layer that was already in the filter's
+            # canonical form (for example an already-normalized
+            # base layer re-pushed via dockerpush) comes out
+            # byte-identical and keeps its diff_id and its
+            # registry blob. Counting processed layers here made
+            # an idempotent re-push look like a full rewrite
+            # (issue #188).
+            changed = sum(
+                1 for old, new in zip(original_ids, updated_ids)
+                if old != new)
             LOG.info(
                 'Updating config diff_ids '
                 '(%d of %d layers modified)'
-                % (len(self._new_diff_ids),
-                   len(original_ids)))
+                % (changed, len(original_ids)))
             config['rootfs']['diff_ids'] = updated_ids
             updated_bytes = json.dumps(
                 config).encode('utf-8')
