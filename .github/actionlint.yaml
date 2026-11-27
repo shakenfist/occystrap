@@ -12,6 +12,7 @@ self-hosted-runner:
     - s
     - claude-code
     - static
+    - persistent
 
 # Ignore certain shellcheck rules from run: blocks in workflow files.
 # These are overly pedantic for CI workflow scripts where the inputs are
