@@ -59,7 +59,7 @@ docs/                        # All user-facing documentation
     internals.md             # Quay, Docker, proxy, parallelism, HTTP
     performance.md           # Tuning parallelism and connection reuse
     use-cases.md             # Worked scenarios
-    development.md           # Build, test, release, PR bot commands
+    development.md           # Build, test, release, dependency updates, PR bot commands
     docker-tarball-formats.md  # Docker save tarball reference
     tar-format-selection.md  # Choosing a tar format
     plans/                   # Design and phase plans
