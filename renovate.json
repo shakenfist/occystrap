@@ -5,17 +5,5 @@
   ],
   "constraints": {
     "python": ">=3.7"
-  },
-  "packageRules": [
-    {
-      "description": "Group grpc packages together with widen strategy",
-      "matchPackagePatterns": [
-        "^grpcio",
-        "^googleapis-common-protos",
-        "^protobuf"
-      ],
-      "groupName": "grpc packages",
-      "rangeStrategy": "widen"
-    }
-  ]
+  }
 }
