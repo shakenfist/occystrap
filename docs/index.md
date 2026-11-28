@@ -56,8 +56,8 @@ occystrap process registry://docker.io/library/python:3.11 tar://python.tar \
 - [Use Cases](use-cases.md) - Common scenarios and examples
 - [Performance Tuning](performance.md) - Parallelism flags, connection
   efficiency, and recommended settings
-- [Development](development.md) - Setup, tests, releasing, and the PR
-  bot commands
+- [Development](development.md) - Setup, tests, releasing, dependency
+  updates, and the PR bot commands
 
 Design and phase plans, current and historical, live in
 [plans/](plans/), and every one of them is registered in

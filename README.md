@@ -62,7 +62,7 @@ directory:
 - [Performance Tuning](https://github.com/shakenfist/occystrap/blob/develop/docs/performance.md) - Parallelism, rate limiting, retries, and benchmarking
 - [Pipeline Architecture](https://github.com/shakenfist/occystrap/blob/develop/docs/pipeline.md) - How inputs, filters, and outputs compose
 - [Implementation Internals](https://github.com/shakenfist/occystrap/blob/develop/docs/internals.md) - Quay discovery, the Docker integrations, the proxy, parallelism, caching, and the HTTP layer
-- [Development](https://github.com/shakenfist/occystrap/blob/develop/docs/development.md) - Setup, tests, releasing, and the PR bot commands
+- [Development](https://github.com/shakenfist/occystrap/blob/develop/docs/development.md) - Setup, tests, releasing, dependency updates, and the PR bot commands
 - [Docker Tarball Formats](https://github.com/shakenfist/occystrap/blob/develop/docs/docker-tarball-formats.md) - Docker save tarball format reference
 
 Project reference files:
